@@ -8,3 +8,6 @@ dist/
 build/
 .fortressgd.secret
 .godot/
+dialect.gen.h
+*.manifest.json
+.cache/

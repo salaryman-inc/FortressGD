@@ -1,4 +1,4 @@
-"""fortressgd CLI: init, doctor, secret, verify."""
+"""fortressgd CLI: init, doctor, secret, verify, templates, export."""
 
 from __future__ import annotations
 
@@ -8,7 +8,8 @@ import sys
 from pathlib import Path
 
 from core.config import load_path
-from core.errors import NEXT_HELP, NEXT_SECRET, UserError, VerifyError
+from core.errors import NEXT_HELP, NEXT_SECRET, ToolError, UserError, VerifyError
+from core.export import export_preset
 from core.project import (
     CONFIG_NAME,
     doctor_project,
@@ -24,6 +25,12 @@ from core.secret import (
     secret_status,
     write_secret_file,
 )
+from core.templates import (
+    SUPPORTED_PLATFORMS,
+    build_templates,
+    list_cached_templates,
+    resolve_cache_dir_from_config,
+)
 from core.version import __version__
 
 
@@ -37,7 +44,7 @@ class _Parser(argparse.ArgumentParser):
 def build_parser() -> argparse.ArgumentParser:
     parser = _Parser(
         prog="fortressgd",
-        description="FortressGD — Godot 4 release toolchain (init, doctor, secret, verify).",
+        description="FortressGD — Godot 4 release toolchain (init, doctor, secret, verify, templates, export).",
     )
     parser.add_argument("--version", action="version", version="fortressgd {0}".format(__version__))
     secret_file_help = "secret file path (64 hex chars, mode 0600). Also: {0}".format(ENV_NAME)
@@ -65,6 +72,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="list packed paths with a stock GDPC parser; fail on §6.3 leaks",
     )
     ver.add_argument("artifact", help="PATH.pck or PATH.exe")
+
+    tmpl = sub.add_parser("templates", help="build or list FortressGD export templates")
+    tmpl_sub = tmpl.add_subparsers(dest="templates_command", required=True)
+    build = tmpl_sub.add_parser("build", help="build template_release via Docker")
+    build.add_argument("--godot", default=None, help="Godot version (default: toml)")
+    build.add_argument(
+        "--platform",
+        action="append",
+        dest="platforms",
+        choices=list(SUPPORTED_PLATFORMS),
+        help="windows or linux (repeatable; default: toml platforms.build)",
+    )
+    build.add_argument("--secret-file", default=argparse.SUPPRESS, help=secret_file_help)
+    build.add_argument(
+        "--patches-dir",
+        default=None,
+        help="override patches/<tag> parent (tests/CI)",
+    )
+    tmpl_sub.add_parser("list", help="list cached templates")
+
+    exp = sub.add_parser("export", help="production export with derived AES key")
+    exp.add_argument("--preset", required=True, help="export preset name")
+    exp.add_argument("--secret-file", default=argparse.SUPPRESS, help=secret_file_help)
     return parser
 
 
@@ -137,6 +167,67 @@ def cmd_verify(args: argparse.Namespace) -> int:
     return 0
 
 
+def _load_cwd_config() -> dict:
+    toml_path = Path.cwd() / CONFIG_NAME
+    if not toml_path.is_file():
+        return {}
+    return load_path(toml_path)
+
+
+def cmd_templates_build(args: argparse.Namespace) -> int:
+    cfg = _load_cwd_config()
+    godot = args.godot or (str(cfg["godot"]) if cfg else None)
+    if not godot:
+        raise UserError("godot version required (--godot or .fortressgd.toml)", NEXT_HELP)
+    platforms = list(args.platforms or [])
+    if not platforms:
+        listed = (cfg.get("platforms") or {}).get("build") if cfg else None
+        if isinstance(listed, list) and listed:
+            platforms = [str(p) for p in listed]
+        else:
+            platforms = list(SUPPORTED_PLATFORMS)
+    cache = resolve_cache_dir_from_config(cfg) if cfg else None
+    patches_dir = Path(args.patches_dir) if args.patches_dir else None
+    produced = build_templates(
+        godot=godot,
+        platforms=platforms,
+        secret_file=getattr(args, "secret_file", None),
+        environ=os.environ,
+        cwd=Path.cwd(),
+        cache_dir=cache,
+        patches_dir=patches_dir,
+    )
+    for path in produced:
+        sys.stdout.write(path.name + "\n")
+    sys.stdout.write("ok: {0} template(s)\n".format(len(produced)))
+    return 0
+
+
+def cmd_templates_list(_args: argparse.Namespace) -> int:
+    cfg = _load_cwd_config()
+    cache = resolve_cache_dir_from_config(cfg) if cfg else None
+    names = list_cached_templates(cache)
+    if not names:
+        sys.stdout.write("no templates cached\n")
+        return 0
+    for name in names:
+        sys.stdout.write(name + "\n")
+    return 0
+
+
+def cmd_export(args: argparse.Namespace) -> int:
+    result = export_preset(
+        preset_name=args.preset,
+        cwd=Path.cwd(),
+        secret_file=getattr(args, "secret_file", None),
+        environ=os.environ,
+    )
+    sys.stdout.write(
+        "ok: exported preset {0} ({1})\n".format(result["preset"], result["platform"])
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     parser = build_parser()
@@ -161,10 +252,20 @@ def main(argv: list[str] | None = None) -> int:
                 return cmd_secret_status(args)
         if args.command == "verify":
             return cmd_verify(args)
+        if args.command == "templates":
+            if args.templates_command == "build":
+                return cmd_templates_build(args)
+            if args.templates_command == "list":
+                return cmd_templates_list(args)
+        if args.command == "export":
+            return cmd_export(args)
         raise UserError("unknown command", NEXT_HELP)
     except VerifyError as err:
         sys.stderr.write(err.format() + "\n")
         return 2
+    except ToolError as err:
+        sys.stderr.write(err.format() + "\n")
+        return 3
     except UserError as err:
         sys.stderr.write(err.format() + "\n")
         return 1

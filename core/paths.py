@@ -31,3 +31,15 @@ def example_toml_path() -> Path:
 def default_secret_path(cwd: Path | None = None) -> Path:
     base = cwd if cwd is not None else Path.cwd()
     return (base / ".fortressgd.secret").resolve()
+
+
+def patches_root() -> Path:
+    return repo_root() / "patches"
+
+
+def docker_dir() -> Path:
+    return repo_root() / "docker"
+
+
+def default_cache_dir() -> Path:
+    return Path("~/.cache/fortressgd").expanduser()

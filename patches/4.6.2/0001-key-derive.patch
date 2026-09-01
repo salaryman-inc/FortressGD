@@ -1,0 +1,237 @@
+diff --git a/core/fortressgd_kdf.cpp b/core/fortressgd_kdf.cpp
+new file mode 100644
+index 0000000..e55b5f4
+--- /dev/null
++++ b/core/fortressgd_kdf.cpp
+@@ -0,0 +1,154 @@
++/**************************************************************************/
++/*  fortressgd_kdf.cpp                                                    */
++/**************************************************************************/
++/* FortressGD FGD-KDF-1: shard reassembly + HKDF-SHA256 (DESIGN.md §5.2). */
++/**************************************************************************/
++
++#include "fortressgd_kdf.h"
++
++#include "core/crypto/crypto_core.h"
++#include "dialect.gen.h"
++
++#include <cstring>
++
++static const uint8_t FGD_KDF_INFO[] = {
++	'f', 'o', 'r', 't', 'r', 'e', 's', 's', 'g', 'd', '.',
++	'p', 'c', 'k', '.', 'a', 'e', 's', '.', 'v', '1'
++};
++
++void fortressgd_wipe(void *p, size_t n) {
++	volatile uint8_t *v = static_cast<volatile uint8_t *>(p);
++	for (size_t i = 0; i < n; i++) {
++		v[i] = 0;
++	}
++}
++
++static void fortressgd_hmac_sha256(const uint8_t *p_key, size_t p_key_len, const uint8_t *p_data, size_t p_data_len, uint8_t r_out[32]) {
++	uint8_t key_block[64];
++	memset(key_block, 0, sizeof(key_block));
++	if (p_key_len > 64) {
++		CryptoCore::sha256(p_key, p_key_len, key_block);
++	} else {
++		memcpy(key_block, p_key, p_key_len);
++	}
++
++	uint8_t ipad[64];
++	uint8_t opad[64];
++	for (int i = 0; i < 64; i++) {
++		ipad[i] = key_block[i] ^ 0x36;
++		opad[i] = key_block[i] ^ 0x5c;
++	}
++
++	uint8_t inner[32];
++	{
++		CryptoCore::SHA256Context ctx;
++		ctx.start();
++		ctx.update(ipad, 64);
++		ctx.update(p_data, p_data_len);
++		ctx.finish(inner);
++	}
++	{
++		CryptoCore::SHA256Context ctx;
++		ctx.start();
++		ctx.update(opad, 64);
++		ctx.update(inner, 32);
++		ctx.finish(r_out);
++	}
++
++	fortressgd_wipe(key_block, sizeof(key_block));
++	fortressgd_wipe(ipad, sizeof(ipad));
++	fortressgd_wipe(opad, sizeof(opad));
++	fortressgd_wipe(inner, sizeof(inner));
++}
++
++static void fortressgd_hkdf_sha256(const uint8_t *p_ikm, size_t p_ikm_len, const uint8_t *p_salt, size_t p_salt_len, const uint8_t *p_info, size_t p_info_len, uint8_t *r_okm, size_t p_okm_len) {
++	uint8_t prk[32];
++	fortressgd_hmac_sha256(p_salt, p_salt_len, p_ikm, p_ikm_len, prk);
++
++	uint8_t t[32];
++	size_t t_len = 0;
++	size_t filled = 0;
++	uint8_t counter = 1;
++	while (filled < p_okm_len) {
++		uint8_t block[32 + 64 + 1];
++		size_t block_len = 0;
++		if (t_len) {
++			memcpy(block, t, t_len);
++			block_len = t_len;
++		}
++		if (p_info_len) {
++			memcpy(block + block_len, p_info, p_info_len);
++			block_len += p_info_len;
++		}
++		block[block_len] = counter;
++		block_len += 1;
++		fortressgd_hmac_sha256(prk, 32, block, block_len, t);
++		t_len = 32;
++		size_t take = p_okm_len - filled;
++		if (take > 32) {
++			take = 32;
++		}
++		memcpy(r_okm + filled, t, take);
++		filled += take;
++		counter += 1;
++		fortressgd_wipe(block, sizeof(block));
++	}
++
++	fortressgd_wipe(prk, sizeof(prk));
++	fortressgd_wipe(t, sizeof(t));
++}
++
++void fortressgd_derive_key(uint8_t r_key[32]) {
++	uint8_t secret[32];
++	for (int shard = 0; shard < 4; shard++) {
++		for (int i = 0; i < 8; i++) {
++			secret[shard * 8 + i] = FGD_SHARDS[shard][i] ^ FGD_SHARD_MASKS[shard][i];
++		}
++	}
++	fortressgd_hkdf_sha256(secret, 32, FGD_DIALECT_SALT, 16, FGD_KDF_INFO, sizeof(FGD_KDF_INFO), r_key, 32);
++	fortressgd_wipe(secret, sizeof(secret));
++}
++
++static String fortressgd_decode_msg(const uint8_t *p_enc, size_t p_len) {
++	char buf[96];
++	if (p_len >= sizeof(buf)) {
++		return String();
++	}
++	for (size_t i = 0; i < p_len; i++) {
++		buf[i] = static_cast<char>(p_enc[i] ^ 0xA5);
++	}
++	buf[p_len] = 0;
++	String s = String::utf8(buf, (int)p_len);
++	fortressgd_wipe(buf, sizeof(buf));
++	return s;
++}
++
++String fortressgd_msg_enc_dir() {
++	static const uint8_t enc[] = {
++		0xE6, 0xC4, 0xCB, 0x82, 0xD1, 0x85, 0xCA, 0xD5, 0xC0, 0xCB, 0x85, 0xC0, 0xCB, 0xC6, 0xD7, 0xDC,
++		0xD5, 0xD1, 0xC0, 0xC1, 0x85, 0xD5, 0xC4, 0xC6, 0xCE, 0x85, 0xC1, 0xCC, 0xD7, 0xC0, 0xC6, 0xD1,
++		0xCA, 0xD7, 0xDC, 0x8B
++	};
++	return fortressgd_decode_msg(enc, sizeof(enc));
++}
++
++String fortressgd_msg_enc_file() {
++	static const uint8_t enc[] = {
++		0xE6, 0xC4, 0xCB, 0x82, 0xD1, 0x85, 0xCA, 0xD5, 0xC0, 0xCB, 0x85, 0xC0, 0xCB, 0xC6, 0xD7, 0xDC,
++		0xD5, 0xD1, 0xC0, 0xC1, 0x85, 0xD5, 0xC4, 0xC6, 0xCE, 0x88, 0xD7, 0xC0, 0xC3, 0xC0, 0xD7, 0xC0,
++		0xCB, 0xC6, 0xC0, 0xC1, 0x85, 0xC3, 0xCC, 0xC9, 0xC0, 0x85, 0x87, 0x80, 0xD6, 0x87, 0x85, 0xC3,
++		0xD7, 0xCA, 0xC8, 0x85, 0xD5, 0xC4, 0xC6, 0xCE, 0x85, 0x87, 0x80, 0xD6, 0x87, 0x8B
++	};
++	return fortressgd_decode_msg(enc, sizeof(enc));
++}
++
++String fortressgd_msg_enc_file_err() {
++	static const uint8_t enc[] = {
++		0xE6, 0xC4, 0xCB, 0x82, 0xD1, 0x85, 0xCA, 0xD5, 0xC0, 0xCB, 0x85, 0xC0, 0xCB, 0xC6, 0xD7, 0xDC,
++		0xD5, 0xD1, 0xC0, 0xC1, 0x85, 0xD5, 0xC4, 0xC6, 0xCE, 0x88, 0xD7, 0xC0, 0xC3, 0xC0, 0xD7, 0xC0,
++		0xCB, 0xC6, 0xC0, 0xC1, 0x85, 0xC3, 0xCC, 0xC9, 0xC0, 0x85, 0x87, 0x80, 0xD6, 0x87, 0x85, 0xC3,
++		0xD7, 0xCA, 0xC8, 0x85, 0xD5, 0xC4, 0xC6, 0xCE, 0x85, 0x87, 0x80, 0xD6, 0x87, 0x85, 0xC1, 0xD0,
++		0xC0, 0x85, 0xD1, 0xCA, 0x85, 0xC0, 0xD7, 0xD7, 0xCA, 0xD7, 0x85, 0x87, 0x80, 0xD6, 0x87, 0x8B
++	};
++	return fortressgd_decode_msg(enc, sizeof(enc));
++}
+diff --git a/core/fortressgd_kdf.h b/core/fortressgd_kdf.h
+new file mode 100644
+index 0000000..9b4d83f
+--- /dev/null
++++ b/core/fortressgd_kdf.h
+@@ -0,0 +1,16 @@
++/**************************************************************************/
++/*  fortressgd_kdf.h                                                      */
++/**************************************************************************/
++
++#pragma once
++
++#include "core/string/ustring.h"
++
++#include <cstddef>
++#include <cstdint>
++
++void fortressgd_wipe(void *p, size_t n);
++void fortressgd_derive_key(uint8_t r_key[32]);
++String fortressgd_msg_enc_dir();
++String fortressgd_msg_enc_file();
++String fortressgd_msg_enc_file_err();
+diff --git a/core/io/file_access_pack.cpp b/core/io/file_access_pack.cpp
+index 89967c1..b040690 100644
+--- a/core/io/file_access_pack.cpp
++++ b/core/io/file_access_pack.cpp
+@@ -36,6 +36,8 @@
+ #include "core/os/os.h"
+ #include "core/version.h"
+ 
++#include "core/fortressgd_kdf.h"
++
+ Error PackedData::add_pack(const String &p_path, bool p_replace_files, uint64_t p_offset) {
+ 	for (int i = 0; i < sources.size(); i++) {
+ 		if (sources[i]->try_open_pack(p_path, p_replace_files, p_offset)) {
+@@ -320,16 +322,15 @@ bool PackedSourcePCK::try_open_pack(const String &p_path, bool p_replace_files,
+ 	if (enc_directory) {
+ 		Ref<FileAccessEncrypted> fae;
+ 		fae.instantiate();
+-		ERR_FAIL_COND_V_MSG(fae.is_null(), false, "Can't open encrypted pack directory.");
++		ERR_FAIL_COND_V_MSG(fae.is_null(), false, fortressgd_msg_enc_dir());
+ 
+ 		Vector<uint8_t> key;
+ 		key.resize(32);
+-		for (int i = 0; i < key.size(); i++) {
+-			key.write[i] = script_encryption_key[i];
+-		}
++		fortressgd_derive_key(key.ptrw());
+ 
+ 		Error err = fae->open_and_parse(f, key, FileAccessEncrypted::MODE_READ, false);
+-		ERR_FAIL_COND_V_MSG(err, false, "Can't open encrypted pack directory.");
++		fortressgd_wipe(key.ptrw(), key.size());
++		ERR_FAIL_COND_V_MSG(err, false, fortressgd_msg_enc_dir());
+ 		f = fae;
+ 	}
+ 
+@@ -525,16 +526,15 @@ FileAccessPack::FileAccessPack(const String &p_path, const PackedData::PackedFil
+ 	if (pf.encrypted) {
+ 		Ref<FileAccessEncrypted> fae;
+ 		fae.instantiate();
+-		ERR_FAIL_COND_MSG(fae.is_null(), vformat(R"(Can't open encrypted pack-referenced file "%s" from pack "%s".)", p_path, pf.pack));
++		ERR_FAIL_COND_MSG(fae.is_null(), vformat(fortressgd_msg_enc_file(), p_path, pf.pack));
+ 
+ 		Vector<uint8_t> key;
+ 		key.resize(32);
+-		for (int i = 0; i < key.size(); i++) {
+-			key.write[i] = script_encryption_key[i];
+-		}
++		fortressgd_derive_key(key.ptrw());
+ 
+ 		Error err = fae->open_and_parse(f, key, FileAccessEncrypted::MODE_READ, false);
+-		ERR_FAIL_COND_MSG(err, vformat(R"(Can't open encrypted pack-referenced file "%s" from pack "%s".)", p_path, pf.pack));
++		fortressgd_wipe(key.ptrw(), key.size());
++		ERR_FAIL_COND_MSG(err, vformat(fortressgd_msg_enc_file(), p_path, pf.pack));
+ 		f = fae;
+ 		off = 0;
+ 	}

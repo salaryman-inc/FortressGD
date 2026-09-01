@@ -95,3 +95,28 @@ def secret_status(
         validate_secret_hex(raw)
         return {"state": "present", "source": "environment", "path": ENV_NAME}
     return {"state": "missing", "source": "", "path": str(path)}
+
+
+def load_secret_hex(
+    *,
+    secret_file: str | None = None,
+    environ: dict[str, str] | None = None,
+    cwd: Path | None = None,
+) -> str:
+    """
+    Return the 64-hex secret. Never log the return value.
+
+    Resolution: --secret-file (or default `.fortressgd.secret`), then FORTRESSGD_SECRET.
+    """
+    env = os.environ if environ is None else environ
+    path = resolve_secret_path(secret_file, cwd)
+    if path.is_file():
+        return read_secret_file(path)
+    raw = env.get(ENV_NAME)
+    if raw is not None and raw.strip() != "":
+        return validate_secret_hex(raw)
+    raise UserError("secret missing", NEXT_SECRET)
+
+
+def secret_bytes_from_hex(hex_secret: str) -> bytes:
+    return bytes.fromhex(validate_secret_hex(hex_secret))

@@ -61,6 +61,20 @@ include = ["mods/hook.gd"]
 
 Re-export, then run `fortressgd verify` again.
 
-## What this does not do yet
+## What this does not require
 
-Derived PCK encryption, custom templates, and pack dialect come in later phases (`fortressgd templates build` in Docker/CI). Skip those until you need them. A debugger can still dump decrypted resources from a running client; see `THREAT_MODEL.md`.
+Custom export templates, Docker, and `fortressgd templates build` are **not required** for the leak-check workflow above.
+
+## 5. Optional: derived-key templates (Phase 2)
+
+When you are ready to encrypt a Release PCK so stock KeyDot cannot one-click extract a 32-byte key:
+
+```bash
+export FORTRESSGD_SECRET="$(cat .fortressgd.secret)"
+python3 /path/to/FortressGD/cli/fortressgd templates build --godot 4.6.2 --platform linux
+python3 /path/to/FortressGD/cli/fortressgd export --preset Linux
+```
+
+That builds `template_release` in Docker (see `docs/ci.md`) and runs one official Godot export with `GODOT_SCRIPT_ENCRYPTION_KEY` set to FGD-KDF-1(secret, salt) for that process only. Missing templates print the exact `fortressgd templates build …` command to run.
+
+Pack dialect and identifier mangling come later. A debugger can still dump decrypted resources from a running client; see `THREAT_MODEL.md`.

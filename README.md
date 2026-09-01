@@ -6,7 +6,7 @@ Open-source **release toolchain** for Godot 4. Not a fork. Not DRM. Not anti-che
 
 Designers keep the official Godot editor. Custom **export templates** are built in Docker or CI from a pinned Godot tag plus a small patch quilt. Production exports refuse to ship source, and `fortressgd verify` fails CI if they did.
 
-**Status:** Phase 1 is implemented (`init`, `doctor`, `secret`, production export filters, `fortressgd verify`). Later commands follow [`DESIGN.md`](DESIGN.md) in phases. Start with [`docs/getting-started.md`](docs/getting-started.md) — official editor filters + verify, no custom templates required.
+**Status:** Phase 2 is implemented (`init`, `doctor`, `secret`, production filters, `verify`, `templates build|list`, `export` with FGD-KDF-1). Later commands follow [`DESIGN.md`](DESIGN.md) in phases. Start with [`docs/getting-started.md`](docs/getting-started.md) — official editor filters + verify, no custom templates required. Derived-key templates are optional until you encrypt a Release PCK.
 
 | Phase | What you get |
 |---|---|
@@ -154,13 +154,14 @@ Exit codes: `0` ok, `1` config/user error, `2` verify/policy failure, `3` tool o
 Build templates once per `(godot version, patchset, secret hash, platform)` and cache them. A GitHub Action is specified in `DESIGN.md` §2.3:
 
 ```yaml
-# sketch — action lands with Phase 2
-- uses: you/fortressgd/actions/build-templates@v1
+- uses: ./actions/build-templates
   with:
     godot_version: "4.6.2"
     platforms: "linux,windows"
     secret: ${{ secrets.FORTRESSGD_SECRET }}
 ```
+
+Cache key: `fgd-templates-{godot}-{patchset}-{secret_hash}-{platform}`. See [`docs/ci.md`](docs/ci.md).
 
 Then `fortressgd export` + `fortressgd verify` on the artifact. Optional `FORTRESSGD_UNPACKER_TESTS=1` runs pinned KeyDot/GDRE versions; those tools failing to recover the project is a pass.
 

@@ -1,0 +1,74 @@
+name: "FortressGD build templates"
+description: "Build FortressGD export templates (FGD-KDF-1) and cache them."
+inputs:
+  godot_version:
+    description: "Godot version tag without -stable, e.g. 4.6.2"
+    required: true
+  platforms:
+    description: "Comma-separated platforms: linux,windows"
+    required: true
+    default: "linux"
+  secret:
+    description: "32-byte project secret as 64 hex chars (from Actions secrets)"
+    required: true
+outputs:
+  cache_key:
+    description: "Cache key prefix fgd-templates-{godot}-{patchset}-{secret_hash}"
+    value: ${{ steps.meta.outputs.cache_key }}
+  secret_hash:
+    description: "16-hex secret_hash (not the secret)"
+    value: ${{ steps.meta.outputs.secret_hash }}
+runs:
+  using: "composite"
+  steps:
+    - name: Compute cache metadata
+      id: meta
+      shell: bash
+      env:
+        FORTRESSGD_SECRET: ${{ inputs.secret }}
+        GODOT_VERSION: ${{ inputs.godot_version }}
+      run: |
+        set -euo pipefail
+        ROOT="${{ github.action_path }}/../.."
+        META="$(python3 - "$ROOT" "$GODOT_VERSION" <<'PY'
+        import os, sys
+        sys.path.insert(0, sys.argv[1])
+        from core.kdf import secret_hash
+        from core.secret import secret_bytes_from_hex, validate_secret_hex
+        from core.templates import concrete_godot_tag, patchset_for_tag
+        secret = secret_bytes_from_hex(validate_secret_hex(os.environ["FORTRESSGD_SECRET"]))
+        godot = concrete_godot_tag(sys.argv[2])
+        sh = secret_hash(secret)
+        ps = patchset_for_tag(godot)
+        print(sh)
+        print(ps)
+        print(godot)
+        PY
+        )"
+        SECRET_HASH="$(printf '%s\n' "$META" | sed -n '1p')"
+        PATCHSET="$(printf '%s\n' "$META" | sed -n '2p')"
+        GODOT="$(printf '%s\n' "$META" | sed -n '3p')"
+        echo "secret_hash=$SECRET_HASH" >> "$GITHUB_OUTPUT"
+        echo "patchset=$PATCHSET" >> "$GITHUB_OUTPUT"
+        echo "godot=$GODOT" >> "$GITHUB_OUTPUT"
+        echo "cache_key=fgd-templates-${GODOT}-${PATCHSET}-${SECRET_HASH}" >> "$GITHUB_OUTPUT"
+
+    - name: Restore template cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/fortressgd/templates
+        key: fgd-templates-${{ steps.meta.outputs.godot }}-${{ steps.meta.outputs.patchset }}-${{ steps.meta.outputs.secret_hash }}-${{ inputs.platforms }}
+
+    - name: Build templates
+      shell: bash
+      env:
+        FORTRESSGD_SECRET: ${{ inputs.secret }}
+      working-directory: ${{ github.action_path }}/../..
+      run: |
+        set -euo pipefail
+        IFS=',' read -r -a PLATS <<< "${{ inputs.platforms }}"
+        ARGS=()
+        for p in "${PLATS[@]}"; do
+          ARGS+=(--platform "$p")
+        done
+        python3 cli/fortressgd templates build --godot "${{ inputs.godot_version }}" "${ARGS[@]}"
