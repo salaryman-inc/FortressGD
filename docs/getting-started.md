@@ -85,4 +85,6 @@ With `[production].dialect = true` (the example default), `fortressgd export` dr
 
 `fortressgd verify` then parses the artifact with the dialect magic + index permutation and the derived AES key. A stock GDPC listing of that pack must fail.
 
-Identifier mangling comes later. A debugger can still dump decrypted resources from a running client; see `THREAT_MODEL.md`.
+With `[production].mangle_scripts = true`, `fortressgd export` (and the editor plugin) strip comments / `assert` / `print_debug` / `breakpoint` and rename user identifiers. Unmarked `call("name")` / `rpc("name")` / `set("prop")` fail the export. A `*.fortressgd.map.json` sidecar is written next to the artifact, not packed. See `docs/agent-rules.md`.
+
+A debugger can still dump decrypted resources from a running client; see `THREAT_MODEL.md`.

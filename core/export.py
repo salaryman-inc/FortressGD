@@ -11,6 +11,12 @@ from typing import Any
 from core.config import load_path
 from core.errors import NEXT_DOCTOR, NEXT_EXPORT, UserError
 from core.kdf import aes_key_hex, secret_hash
+from core.mangle import (
+    iter_gdscript_files,
+    mangle_scripts,
+    source_map_json,
+    source_map_path,
+)
 from core.project import CONFIG_NAME, require_godot_root
 from core.secret import load_secret_hex, secret_bytes_from_hex
 from core.templates import (
@@ -162,6 +168,23 @@ def _production_dialect(cfg: dict[str, Any]) -> bool:
     return bool(production.get("dialect", False))
 
 
+def _production_mangle(cfg: dict[str, Any]) -> bool:
+    production = cfg.get("production") or {}
+    return bool(production.get("mangle_scripts", False))
+
+
+def write_export_source_map(
+    export_path: Path,
+    secret_hash_value: str,
+    mapping: dict[str, str],
+) -> Path:
+    """Write ``*.fortressgd.map.json`` next to the export artifact (not packed)."""
+    dest = source_map_path(export_path)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(source_map_json(secret_hash_value, mapping), encoding="utf-8")
+    return dest
+
+
 def _pack_output_path(export_path: str) -> str:
     """--export-pack wants a .pck/.zip path; keep those, otherwise swap the suffix."""
     if not export_path:
@@ -259,6 +282,26 @@ def export_preset(
     child_env["GODOT_SCRIPT_ENCRYPTION_KEY"] = derived_hex
     child_env.pop("FORTRESSGD_SECRET", None)
 
+    mangle_on = _production_mangle(cfg)
+    script_backups: dict[Path, str] = {}
+    identifier_map: dict[str, str] = {}
+    if mangle_on:
+        gd_paths = iter_gdscript_files(root)
+        sources = {
+            p.resolve().relative_to(root).as_posix(): p.read_text(encoding="utf-8")
+            for p in gd_paths
+        }
+        mangled_sources, identifier_map = mangle_scripts(
+            sources, secret_hash=secrethash, rename=True
+        )
+        for rel, text in mangled_sources.items():
+            path = root / rel
+            original_src = sources[rel]
+            if text != original_src:
+                script_backups[path] = original_src
+                path.write_text(text, encoding="utf-8")
+        child_env["FORTRESSGD_CLI_EXPORT"] = "1"
+
     presets_path.write_text(modified, encoding="utf-8")
     try:
         proc = subprocess.run(cmd, cwd=str(root), env=child_env, capture_output=True, text=True)
@@ -270,6 +313,8 @@ def export_preset(
             )
     finally:
         presets_path.write_text(original, encoding="utf-8")
+        for path, original_src in script_backups.items():
+            path.write_text(original_src, encoding="utf-8")
         if cred_existed and cred_backup is not None:
             cred_path.parent.mkdir(parents=True, exist_ok=True)
             cred_path.write_bytes(cred_backup)
@@ -282,6 +327,15 @@ def export_preset(
     restored = presets_path.read_text(encoding="utf-8")
     if derived_hex in restored or hex_secret in restored:
         raise UserError("export_presets.cfg contained secret or aes_key after export", NEXT_EXPORT)
+
+    map_file = ""
+    if mangle_on:
+        artifact = Path(out_path or export_path)
+        if not artifact.is_absolute():
+            artifact = root / artifact
+        written = write_export_source_map(artifact, secrethash, identifier_map)
+        map_file = str(written)
+
     return {
         "preset": preset_name,
         "platform": platform,
@@ -291,4 +345,6 @@ def export_preset(
         "export_path": out_path or export_path,
         "dialect": "1" if use_dialect else "0",
         "export_mode": "export-pack" if use_dialect else "export-release",
+        "mangle_scripts": "1" if mangle_on else "0",
+        "source_map": map_file,
     }

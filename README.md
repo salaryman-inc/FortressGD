@@ -127,7 +127,7 @@ include = []
 build = ["windows", "linux"]
 ```
 
-Release exports also force-exclude GDScript **text** (bytecode only) unless you allowlist a path. Dynamic `call("name")` / `rpc("name")` / `set("prop")` fail the export when mangling is on — use Callables. See `docs/agent-rules.md` once that file exists.
+Release exports also force-exclude GDScript **text** (bytecode only) unless you allowlist a path. Dynamic `call("name")` / `rpc("name")` / `set("prop")` fail the export when mangling is on — use Callables. See [`docs/agent-rules.md`](docs/agent-rules.md).
 
 Secret sources, in order: `--secret-file`, `FORTRESSGD_SECRET`, optional OS keychain.
 
