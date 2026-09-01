@@ -108,6 +108,7 @@ class DockerStaticTests(unittest.TestCase):
                     "FGD_PATCHSET": pset,
                     "FORTRESSGD_SECRET_FILE": str(secret_file),
                     "FORTRESSGD_SKIP_SCONS": "1",
+                    "FGD_DIALECT": "1",
                     "PATCHES_DIR": str(ROOT / "patches" / "4.6.2"),
                     "DIALECT_HEADER": str(header),
                     "OUT_DIR": str(out_dir),
@@ -143,8 +144,17 @@ class DockerStaticTests(unittest.TestCase):
             packed = (godot_src / "core" / "io" / "file_access_pack.cpp").read_text(
                 encoding="utf-8"
             )
+            header = (godot_src / "core" / "io" / "file_access_pack.h").read_text(encoding="utf-8")
+            packer = (godot_src / "core" / "io" / "pck_packer.cpp").read_text(encoding="utf-8")
             self.assertIn("fortressgd_derive_key", packed)
             self.assertNotIn("Can't open encrypted pack directory.", packed)
+            self.assertIn("FORTRESSGD_DIALECT", header)
+            self.assertIn("FGD_PACK_MAGIC", header)
+            self.assertIn("FGD_INDEX_PERM", packed)
+            self.assertIn("FGD_INDEX_PERM", packer)
+            gen_header = (godot_src / "core" / "dialect.gen.h").read_text(encoding="utf-8")
+            self.assertIn("FGD_PACK_MAGIC", gen_header)
+            self.assertIn("FGD_INDEX_PERM", gen_header)
             self.assertTrue(man.is_file(), combined)
             data = json.loads(man.read_text(encoding="utf-8"))
             self.assertEqual(data.get("kdf"), KDF_NAME)

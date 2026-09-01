@@ -16,7 +16,7 @@ The secret is an Actions secret passed at **run** time. It is not a Docker build
 
 ## Docker templates
 
-`docker/Dockerfile.templates` is digest-pinned. `docker/entrypoint.sh` shallow-clones the Godot tag, `git apply --check` then `git apply` of `patches/<tag>/series`, copies `dialect.gen.h`, and runs `scons target=template_release production=yes debug_symbols=no`.
+`docker/Dockerfile.templates` is digest-pinned. `docker/entrypoint.sh` shallow-clones the Godot tag, `git apply --check` then `git apply` of `patches/<tag>/series` (including `0002-pack-hooks.patch`), copies `dialect.gen.h`, and runs `scons target=template_release production=yes debug_symbols=no`. When `FGD_DIALECT=1`, scons gets `CCFLAGS=-DFORTRESSGD_DIALECT` so pack read/write use `FGD_PACK_MAGIC` and `FGD_INDEX_PERM`.
 
 `SCRIPT_AES256_ENCRYPTION_KEY` is **not** set. The template derives the AES key at runtime via FGD-KDF-1.
 

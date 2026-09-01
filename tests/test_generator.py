@@ -11,7 +11,10 @@ from core.secret import SECRET_BYTES
 from core.shards import decode_shards
 from generator.dialect import (
     GENERATOR_VERSION,
+    STOCK_PACK_MAGIC,
     derive_dialect_salt,
+    derive_index_perm,
+    derive_pack_magic,
     derive_shard_masks,
     dialect_material,
     render_dialect_header,
@@ -30,21 +33,28 @@ class GeneratorTests(unittest.TestCase):
         self.assertEqual(a, b)
         self.assertEqual(derive_dialect_salt(self.secret, "4.6.2"), derive_dialect_salt(self.secret, "4.6.2"))
         self.assertEqual(derive_shard_masks(self.secret, "4.6.2"), derive_shard_masks(self.secret, "4.6.2"))
+        self.assertEqual(derive_pack_magic(self.secret, "4.6.2"), derive_pack_magic(self.secret, "4.6.2"))
+        self.assertEqual(derive_index_perm(self.secret, "4.6.2"), derive_index_perm(self.secret, "4.6.2"))
         self.assertIn("FGD_DIALECT_SALT[16]", a)
         self.assertIn("FGD_SHARD_MASKS[4][8]", a)
         self.assertIn("FGD_SHARDS[4][8]", a)
+        self.assertIn("FGD_PACK_MAGIC", a)
+        self.assertIn("FGD_INDEX_PERM[4]", a)
         self.assertIn("data only", a)
         self.assertNotIn("if (", a)
         self.assertNotIn("for (", a)
         self.assertNotRegex(a, r"[0-9a-fA-F]{64}")
+        magic = derive_pack_magic(self.secret, "4.6.2")
+        self.assertNotEqual(magic, STOCK_PACK_MAGIC)
+        self.assertIn("0x{0:08x}".format(magic), a)
 
     def test_header_shards_round_trip_to_secret(self) -> None:
         salt, masks, shards, did = dialect_material(self.secret, "4.6.2")
         self.assertEqual(decode_shards(shards, masks), self.secret)
         self.assertEqual(len(did), 16)
-        self.assertEqual(GENERATOR_VERSION, 1)
+        self.assertEqual(GENERATOR_VERSION, 2)
 
-    def test_different_tag_or_salt_changes_aes_key(self) -> None:
+    def test_different_tag_or_secret_changes_magic_or_perm(self) -> None:
         salt_a = derive_dialect_salt(self.secret, "4.6.2")
         salt_b = derive_dialect_salt(self.secret, "4.7.2")
         self.assertNotEqual(salt_a, salt_b)
@@ -52,6 +62,16 @@ class GeneratorTests(unittest.TestCase):
         header_a = render_dialect_header(self.secret, "4.6.2")
         header_b = render_dialect_header(self.secret, "4.7.2")
         self.assertNotEqual(header_a, header_b)
+        magic_a = derive_pack_magic(self.secret, "4.6.2")
+        magic_b = derive_pack_magic(self.secret, "4.7.2")
+        perm_a = derive_index_perm(self.secret, "4.6.2")
+        perm_b = derive_index_perm(self.secret, "4.7.2")
+        self.assertTrue(magic_a != magic_b or perm_a != perm_b)
+        other = bytes((b + 1) % 256 for b in self.secret)
+        magic_c = derive_pack_magic(other, "4.6.2")
+        perm_c = derive_index_perm(other, "4.6.2")
+        self.assertTrue(magic_a != magic_c or perm_a != perm_c)
+        self.assertNotEqual(header_a, render_dialect_header(other, "4.6.2"))
 
     def test_write_header_and_opcode_map_stub(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

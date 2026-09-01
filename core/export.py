@@ -1,4 +1,4 @@
-"""Production export: derived AES key for one official Godot encrypt-PCK run."""
+"""Production export: official encrypt-PCK, or dialect --export-pack (DESIGN.md §8.3)."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from core.templates import (
     missing_template_error,
     patchset_for_tag,
     resolve_cache_dir_from_config,
+    templates_build_command,
 )
 from generator.dialect import derive_dialect_salt
 
@@ -156,6 +157,21 @@ def load_project_config(project_root: Path) -> dict[str, Any]:
     return load_path(toml_path)
 
 
+def _production_dialect(cfg: dict[str, Any]) -> bool:
+    production = cfg.get("production") or {}
+    return bool(production.get("dialect", False))
+
+
+def _pack_output_path(export_path: str) -> str:
+    """--export-pack wants a .pck/.zip path; keep those, otherwise swap the suffix."""
+    if not export_path:
+        return export_path
+    lower = export_path.lower()
+    if lower.endswith(".pck") or lower.endswith(".zip"):
+        return export_path
+    return str(Path(export_path).with_suffix(".pck"))
+
+
 def export_preset(
     *,
     preset_name: str,
@@ -165,14 +181,17 @@ def export_preset(
     godot_bin: str | None = None,
 ) -> dict[str, str]:
     """
-    Run one official Godot export with GODOT_SCRIPT_ENCRYPTION_KEY = FGD-KDF-1 hex.
+    dialect=false: official Godot --export-release with GODOT_SCRIPT_ENCRYPTION_KEY = FGD-KDF-1.
+    dialect=true: FortressGD-patched headless editor --export-pack (DESIGN.md §8.3).
 
     Does not persist aes_key or the raw secret. Restores export_presets.cfg.
+    Does not reimplement the Godot packer in Python.
     """
     env = os.environ if environ is None else environ
     root = require_godot_root(cwd if cwd is not None else Path.cwd())
     cfg = load_project_config(root)
     godot_ver = concrete_godot_tag(str(cfg["godot"]))
+    use_dialect = _production_dialect(cfg)
     hex_secret = load_secret_hex(secret_file=secret_file, environ=env, cwd=root)
     secret = secret_bytes_from_hex(hex_secret)
     secrethash = secret_hash(secret)
@@ -216,11 +235,25 @@ def export_preset(
     cred_existed = cred_path.is_file()
     cred_backup = cred_path.read_bytes() if cred_existed else None
 
-    binary = godot_bin if godot_bin else find_godot_bin(env)
+    try:
+        binary = godot_bin if godot_bin else find_godot_bin(env)
+    except UserError:
+        if use_dialect:
+            raise UserError(
+                "FortressGD patched editor not found on PATH "
+                "(set FORTRESSGD_GODOT to the headless editor built with the same patches, target=editor)",
+                templates_build_command(godot_ver, platform),
+            )
+        raise
     export_path = preset.get("export_path") or ""
-    cmd = [binary, "--headless", "--path", str(root), "--export-release", preset_name]
-    if export_path:
-        cmd.append(str(root / export_path) if not Path(export_path).is_absolute() else export_path)
+    if use_dialect:
+        out_path = _pack_output_path(export_path)
+        cmd = [binary, "--headless", "--path", str(root), "--export-pack", preset_name]
+    else:
+        out_path = export_path
+        cmd = [binary, "--headless", "--path", str(root), "--export-release", preset_name]
+    if out_path:
+        cmd.append(str(root / out_path) if not Path(out_path).is_absolute() else out_path)
 
     child_env = dict(env)
     child_env["GODOT_SCRIPT_ENCRYPTION_KEY"] = derived_hex
@@ -255,5 +288,7 @@ def export_preset(
         "godot": godot_ver,
         "secret_hash": secrethash,
         "template": str(template),
-        "export_path": export_path,
+        "export_path": out_path or export_path,
+        "dialect": "1" if use_dialect else "0",
+        "export_mode": "export-pack" if use_dialect else "export-release",
     }

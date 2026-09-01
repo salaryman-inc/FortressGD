@@ -204,6 +204,7 @@ def build_templates(
     cache_dir: str | Path | None = None,
     patches_dir: Path | None = None,
     skip_scons: bool = False,
+    dialect: bool = True,
 ) -> list[Path]:
     """
     Generate dialect.gen.h, refuse empty/failed series, run Docker template build,
@@ -264,6 +265,8 @@ def build_templates(
                     "FORTRESSGD_SECRET_FILE=/run/secrets/fortressgd",
                     "-e",
                     "FORTRESSGD_SKIP_SCONS={0}".format("1" if skip else "0"),
+                    "-e",
+                    "FGD_DIALECT={0}".format("1" if dialect else "0"),
                     "-v",
                     "{0}:/run/secrets/fortressgd:ro".format(secret_path),
                     "-v",

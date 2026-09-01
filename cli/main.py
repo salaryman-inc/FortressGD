@@ -17,20 +17,23 @@ from core.project import (
     format_init_ok,
     init_project,
 )
-from core.verify import format_verify_leaks, format_verify_ok, verify_artifact
 from core.secret import (
     ENV_NAME,
     generate_secret_hex,
+    load_secret_hex,
     resolve_secret_path,
+    secret_bytes_from_hex,
     secret_status,
     write_secret_file,
 )
 from core.templates import (
     SUPPORTED_PLATFORMS,
     build_templates,
+    concrete_godot_tag,
     list_cached_templates,
     resolve_cache_dir_from_config,
 )
+from core.verify import format_verify_leaks, format_verify_ok, verify_artifact
 from core.version import __version__
 
 
@@ -69,9 +72,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     ver = sub.add_parser(
         "verify",
-        help="list packed paths with a stock GDPC parser; fail on §6.3 leaks",
+        help="list packed paths (stock GDPC, or dialect + derived key); fail on §6.3 leaks",
     )
     ver.add_argument("artifact", help="PATH.pck or PATH.exe")
+    ver.add_argument("--secret-file", default=argparse.SUPPRESS, help=secret_file_help)
 
     tmpl = sub.add_parser("templates", help="build or list FortressGD export templates")
     tmpl_sub = tmpl.add_subparsers(dest="templates_command", required=True)
@@ -160,7 +164,26 @@ def _include_from_cwd() -> list[str]:
 def cmd_verify(args: argparse.Namespace) -> int:
     artifact = Path(args.artifact)
     include = _include_from_cwd()
-    result = verify_artifact(artifact, include=include)
+    cfg = _load_cwd_config()
+    production = cfg.get("production") or {}
+    dialect = bool(production.get("dialect", False))
+    secret = None
+    godot_tag = None
+    if dialect:
+        hex_secret = load_secret_hex(
+            secret_file=getattr(args, "secret_file", None),
+            environ=os.environ,
+            cwd=Path.cwd(),
+        )
+        secret = secret_bytes_from_hex(hex_secret)
+        godot_tag = concrete_godot_tag(str(cfg["godot"]))
+    result = verify_artifact(
+        artifact,
+        include=include,
+        dialect=dialect,
+        secret=secret,
+        godot_tag=godot_tag,
+    )
     if result.leaks:
         raise format_verify_leaks(result)
     sys.stdout.write(format_verify_ok(result) + "\n")
@@ -188,6 +211,11 @@ def cmd_templates_build(args: argparse.Namespace) -> int:
             platforms = list(SUPPORTED_PLATFORMS)
     cache = resolve_cache_dir_from_config(cfg) if cfg else None
     patches_dir = Path(args.patches_dir) if args.patches_dir else None
+    dialect = True
+    if cfg:
+        production = cfg.get("production") or {}
+        if "dialect" in production:
+            dialect = bool(production["dialect"])
     produced = build_templates(
         godot=godot,
         platforms=platforms,
@@ -196,6 +224,7 @@ def cmd_templates_build(args: argparse.Namespace) -> int:
         cwd=Path.cwd(),
         cache_dir=cache,
         patches_dir=patches_dir,
+        dialect=dialect,
     )
     for path in produced:
         sys.stdout.write(path.name + "\n")

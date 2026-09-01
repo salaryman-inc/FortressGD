@@ -1,0 +1,150 @@
+diff --git a/core/io/file_access_pack.h b/core/io/file_access_pack.h
+--- a/core/io/file_access_pack.h
++++ b/core/io/file_access_pack.h
+@@ -38,6 +38,11 @@
+ 
+ // Godot's packed file magic header ("GDPC" in ASCII).
+ #define PACK_HEADER_MAGIC 0x43504447
++#ifdef FORTRESSGD_DIALECT
++#include "core/dialect.gen.h"
++#undef PACK_HEADER_MAGIC
++#define PACK_HEADER_MAGIC FGD_PACK_MAGIC
++#endif
+ 
+ #define PACK_FORMAT_VERSION_V2 2
+ #define PACK_FORMAT_VERSION_V3 3
+diff --git a/core/io/file_access_pack.cpp b/core/io/file_access_pack.cpp
+--- a/core/io/file_access_pack.cpp
++++ b/core/io/file_access_pack.cpp
+@@ -341,11 +341,34 @@ bool PackedSourcePCK::try_open_pack(const String &p_path, bool p_replace_files,
+ 		cs[sl] = 0;
+ 
+ 		String path = String::utf8(cs.ptr(), sl);
++#ifdef FORTRESSGD_DIALECT
++		uint64_t ofs = 0;
++		uint64_t size = 0;
++		uint8_t md5[16] = { 0 };
++		uint32_t flags = 0;
++		for (int fgd_pi = 0; fgd_pi < 4; fgd_pi++) {
++			switch (FGD_INDEX_PERM[fgd_pi]) {
++				case 0:
++					ofs = f->get_64();
++					break;
++				case 1:
++					size = f->get_64();
++					break;
++				case 2:
++					f->get_buffer(md5, 16);
++					break;
++				case 3:
++					flags = f->get_32();
++					break;
++			}
++		}
++#else
+ 		uint64_t ofs = f->get_64();
+ 		uint64_t size = f->get_64();
+ 		uint8_t md5[16];
+ 		f->get_buffer(md5, 16);
+ 		uint32_t flags = f->get_32();
++#endif
+ 
+ 		if (flags & PACK_FILE_REMOVAL) { // The file was removed.
+ 			PackedData::get_singleton()->remove_path(path);
+diff --git a/core/io/pck_packer.cpp b/core/io/pck_packer.cpp
+--- a/core/io/pck_packer.cpp
++++ b/core/io/pck_packer.cpp
+@@ -242,10 +242,6 @@ Error PCKPacker::flush(bool p_verbose) {
+ 			fhead->store_8(0);
+ 		}
+ 
+-		fhead->store_64(files[i].ofs - file_base);
+-		fhead->store_64(files[i].size);
+-		fhead->store_buffer(files[i].md5.ptr(), 16);
+-
+ 		uint32_t flags = 0;
+ 		if (files[i].encrypted) {
+ 			flags |= PACK_FILE_ENCRYPTED;
+@@ -253,7 +249,34 @@ Error PCKPacker::flush(bool p_verbose) {
+ 		if (files[i].removal) {
+ 			flags |= PACK_FILE_REMOVAL;
+ 		}
++#ifdef FORTRESSGD_DIALECT
++		{
++			uint64_t fgd_ofs = files[i].ofs - file_base;
++			uint64_t fgd_size = files[i].size;
++			const uint8_t *fgd_md5 = files[i].md5.ptr();
++			for (int fgd_pi = 0; fgd_pi < 4; fgd_pi++) {
++				switch (FGD_INDEX_PERM[fgd_pi]) {
++					case 0:
++						fhead->store_64(fgd_ofs);
++						break;
++					case 1:
++						fhead->store_64(fgd_size);
++						break;
++					case 2:
++						fhead->store_buffer(fgd_md5, 16);
++						break;
++					case 3:
++						fhead->store_32(flags);
++						break;
++				}
++			}
++		}
++#else
++		fhead->store_64(files[i].ofs - file_base);
++		fhead->store_64(files[i].size);
++		fhead->store_buffer(files[i].md5.ptr(), 16);
+ 		fhead->store_32(flags);
++#endif
+ 
+ 		if (p_verbose) {
+ 			print_line(vformat("[%d/%d - %d%%] PCKPacker flush: %s -> %s", i, file_num, float(i) / file_num * 100, files[i].src_path, files[i].path));
+diff --git a/editor/export/editor_export_platform.cpp b/editor/export/editor_export_platform.cpp
+--- a/editor/export/editor_export_platform.cpp
++++ b/editor/export/editor_export_platform.cpp
+@@ -2042,9 +2042,6 @@ bool EditorExportPlatform::_encrypt_and_store_directory(Ref<FileAccess> p_fd, Pa
+ 			fhead->store_8(0);
+ 		}
+ 
+-		fhead->store_64(p_pack_data.file_ofs[i].ofs - p_file_base);
+-		fhead->store_64(p_pack_data.file_ofs[i].size); // pay attention here, this is where file is
+-		fhead->store_buffer(p_pack_data.file_ofs[i].md5.ptr(), 16); //also save md5 for file
+ 		uint32_t flags = 0;
+ 		if (p_pack_data.file_ofs[i].encrypted) {
+ 			flags |= PACK_FILE_ENCRYPTED;
+@@ -2055,7 +2052,34 @@ bool EditorExportPlatform::_encrypt_and_store_directory(Ref<FileAccess> p_fd, Pa
+ 		if (p_pack_data.file_ofs[i].delta) {
+ 			flags |= PACK_FILE_DELTA;
+ 		}
++#ifdef FORTRESSGD_DIALECT
++		{
++			uint64_t fgd_ofs = p_pack_data.file_ofs[i].ofs - p_file_base;
++			uint64_t fgd_size = p_pack_data.file_ofs[i].size;
++			const uint8_t *fgd_md5 = p_pack_data.file_ofs[i].md5.ptr();
++			for (int fgd_pi = 0; fgd_pi < 4; fgd_pi++) {
++				switch (FGD_INDEX_PERM[fgd_pi]) {
++					case 0:
++						fhead->store_64(fgd_ofs);
++						break;
++					case 1:
++						fhead->store_64(fgd_size);
++						break;
++					case 2:
++						fhead->store_buffer(fgd_md5, 16);
++						break;
++					case 3:
++						fhead->store_32(flags);
++						break;
++				}
++			}
++		}
++#else
++		fhead->store_64(p_pack_data.file_ofs[i].ofs - p_file_base);
++		fhead->store_64(p_pack_data.file_ofs[i].size); // pay attention here, this is where file is
++		fhead->store_buffer(p_pack_data.file_ofs[i].md5.ptr(), 16); //also save md5 for file
+ 		fhead->store_32(flags);
++#endif
+ 	}
+ 
+ 	if (fae.is_valid()) {

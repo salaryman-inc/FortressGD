@@ -42,26 +42,35 @@ def write_godot_stub(directory: Path) -> Path:
     return path
 
 
-UPSTREAM_PACK = (
-    "https://raw.githubusercontent.com/godotengine/godot/{tag}-stable/core/io/file_access_pack.cpp"
+UPSTREAM_FILES = (
+    "core/io/file_access_pack.cpp",
+    "core/io/file_access_pack.h",
+    "core/io/pck_packer.cpp",
+    "editor/export/editor_export_platform.cpp",
 )
 
+UPSTREAM_RAW = "https://raw.githubusercontent.com/godotengine/godot/{tag}-stable/{path}"
 
-def download_upstream_pack_cpp(tag: str, dest: Path) -> None:
+
+def download_upstream_file(tag: str, rel: str, dest: Path) -> None:
     from urllib.request import urlopen
 
     dest.parent.mkdir(parents=True, exist_ok=True)
-    with urlopen(UPSTREAM_PACK.format(tag=tag), timeout=60) as resp:
+    with urlopen(UPSTREAM_RAW.format(tag=tag, path=rel), timeout=60) as resp:
         dest.write_bytes(resp.read())
 
 
+def download_upstream_pack_cpp(tag: str, dest: Path) -> None:
+    download_upstream_file(tag, "core/io/file_access_pack.cpp", dest)
+
+
 def seed_mini_godot_tree(tag: str, work: Path) -> Path:
-    """Git checkout with only file_access_pack.cpp so `git apply` can run without a full clone."""
+    """Git checkout with pack read/write sources so `git apply` can run without a full clone."""
     import os
     import subprocess
 
-    pack = work / "core" / "io" / "file_access_pack.cpp"
-    download_upstream_pack_cpp(tag, pack)
+    for rel in UPSTREAM_FILES:
+        download_upstream_file(tag, rel, work / rel)
     subprocess.run(["git", "init"], cwd=work, check=True, capture_output=True)
     subprocess.run(["git", "add", "-A"], cwd=work, check=True, capture_output=True)
     subprocess.run(

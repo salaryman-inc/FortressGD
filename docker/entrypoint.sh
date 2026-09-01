@@ -19,6 +19,11 @@ HEADER_SRC="${DIALECT_HEADER:-/src/dialect.gen.h}"
 OUT_DIR="${OUT_DIR:-/out}"
 SKIP_SCONS="${FORTRESSGD_SKIP_SCONS:-0}"
 GODOT_SRC="${GODOT_SRC:-/work/godot}"
+FGD_DIALECT="${FGD_DIALECT:-1}"
+FGD_CCFLAGS=""
+if [ "$FGD_DIALECT" = "1" ]; then
+    FGD_CCFLAGS="-DFORTRESSGD_DIALECT"
+fi
 
 [ -f "$SECRET_FILE" ] || err "secret mount missing at $SECRET_FILE"
 [ -d "$PATCHES_DIR" ] || err "patches directory missing at $PATCHES_DIR"
@@ -122,11 +127,13 @@ cd "$GODOT_SRC"
 JOBS="$(nproc 2>/dev/null || echo 2)"
 # Do not set SCRIPT_AES256_ENCRYPTION_KEY — that would bake a KeyDot-extractable blob.
 if [ "$FGD_PLATFORM" = "linux" ]; then
-    scons platform=linuxbsd target=template_release production=yes debug_symbols=no arch="$FGD_ARCH" -j"$JOBS" \
+    scons platform=linuxbsd target=template_release production=yes debug_symbols=no arch="$FGD_ARCH" \
+        CCFLAGS="$FGD_CCFLAGS" -j"$JOBS" \
         || err "scons linuxbsd template_release failed"
     BIN="$(ls -1 bin/godot.linuxbsd.template_release* 2>/dev/null | head -n 1 || true)"
 elif [ "$FGD_PLATFORM" = "windows" ]; then
-    scons platform=windows target=template_release production=yes debug_symbols=no arch="$FGD_ARCH" use_mingw=yes -j"$JOBS" \
+    scons platform=windows target=template_release production=yes debug_symbols=no arch="$FGD_ARCH" use_mingw=yes \
+        CCFLAGS="$FGD_CCFLAGS" -j"$JOBS" \
         || err "scons windows template_release (mingw) failed. See docs/ci.md for the manual Windows job."
     BIN="$(ls -1 bin/godot.windows.template_release* 2>/dev/null | head -n 1 || true)"
 else

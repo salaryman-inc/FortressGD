@@ -7,6 +7,9 @@ import unittest
 from pathlib import Path
 
 from core.config import default_toml_text
+from core.pack import PACK_DIR_ENCRYPTED
+from core.pack_dialect import dialect_params_for_secret, encode_dialect_index
+from core.secret import read_secret_file, secret_bytes_from_hex
 from tests.gdpc_fixture import embed_exe, make_gdpc
 from tests.support import run_fortressgd, write_godot_stub
 
@@ -53,6 +56,7 @@ class VerifyCliTests(unittest.TestCase):
             root = Path(tmp)
             write_godot_stub(root)
             text = default_toml_text().replace("include = []", 'include = ["*.gd"]')
+            text = text.replace("dialect = true", "dialect = false")
             (root / ".fortressgd.toml").write_text(text, encoding="utf-8")
             pck = _write_pck(root, "mods.pck", ["main.tscn", "mods/hook.gd"])
             proc = run_fortressgd("verify", str(pck), cwd=root)
@@ -88,6 +92,57 @@ class VerifyCliTests(unittest.TestCase):
                 codes_leak.append(b.returncode)
                 self.assertIn("ok:", a.stdout + a.stderr)
                 self.assertIn("main.gd", b.stdout + b.stderr)
+            self.assertEqual(codes_clean, [0, 0])
+            self.assertEqual(codes_leak, [2, 2])
+
+    def _dialect_project(self, root: Path) -> bytes:
+        write_godot_stub(root)
+        self.assertEqual(run_fortressgd("init", cwd=root).returncode, 0)
+        self.assertEqual(run_fortressgd("secret", "generate", cwd=root).returncode, 0)
+        secret = secret_bytes_from_hex(read_secret_file(root / ".fortressgd.secret"))
+        return secret
+
+    def test_dialect_clean_and_leak_twice(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            secret = self._dialect_project(root)
+            magic, perm, key = dialect_params_for_secret(secret, "4.6.2")
+            clean = root / "clean-dialect.pck"
+            leak = root / "leak-dialect.pck"
+            clean.write_bytes(
+                encode_dialect_index(
+                    ["main.tscn", "main.gdc"],
+                    magic=magic,
+                    perm=perm,
+                    flags=PACK_DIR_ENCRYPTED,
+                    aes_key=key,
+                )
+            )
+            leak.write_bytes(
+                encode_dialect_index(
+                    ["main.tscn", "scripts/main.gd"],
+                    magic=magic,
+                    perm=perm,
+                    flags=PACK_DIR_ENCRYPTED,
+                    aes_key=key,
+                )
+            )
+            codes_clean = []
+            codes_leak = []
+            for _ in range(2):
+                a = run_fortressgd("verify", str(clean), cwd=root)
+                b = run_fortressgd("verify", str(leak), cwd=root)
+                a_out = a.stdout + a.stderr
+                b_out = b.stdout + b.stderr
+                codes_clean.append(a.returncode)
+                codes_leak.append(b.returncode)
+                self.assertEqual(a.returncode, 0, a_out)
+                self.assertIn("ok:", a_out)
+                self.assertIn("2 packed files", a_out)
+                self.assertEqual(b.returncode, 2, b_out)
+                self.assertIn("error:", b_out)
+                self.assertIn("Run:", b_out)
+                self.assertIn("scripts/main.gd", b_out)
             self.assertEqual(codes_clean, [0, 0])
             self.assertEqual(codes_leak, [2, 2])
 

@@ -77,4 +77,12 @@ python3 /path/to/FortressGD/cli/fortressgd export --preset Linux
 
 That builds `template_release` in Docker (see `docs/ci.md`) and runs one official Godot export with `GODOT_SCRIPT_ENCRYPTION_KEY` set to FGD-KDF-1(secret, salt) for that process only. Missing templates print the exact `fortressgd templates build …` command to run.
 
-Pack dialect and identifier mangling come later. A debugger can still dump decrypted resources from a running client; see `THREAT_MODEL.md`.
+Set `[production].dialect = false` to stay on that Phase 2 path.
+
+## 6. Optional: pack dialect (Phase 3)
+
+With `[production].dialect = true` (the example default), `fortressgd export` drives a **FortressGD-patched headless editor** (`target=editor`, same patches as the templates) with `--export-pack`. Point `FORTRESSGD_GODOT` at that binary. Designers keep using the official editor day-to-day.
+
+`fortressgd verify` then parses the artifact with the dialect magic + index permutation and the derived AES key. A stock GDPC listing of that pack must fail.
+
+Identifier mangling comes later. A debugger can still dump decrypted resources from a running client; see `THREAT_MODEL.md`.
