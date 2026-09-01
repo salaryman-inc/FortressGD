@@ -9,6 +9,15 @@ TOKENIZER_VERSION = 101
 IDENT_XOR = 0xB6
 FGDN_MAGIC = b"FGDN"
 
+# GDScriptTokenizer::Token::Type (gdscript_tokenizer.h). IDENTIFIER looks up
+# identifiers[] inside _binary_to_token.
+TOKEN_EMPTY = 0
+TOKEN_ANNOTATION = 1
+TOKEN_IDENTIFIER = 2
+TOKEN_BYTE_MASK = 0x80
+TOKEN_BITS = 8
+TOKEN_MASK = (1 << (TOKEN_BITS - 1)) - 1
+
 
 def encode_ident_entry(name: str) -> bytes:
     chars = [ord(ch) for ch in name]
@@ -17,6 +26,28 @@ def encode_ident_entry(name: str) -> bytes:
         raw = struct.pack("<I", ch)
         buf.extend(bytes(b ^ IDENT_XOR for b in raw))
     return bytes(buf)
+
+
+def decode_ident_entry(data: bytes, i: int) -> tuple[str, int]:
+    if i + 4 > len(data):
+        raise ValueError("truncated identifier length")
+    nchars = struct.unpack_from("<I", data, i)[0]
+    i += 4
+    need = nchars * 4
+    if i + need > len(data):
+        raise ValueError("truncated identifier")
+    chars: list[str] = []
+    for _ in range(nchars):
+        raw = bytes(b ^ IDENT_XOR for b in data[i : i + 4])
+        chars.append(chr(struct.unpack("<I", raw)[0]))
+        i += 4
+    return "".join(chars), i
+
+
+def encode_identifier_token(ident_index: int, start_line: int = 1) -> bytes:
+    token_type = (TOKEN_IDENTIFIER & TOKEN_MASK) | (ident_index << TOKEN_BITS)
+    token_type |= TOKEN_BYTE_MASK
+    return struct.pack("<II", token_type, start_line)
 
 
 def encode_gdsc(
@@ -30,8 +61,9 @@ def encode_gdsc(
     Minimal uncompressed GDSC blob.
 
     nameless=True omits the stock identifier/line tables (identifier_count=0,
-    token_line_count=0) and stores runtime names in an FGDN trailer — the
-    same split the engine patch writes.
+    token_line_count=0) and stores runtime names in an FGDN block *before*
+    the token stream — the same order the engine patch reads, so
+    _binary_to_token can resolve IDENTIFIER tokens.
     """
     if nameless:
         ident_count = 0
@@ -50,8 +82,66 @@ def encode_gdsc(
         for name in identifiers:
             trailer.extend(encode_ident_entry(name))
         contents += bytes(trailer)
+    if token_count > 0:
+        if not identifiers:
+            raise ValueError("identifier tokens require names")
+        for i in range(token_count):
+            contents += encode_identifier_token(i % len(identifiers))
     header = GDSC_MAGIC + struct.pack("<II", TOKENIZER_VERSION, 0)
     return header + contents
+
+
+def parse_gdsc_engine_order(blob: bytes) -> tuple[list[str], int]:
+    """
+    Sequential parse matching patched GDScriptTokenizerBuffer::set_code_buffer.
+
+    Stock identifier table first; if that count is 0, load FGDN *before*
+    walking tokens. IDENTIFIER tokens look up identifiers[] the same way
+    _binary_to_token does — out of range is an error, not a skip.
+    """
+    blob = find_gdsc(blob) or blob
+    if len(blob) < 12 or blob[:4] != GDSC_MAGIC:
+        raise ValueError("not GDSC")
+    if struct.unpack_from("<I", blob, 8)[0] != 0:
+        raise ValueError("compressed GDSC")
+    data = blob[12:]
+    if len(data) < 16:
+        raise ValueError("truncated GDSC contents")
+    ident_count, const_count, line_count, token_count = struct.unpack_from("<IIII", data, 0)
+    i = 16
+    identifiers: list[str] = []
+    for _ in range(ident_count):
+        name, i = decode_ident_entry(data, i)
+        identifiers.append(name)
+    for _ in range(const_count):
+        raise ValueError("constants not supported in this parser")
+    i += line_count * 16
+    if ident_count == 0 and i + 8 <= len(data) and data[i : i + 4] == FGDN_MAGIC:
+        n = struct.unpack_from("<I", data, i + 4)[0]
+        i += 8
+        identifiers = []
+        for _ in range(n):
+            name, i = decode_ident_entry(data, i)
+            identifiers.append(name)
+    resolved = 0
+    for _ in range(token_count):
+        if i >= len(data):
+            raise ValueError("truncated token")
+        if data[i] & TOKEN_BYTE_MASK:
+            if i + 8 > len(data):
+                raise ValueError("truncated token")
+            token_type = struct.unpack_from("<I", data, i)[0]
+            i += 8
+        else:
+            token_type = data[i]
+            i += 5
+        ttype = token_type & TOKEN_MASK
+        if ttype in (TOKEN_IDENTIFIER, TOKEN_ANNOTATION):
+            pos = token_type >> TOKEN_BITS
+            if pos >= len(identifiers):
+                raise ValueError("Identifier index out of bounds.")
+            resolved += 1
+    return identifiers, resolved
 
 
 def find_gdsc(data: bytes) -> bytes | None:

@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+import struct
 import tempfile
 import unittest
 from pathlib import Path
 
 from core.config import default_toml_text
-from core.gdc import encode_gdsc
+from core.gdc import (
+    FGDN_MAGIC,
+    GDSC_MAGIC,
+    TOKENIZER_VERSION,
+    encode_gdsc,
+    encode_ident_entry,
+    encode_identifier_token,
+    parse_gdsc_engine_order,
+)
 from core.pack import PACK_DIR_ENCRYPTED
 from core.pack_dialect import dialect_params_for_secret, encode_dialect_index
 from core.pack_sign import apply_signature, public_key_for_secret, sign_index, verify_index
@@ -160,6 +169,27 @@ class VerifyCliTests(unittest.TestCase):
         if sign_packs:
             text = text.replace("sign_packs = false", "sign_packs = true")
         path.write_text(text, encoding="utf-8")
+
+    def test_nameless_identifier_tokens_require_fgdn_before_tokens(self) -> None:
+        """Engine _binary_to_token looks up identifiers[] while walking tokens.
+
+        A nameless blob with IDENTIFIER tokens must load FGDN first. The old
+        trailer-after-tokens layout raises 'out of bounds' on the real lookup.
+        """
+        blob = encode_gdsc(["health", "attack"], nameless=True, token_count=2)
+        names, resolved = parse_gdsc_engine_order(blob)
+        self.assertEqual(names, ["health", "attack"])
+        self.assertEqual(resolved, 2)
+
+        tokens = encode_identifier_token(0) + encode_identifier_token(1)
+        fgdn = FGDN_MAGIC + struct.pack("<I", 2)
+        fgdn += encode_ident_entry("health") + encode_ident_entry("attack")
+        # Buggy layout: tokens, then FGDN (what 0003 did before the fix).
+        contents = struct.pack("<IIII", 0, 0, 0, 2) + tokens + fgdn
+        buggy = GDSC_MAGIC + struct.pack("<II", TOKENIZER_VERSION, 0) + contents
+        with self.assertRaises(ValueError) as ctx:
+            parse_gdsc_engine_order(buggy)
+        self.assertIn("out of bounds", str(ctx.exception).lower())
 
     def test_nameless_bytecode_verify_on_and_off(self) -> None:
         named = encode_gdsc(["health", "my_attack"], nameless=False)
