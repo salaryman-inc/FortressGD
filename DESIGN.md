@@ -1,4 +1,4 @@
-# Forgekit Design Spec
+# FortressGD Design Spec
 
 Status: draft for implementation  
 License of the product: MIT  
@@ -11,7 +11,7 @@ This document is the source of truth. If code and this spec disagree, change the
 
 ## 1. Purpose
 
-Forgekit is an open-source **release toolchain** for Godot 4. It produces production exports that stock, version-pinned unpackers (GDRE Tools, KeyDot, gdke, GodotPCKExplorer in documented versions) cannot one-click recover.
+FortressGD is an open-source **release toolchain** for Godot 4. It produces production exports that stock, version-pinned unpackers (GDRE Tools, KeyDot, gdke, GodotPCKExplorer in documented versions) cannot one-click recover.
 
 It is not a Godot fork, not DRM, and not an anti-cheat.
 
@@ -46,7 +46,7 @@ In scope:
 - Static key extraction via string anchors and LEA/pattern scans (KeyDot-class).
 - Full project recovery via GDRE Tools / gdsdecomp on stock PCK + stock bytecode.
 - Casual unzip / PCK Explorer listing of original paths and plaintext scripts.
-- Accidental shipping of `.cs`, `.gd` text, `.blend`, `.psd`, Forgekit source maps.
+- Accidental shipping of `.cs`, `.gd` text, `.blend`, `.psd`, FortressGD source maps.
 
 Out of scope (document, do not “fix”):
 
@@ -228,7 +228,7 @@ Editor / packer side:
   - passes `GODOT_SCRIPT_ENCRYPTION_KEY` / the export CLI equivalent for the duration of one export.
 - Do not persist `aes_key` on disk.
 
-If PR-style “patch key bytes into official template” lands upstream, Forgekit may use official templates **only** for the AES layer. Dialect and derived-key patches still require Forgekit templates.
+If PR-style “patch key bytes into official template” lands upstream, FortressGD may use official templates **only** for the AES layer. Dialect and derived-key patches still require FortressGD templates.
 
 ---
 
@@ -353,11 +353,11 @@ Minimal hooks in `core/io/file_access_pack.cpp` (and editor packer counterpart):
 
 - Read/write magic from `FK_PACK_MAGIC` when compiled with `FORGEKIT_DIALECT`.
 - Index field order from `FK_INDEX_PERM`.
-- Stock official builds remain 100% compatible. Dialect exists only in Forgekit templates **and** in the packer used at export.
+- Stock official builds remain 100% compatible. Dialect exists only in FortressGD templates **and** in the packer used at export.
 
 Export packer:
 
-- Preferred: CLI drives a **Forgekit-built editor-headless binary** (`target=editor` with the same patches) only on the export machine. Designers do not use it.
+- Preferred: CLI drives a **FortressGD-built editor-headless binary** (`target=editor` with the same patches) only on the export machine. Designers do not use it.
 - Alternative v1 acceptable: CLI writes the PCK itself by shelling to that headless binary with `--export-pack`.
 
 Do not reimplement the full Godot packer in Python in v1.
@@ -406,7 +406,7 @@ v1.1: nameless bytecode patch so decompilers lose symbol tables even without man
 
 Checks:
 
-1. Parse pack with **Forgekit** dialect + derived key (must succeed).
+1. Parse pack with **FortressGD** dialect + derived key (must succeed).
 2. Parse pack with **stock** GDPC parser and empty/no key (must fail if dialect or encrypt on).
 3. File list contains no excluded patterns from §6.3.
 4. No packed `*.forgekit.map.json`.
@@ -419,7 +419,7 @@ Do not vendor unpacker binaries in the default clone. Document how CI obtains th
 
 ## 11. Plugin UX
 
-Dock name: Forgekit.
+Dock name: FortressGD.
 
 Fields:
 
@@ -528,7 +528,7 @@ When implementing from this spec:
 | Dialect | Per-secret pack magic + index layout |
 | Patchset id | Hash of applied patches for a Godot tag |
 | FK-KDF-1 | HKDF-SHA256 key derivation in §5.2 |
-| Production export | Forgekit-enabled release preset |
+| Production export | FortressGD-enabled release preset |
 
 ---
 

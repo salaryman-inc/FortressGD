@@ -1,4 +1,4 @@
-# Forgekit
+# FortressGD
 
 Open-source **release toolchain** for Godot 4. Not a fork. Not DRM. Not anti-cheat.
 
@@ -32,7 +32,7 @@ Existing answers each cover one slice:
 - GDMaim — names only; pack still opens
 - ChaosProtector — paid Windows packer; not auditable
 
-Forgekit is the pipeline: filters + derived key + optional dialect + optional mangler + verify. Stock unpackers of **documented versions** should fail. A person with a debugger can still dump decrypted resources. That is accepted and written down in [`THREAT_MODEL.md`](THREAT_MODEL.md).
+FortressGD is the pipeline: filters + derived key + optional dialect + optional mangler + verify. Stock unpackers of **documented versions** should fail. A person with a debugger can still dump decrypted resources. That is accepted and written down in [`THREAT_MODEL.md`](THREAT_MODEL.md).
 
 ---
 
@@ -87,7 +87,7 @@ forgekit export --preset Linux
 forgekit verify path/to/your_game.pck
 ```
 
-In the editor: enable the Forgekit plugin, turn **Production export** on for the Release preset, export as usual. If templates for `(godot, secret_hash, platform)` are missing, export is blocked with the exact `templates build` command to run.
+In the editor: enable the FortressGD plugin, turn **Production export** on for the Release preset, export as usual. If templates for `(godot, secret_hash, platform)` are missing, export is blocked with the exact `templates build` command to run.
 
 Rotating `FORGEKIT_SECRET` requires rebuilding templates. Old packs will not load. That is intended.
 
@@ -195,7 +195,7 @@ There is **no** Godot source tree in this repo. A tag without `patches/<tag>/ser
 
 ## Comparison (short)
 
-| | Official encrypt | Godot-Secure | GDMaim | ChaosProtector | Forgekit |
+| | Official encrypt | Godot-Secure | GDMaim | ChaosProtector | FortressGD |
 |---|---|---|---|---|---|
 | Stock KeyDot/GDRE | Usually succeed | Usually fail | Pack still opens | Claim fail (Windows) | Target: fail + CI proof |
 | Editor | Official + custom templates | Patched editor | Official | Official | Official |

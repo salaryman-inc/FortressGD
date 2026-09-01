@@ -1,4 +1,4 @@
-# Forgekit threat model
+# FortressGD threat model
 
 See `DESIGN.md` §1.3 for the normative text. This page is the short form for README and agents.
 
@@ -17,4 +17,4 @@ See `DESIGN.md` §1.3 for the normative text. This page is the short form for RE
 
 ## Consequence
 
-Forgekit is a release toolchain. Treat “stock tools fail on this build” as success. Treat “nobody can ever extract assets” as out of scope. Do not add features that only address the second sentence.
+FortressGD is a release toolchain. Treat “stock tools fail on this build” as success. Treat “nobody can ever extract assets” as out of scope. Do not add features that only address the second sentence.
