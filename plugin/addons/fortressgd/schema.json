@@ -1,0 +1,7 @@
+{
+  "root": ["schema", "godot"],
+  "production": ["dialect", "mangle_scripts", "nameless_bytecode", "sign_packs", "verify_on_export"],
+  "filters": ["exclude", "include"],
+  "platforms": ["build"],
+  "templates": ["cache_dir"]
+}

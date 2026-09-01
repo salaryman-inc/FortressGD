@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fortressgd"
+version = "0.1.0"
+description = "Release toolchain for Godot 4"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+authors = [{ name = "Salaryman" }]
+
+[project.scripts]
+fortressgd = "cli.main:main"
+
+[project.optional-dependencies]
+dev = []
+
+[tool.setuptools.packages.find]
+include = ["cli*", "core*"]
+
+[tool.setuptools.package-data]
+"core" = []

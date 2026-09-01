@@ -6,7 +6,7 @@ Open-source **release toolchain** for Godot 4. Not a fork. Not DRM. Not anti-che
 
 Designers keep the official Godot editor. Custom **export templates** are built in Docker or CI from a pinned Godot tag plus a small patch quilt. Production exports refuse to ship source, and `fortressgd verify` fails CI if they did.
 
-**Status:** spec and repo skeleton. Implementation follows [`DESIGN.md`](DESIGN.md) in phases. Commands below are the intended v1 interface; they are not all wired yet.
+**Status:** Phase 0 is implemented (`init`, `doctor`, `secret generate`, `secret status`, plugin reads `.fortressgd.toml`). Later commands follow [`DESIGN.md`](DESIGN.md) in phases.
 
 | Phase | What you get |
 |---|---|
@@ -70,6 +70,8 @@ You do not need SCons or a local Godot source tree on designer machines.
 ---
 
 ## Quick start (intended v1)
+
+From a FortressGD checkout the command is `cli/fortressgd` (or `python3 -m cli`). After `pip install .` it is `fortressgd` on `PATH`.
 
 ```bash
 # in your Godot project root
