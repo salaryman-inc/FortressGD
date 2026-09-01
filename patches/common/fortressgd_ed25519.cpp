@@ -1,0 +1,492 @@
+/**************************************************************************/
+/*  fortressgd_ed25519.cpp                                                */
+/**************************************************************************/
+/* Ed25519 verify (RFC 8032). Public-domain field arithmetic after tweetnacl. */
+
+#include "fortressgd_ed25519.h"
+
+#include <cstdint>
+#include <cstring>
+#include <cstdlib>
+
+typedef int64_t fgd_gf[16];
+
+static uint64_t fgd_rotr64(uint64_t x, int n) {
+	return (x >> n) | (x << (64 - n));
+}
+
+static uint64_t fgd_be64(const uint8_t *p) {
+	return ((uint64_t)p[0] << 56) | ((uint64_t)p[1] << 48) | ((uint64_t)p[2] << 40) | ((uint64_t)p[3] << 32) |
+			((uint64_t)p[4] << 24) | ((uint64_t)p[5] << 16) | ((uint64_t)p[6] << 8) | (uint64_t)p[7];
+}
+
+static void fgd_store_be64(uint8_t *p, uint64_t v) {
+	p[0] = (uint8_t)(v >> 56);
+	p[1] = (uint8_t)(v >> 48);
+	p[2] = (uint8_t)(v >> 40);
+	p[3] = (uint8_t)(v >> 32);
+	p[4] = (uint8_t)(v >> 24);
+	p[5] = (uint8_t)(v >> 16);
+	p[6] = (uint8_t)(v >> 8);
+	p[7] = (uint8_t)v;
+}
+
+static const uint64_t FGD_K[80] = {
+	0x428a2f98d728ae22ULL, 0x7137449123ef65cdULL, 0xb5c0fbcfec4d3b2fULL, 0xe9b5dba58189dbbcULL,
+	0x3956c25bf348b538ULL, 0x59f111f1b605d019ULL, 0x923f82a4af194f9bULL, 0xab1c5ed5da6d8118ULL,
+	0xd807aa98a3030242ULL, 0x12835b0145706fbeULL, 0x243185be4ee4b28cULL, 0x550c7dc3d5ffb4e2ULL,
+	0x72be5d74f27b896fULL, 0x80deb1fe3b1696b1ULL, 0x9bdc06a725c71235ULL, 0xc19bf174cf692694ULL,
+	0xe49b69c19ef14ad2ULL, 0xefbe4786384f25e3ULL, 0x0fc19dc68b8cd5b5ULL, 0x240ca1cc77ac9c65ULL,
+	0x2de92c6f592b0275ULL, 0x4a7484aa6ea6e483ULL, 0x5cb0a9dcbd41fbd4ULL, 0x76f988da831153b5ULL,
+	0x983e5152ee66dfabULL, 0xa831c66d2db43210ULL, 0xb00327c898fb213fULL, 0xbf597fc7beef0ee4ULL,
+	0xc6e00bf33da88fc2ULL, 0xd5a79147930aa725ULL, 0x06ca6351e003826fULL, 0x142929670a0e6e70ULL,
+	0x27b70a8546d22ffcULL, 0x2e1b21385c26c926ULL, 0x4d2c6dfc5ac42aedULL, 0x53380d139d95b3dfULL,
+	0x650a73548baf63deULL, 0x766a0abb3c77b2a8ULL, 0x81c2c92e47edaee6ULL, 0x92722c851482353bULL,
+	0xa2bfe8a14cf10364ULL, 0xa81a664bbc423001ULL, 0xc24b8b70d0f89791ULL, 0xc76c51a30654be30ULL,
+	0xd192e819d6ef5218ULL, 0xd69906245565a910ULL, 0xf40e35855771202aULL, 0x106aa07032bbd1b8ULL,
+	0x19a4c116b8d2d0c8ULL, 0x1e376c085141ab53ULL, 0x2748774cdf8eeb99ULL, 0x34b0bcb5e19b48a8ULL,
+	0x391c0cb3c5c95a63ULL, 0x4ed8aa4ae3418acbULL, 0x5b9cca4f7763e373ULL, 0x682e6ff3d6b2b8a3ULL,
+	0x748f82ee5defb2fcULL, 0x78a5636f43172f60ULL, 0x84c87814a1f0ab72ULL, 0x8cc702081a6439ecULL,
+	0x90befffa23631e28ULL, 0xa4506cebde82bde9ULL, 0xbef9a3f7b2c67915ULL, 0xc67178f2e372532bULL,
+	0xca273eceea26619cULL, 0xd186b8c721c0c207ULL, 0xeada7dd6cde0eb1eULL, 0xf57d4f7fee6ed178ULL,
+	0x06f067aa72176fbaULL, 0x0a637dc5a2c898a6ULL, 0x113f9804bef90daeULL, 0x1b710b35131c471bULL,
+	0x28db77f523047d84ULL, 0x32caab7b40c72493ULL, 0x3c9ebe0a15c9bebcULL, 0x431d67c49c100d4cULL,
+	0x4cc5d4becb3e42b6ULL, 0x597f299cfc657e2aULL, 0x5fcb6fab3ad6faecULL, 0x6c44198c4a475817ULL,
+};
+
+static void fgd_sha512_compress(uint64_t h[8], const uint8_t p[128]) {
+	uint64_t w[80];
+	int i;
+	for (i = 0; i < 16; i++) {
+		w[i] = fgd_be64(p + i * 8);
+	}
+	for (i = 16; i < 80; i++) {
+		uint64_t s0 = fgd_rotr64(w[i - 15], 1) ^ fgd_rotr64(w[i - 15], 8) ^ (w[i - 15] >> 7);
+		uint64_t s1 = fgd_rotr64(w[i - 2], 19) ^ fgd_rotr64(w[i - 2], 61) ^ (w[i - 2] >> 6);
+		w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+	}
+	uint64_t a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], hh = h[7];
+	for (i = 0; i < 80; i++) {
+		uint64_t S1 = fgd_rotr64(e, 14) ^ fgd_rotr64(e, 18) ^ fgd_rotr64(e, 41);
+		uint64_t ch = (e & f) ^ ((~e) & g);
+		uint64_t t1 = hh + S1 + ch + FGD_K[i] + w[i];
+		uint64_t S0 = fgd_rotr64(a, 28) ^ fgd_rotr64(a, 34) ^ fgd_rotr64(a, 39);
+		uint64_t maj = (a & b) ^ (a & c) ^ (b & c);
+		uint64_t t2 = S0 + maj;
+		hh = g;
+		g = f;
+		f = e;
+		e = d + t1;
+		d = c;
+		c = b;
+		b = a;
+		a = t1 + t2;
+	}
+	h[0] += a;
+	h[1] += b;
+	h[2] += c;
+	h[3] += d;
+	h[4] += e;
+	h[5] += f;
+	h[6] += g;
+	h[7] += hh;
+}
+
+static void fgd_sha512(const uint8_t *msg, size_t len, uint8_t out[64]) {
+	static const uint64_t iv[8] = {
+		0x6a09e667f3bcc908ULL, 0xbb67ae8584caa73bULL, 0x3c6ef372fe94f82bULL, 0xa54ff53a5f1d36f1ULL,
+		0x510e527fade682d1ULL, 0x9b05688c2b3e6c1fULL, 0x1f83d9abfb41bd6bULL, 0x5be0cd19137e2179ULL,
+	};
+	uint64_t h[8];
+	int i;
+	for (i = 0; i < 8; i++) {
+		h[i] = iv[i];
+	}
+	uint8_t block[128];
+	size_t n = 0;
+	uint64_t bits_hi = 0;
+	uint64_t bits_lo = 0;
+	size_t idx;
+	for (idx = 0; idx < len; idx++) {
+		block[n++] = msg[idx];
+		if (n == 128) {
+			uint64_t add = 1024;
+			bits_lo += add;
+			if (bits_lo < add) {
+				bits_hi++;
+			}
+			fgd_sha512_compress(h, block);
+			n = 0;
+		}
+	}
+	{
+		uint64_t add = (uint64_t)n << 3;
+		bits_lo += add;
+		if (bits_lo < add) {
+			bits_hi++;
+		}
+	}
+	block[n++] = 0x80;
+	if (n > 112) {
+		while (n < 128) {
+			block[n++] = 0;
+		}
+		fgd_sha512_compress(h, block);
+		n = 0;
+	}
+	while (n < 112) {
+		block[n++] = 0;
+	}
+	fgd_store_be64(block + 112, bits_hi);
+	fgd_store_be64(block + 120, bits_lo);
+	fgd_sha512_compress(h, block);
+	for (i = 0; i < 8; i++) {
+		fgd_store_be64(out + i * 8, h[i]);
+	}
+}
+
+static void fgd_car25519(fgd_gf o) {
+	int i;
+	for (i = 0; i < 16; i++) {
+		o[i] += (1LL << 16);
+		int64_t c = o[i] >> 16;
+		o[(i + 1) * (i < 15)] += c - 1 + 37 * (c - 1) * (i == 15);
+		o[i] -= c << 16;
+	}
+}
+
+static void fgd_sel25519(fgd_gf p, fgd_gf q, int b) {
+	int64_t c = ~(int64_t)(b - 1);
+	int i;
+	for (i = 0; i < 16; i++) {
+		int64_t t = c & (p[i] ^ q[i]);
+		p[i] ^= t;
+		q[i] ^= t;
+	}
+}
+
+static void fgd_pack25519(uint8_t *o, const fgd_gf n) {
+	int i, j;
+	fgd_gf m, t;
+	for (i = 0; i < 16; i++) {
+		t[i] = n[i];
+	}
+	fgd_car25519(t);
+	fgd_car25519(t);
+	fgd_car25519(t);
+	for (j = 0; j < 2; j++) {
+		m[0] = t[0] - 0xffed;
+		for (i = 1; i < 15; i++) {
+			m[i] = t[i] - 0xffff - ((m[i - 1] >> 16) & 1);
+			m[i - 1] &= 0xffff;
+		}
+		m[15] = t[15] - 0x7fff - ((m[14] >> 16) & 1);
+		int b = (int)((m[15] >> 16) & 1);
+		m[14] &= 0xffff;
+		fgd_sel25519(t, m, 1 - b);
+	}
+	for (i = 0; i < 16; i++) {
+		o[2 * i] = (uint8_t)(t[i] & 0xff);
+		o[2 * i + 1] = (uint8_t)(t[i] >> 8);
+	}
+}
+
+static int fgd_neq25519(const fgd_gf a, const fgd_gf b) {
+	uint8_t c[32], d[32];
+	fgd_pack25519(c, a);
+	fgd_pack25519(d, b);
+	return memcmp(c, d, 32) != 0;
+}
+
+static uint8_t fgd_par25519(const fgd_gf a) {
+	uint8_t d[32];
+	fgd_pack25519(d, a);
+	return (uint8_t)(d[0] & 1);
+}
+
+static void fgd_unpack25519(fgd_gf o, const uint8_t *n) {
+	int i;
+	for (i = 0; i < 16; i++) {
+		o[i] = n[2 * i] + ((int64_t)n[2 * i + 1] << 8);
+	}
+	o[15] &= 0x7fff;
+}
+
+static void fgd_A(fgd_gf o, const fgd_gf a, const fgd_gf b) {
+	int i;
+	for (i = 0; i < 16; i++) {
+		o[i] = a[i] + b[i];
+	}
+}
+
+static void fgd_Z(fgd_gf o, const fgd_gf a, const fgd_gf b) {
+	int i;
+	for (i = 0; i < 16; i++) {
+		o[i] = a[i] - b[i];
+	}
+}
+
+static void fgd_M(fgd_gf o, const fgd_gf a, const fgd_gf b) {
+	int64_t t[31];
+	int i, j;
+	for (i = 0; i < 31; i++) {
+		t[i] = 0;
+	}
+	for (i = 0; i < 16; i++) {
+		for (j = 0; j < 16; j++) {
+			t[i + j] += a[i] * b[j];
+		}
+	}
+	for (i = 0; i < 15; i++) {
+		t[i] += 38 * t[i + 16];
+	}
+	for (i = 0; i < 16; i++) {
+		o[i] = t[i];
+	}
+	fgd_car25519(o);
+	fgd_car25519(o);
+}
+
+static void fgd_S(fgd_gf o, const fgd_gf a) {
+	fgd_M(o, a, a);
+}
+
+static void fgd_inv25519(fgd_gf o, const fgd_gf i) {
+	fgd_gf c;
+	int a;
+	for (a = 0; a < 16; a++) {
+		c[a] = i[a];
+	}
+	for (a = 253; a >= 0; a--) {
+		fgd_S(c, c);
+		if (a != 2 && a != 4) {
+			fgd_M(c, c, i);
+		}
+	}
+	for (a = 0; a < 16; a++) {
+		o[a] = c[a];
+	}
+}
+
+static const fgd_gf FGD_D = {
+	0x78a3, 0x1359, 0x4dca, 0x75eb, 0xd8ab, 0x4141, 0x0a4d, 0x0070,
+	0xe898, 0x7779, 0x4079, 0x8cc7, 0xfe73, 0x2b6f, 0x6cee, 0x5203
+};
+static const fgd_gf FGD_D2 = {
+	0xf159, 0x26b2, 0x9b94, 0xebd6, 0xb156, 0x8283, 0x149a, 0x00e0,
+	0xd130, 0xeef3, 0x80f2, 0x198e, 0xfce7, 0x56df, 0xd9dc, 0x2406
+};
+static const fgd_gf FGD_I = {
+	0xa0b0, 0x4a0e, 0x1b27, 0xc4ee, 0xe478, 0xad2f, 0x1806, 0x2f43,
+	0xd7a7, 0x3dfb, 0x0099, 0x2b4d, 0xdf0b, 0x4fc1, 0x2480, 0x2b83
+};
+
+static void fgd_add(fgd_gf p[4], fgd_gf q[4]) {
+	fgd_gf a, b, c, d, t, e, f, g, h;
+	fgd_Z(a, p[1], p[0]);
+	fgd_Z(t, q[1], q[0]);
+	fgd_M(a, a, t);
+	fgd_A(b, p[0], p[1]);
+	fgd_A(t, q[0], q[1]);
+	fgd_M(b, b, t);
+	fgd_M(c, p[3], q[3]);
+	fgd_M(c, c, FGD_D2);
+	fgd_M(d, p[2], q[2]);
+	fgd_A(d, d, d);
+	fgd_Z(e, b, a);
+	fgd_Z(f, d, c);
+	fgd_A(g, d, c);
+	fgd_A(h, b, a);
+	fgd_M(p[0], e, f);
+	fgd_M(p[1], h, g);
+	fgd_M(p[2], g, f);
+	fgd_M(p[3], e, h);
+}
+
+static void fgd_cswap(fgd_gf p[4], fgd_gf q[4], uint8_t b) {
+	fgd_sel25519(p[0], q[0], b);
+	fgd_sel25519(p[1], q[1], b);
+	fgd_sel25519(p[2], q[2], b);
+	fgd_sel25519(p[3], q[3], b);
+}
+
+static void fgd_pack(uint8_t *r, fgd_gf p[4]) {
+	fgd_gf tx, ty, zi;
+	fgd_inv25519(zi, p[2]);
+	fgd_M(tx, p[0], zi);
+	fgd_M(ty, p[1], zi);
+	fgd_pack25519(r, ty);
+	r[31] ^= (uint8_t)(fgd_par25519(tx) << 7);
+}
+
+static void fgd_scalarmult(fgd_gf p[4], fgd_gf q[4], const uint8_t *s) {
+	fgd_gf b[4];
+	int i, j;
+	for (i = 0; i < 4; i++) {
+		for (j = 0; j < 16; j++) {
+			p[i][j] = 0;
+			b[i][j] = q[i][j];
+		}
+	}
+	p[1][0] = 1;
+	p[2][0] = 1;
+	for (i = 255; i >= 0; --i) {
+		uint8_t bit = (uint8_t)((s[i / 8] >> (i & 7)) & 1);
+		fgd_cswap(p, b, bit);
+		fgd_add(b, p);
+		fgd_add(p, p);
+		fgd_cswap(p, b, bit);
+	}
+}
+
+static void fgd_scalarbase(fgd_gf p[4], const uint8_t *s) {
+	static const fgd_gf X = {
+		0xd51a, 0x8f25, 0x2d60, 0xc956, 0xa7b2, 0x9525, 0xc760, 0x692c,
+		0xdc5c, 0xfdd6, 0xe231, 0xc0a4, 0x53fe, 0xcd6e, 0x36d3, 0x2169
+	};
+	static const fgd_gf Y = {
+		0x6658, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666,
+		0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666
+	};
+	fgd_gf q[4];
+	int i;
+	for (i = 0; i < 16; i++) {
+		q[0][i] = X[i];
+		q[1][i] = Y[i];
+		q[2][i] = 0;
+		q[3][i] = 0;
+	}
+	q[2][0] = 1;
+	fgd_M(q[3], X, Y);
+	fgd_scalarmult(p, q, s);
+}
+
+static void fgd_pow2523(fgd_gf o, const fgd_gf i) {
+	fgd_gf c;
+	int a;
+	for (a = 0; a < 16; a++) {
+		c[a] = i[a];
+	}
+	for (a = 250; a >= 0; a--) {
+		fgd_S(c, c);
+		if (a != 1) {
+			fgd_M(c, c, i);
+		}
+	}
+	for (a = 0; a < 16; a++) {
+		o[a] = c[a];
+	}
+}
+
+static int fgd_unpackneg(fgd_gf r[4], const uint8_t p[32]) {
+	fgd_gf t, chk, num, den, den2, den4, den6;
+	int i;
+	fgd_unpack25519(r[1], p);
+	for (i = 0; i < 16; i++) {
+		r[2][i] = 0;
+	}
+	r[2][0] = 1;
+	fgd_S(num, r[1]);
+	fgd_M(den, num, FGD_D);
+	fgd_Z(num, num, r[2]);
+	fgd_A(den, r[2], den);
+	fgd_S(den2, den);
+	fgd_S(den4, den2);
+	fgd_M(den6, den4, den2);
+	fgd_M(t, den6, num);
+	fgd_M(t, t, den);
+	fgd_pow2523(t, t);
+	fgd_M(t, t, num);
+	fgd_M(t, t, den);
+	fgd_M(t, t, den);
+	fgd_M(r[0], t, den);
+	fgd_S(chk, r[0]);
+	fgd_M(chk, chk, den);
+	if (fgd_neq25519(chk, num)) {
+		fgd_M(r[0], r[0], FGD_I);
+	}
+	fgd_S(chk, r[0]);
+	fgd_M(chk, chk, den);
+	if (fgd_neq25519(chk, num)) {
+		return -1;
+	}
+	if (fgd_par25519(r[0]) == (p[31] >> 7)) {
+		fgd_Z(r[0], r[2] /* unused as 0-r */, r[0]);
+		for (i = 0; i < 16; i++) {
+			r[0][i] = -r[0][i];
+		}
+	}
+	fgd_M(r[3], r[0], r[1]);
+	return 0;
+}
+
+static void fgd_modL(uint8_t *r, int64_t x[64]) {
+	static const int64_t L[32] = {
+		0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9, 0xde, 0x14,
+		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10
+	};
+	int i, j;
+	int64_t carry;
+	for (i = 63; i >= 32; --i) {
+		carry = 0;
+		for (j = i - 32; j < i - 12; ++j) {
+			x[j] += carry - 16 * x[i] * L[j - (i - 32)];
+			carry = (x[j] + 128) >> 8;
+			x[j] -= carry << 8;
+		}
+		x[i - 12] += carry;
+		x[i] = 0;
+	}
+	carry = 0;
+	for (j = 0; j < 32; ++j) {
+		x[j] += carry - (x[31] >> 4) * L[j];
+		carry = x[j] >> 8;
+		x[j] &= 255;
+	}
+	for (j = 0; j < 32; ++j) {
+		x[j] -= carry * L[j];
+	}
+	for (i = 0; i < 32; ++i) {
+		x[i + 1] += x[i] >> 8;
+		r[i] = (uint8_t)(x[i] & 255);
+	}
+}
+
+static void fgd_reduce(uint8_t *r) {
+	int64_t x[64];
+	int i;
+	for (i = 0; i < 64; i++) {
+		x[i] = (unsigned char)r[i];
+	}
+	for (i = 0; i < 64; i++) {
+		r[i] = 0;
+	}
+	fgd_modL(r, x);
+}
+
+int fortressgd_ed25519_verify(const uint8_t p_public[32], const uint8_t *p_msg, size_t p_msg_len, const uint8_t p_sig[64]) {
+	fgd_gf q[4], p[4];
+	uint8_t h[64];
+	uint8_t rcheck[32];
+	size_t n;
+	uint8_t *scratch;
+	if (fgd_unpackneg(q, p_public)) {
+		return 0;
+	}
+	n = 64 + p_msg_len;
+	scratch = (uint8_t *)malloc(n);
+	if (!scratch) {
+		return 0;
+	}
+	memcpy(scratch, p_sig, 32);
+	memcpy(scratch + 32, p_public, 32);
+	memcpy(scratch + 64, p_msg, p_msg_len);
+	fgd_sha512(scratch, n, h);
+	free(scratch);
+	fgd_reduce(h);
+	fgd_scalarmult(p, q, h);
+	fgd_scalarbase(q, p_sig + 32);
+	fgd_add(p, q);
+	fgd_pack(rcheck, p);
+	return memcmp(rcheck, p_sig, 32) == 0 ? 1 : 0;
+}

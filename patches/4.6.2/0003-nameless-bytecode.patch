@@ -1,0 +1,130 @@
+diff --git a/modules/gdscript/gdscript_tokenizer_buffer.cpp b/modules/gdscript/gdscript_tokenizer_buffer.cpp
+--- a/modules/gdscript/gdscript_tokenizer_buffer.cpp
++++ b/modules/gdscript/gdscript_tokenizer_buffer.cpp
+@@ -232,7 +232,34 @@ Error GDScriptTokenizerBuffer::set_code_buffer(const Vector<uint8_t> &p_buffer)
+ 		total_len -= token_len;
+ 	}
+ 
++#ifdef FORTRESSGD_NAMELESS
++	if (identifier_count == 0 && total_len >= 8 && b[0] == 'F' && b[1] == 'G' && b[2] == 'D' && b[3] == 'N') { // FGDN
++		uint32_t n = decode_uint32(b + 4);
++		b += 8;
++		total_len -= 8;
++		identifiers.resize(n);
++		for (uint32_t i = 0; i < n; i++) {
++			uint32_t len = decode_uint32(b);
++			total_len -= 4;
++			ERR_FAIL_COND_V((len * 4u) > (uint32_t)total_len, ERR_INVALID_DATA);
++			b += 4;
++			Vector<uint32_t> cs;
++			cs.resize(len);
++			for (uint32_t j = 0; j < len; j++) {
++				uint8_t tmp[4];
++				for (uint32_t k = 0; k < 4; k++) {
++					tmp[k] = b[j * 4 + k] ^ 0xb6;
++				}
++				cs.write[j] = decode_uint32(tmp);
++			}
++			String s = String::utf32(Span(reinterpret_cast<const char32_t *>(cs.ptr()), len));
++			b += len * 4;
++			total_len -= len * 4;
++			identifiers.write[i] = s;
++		}
++	}
++#endif
+ 	ERR_FAIL_COND_V(total_len > 0, ERR_INVALID_DATA);
+ 
+ 	return OK;
+ }
+@@ -291,33 +324,43 @@ Vector<uint8_t> GDScriptTokenizerBuffer::parse_code_string(const String &p_code,
+ 
+ 	Vector<uint8_t> contents;
+ 	contents.resize(16);
++#ifdef FORTRESSGD_NAMELESS
++	encode_uint32(0, &contents.write[0]); // omit debug identifier table
++	encode_uint32(constant_map.size(), &contents.write[4]);
++	encode_uint32(0, &contents.write[8]); // omit token line table
++#else
+ 	encode_uint32(identifier_map.size(), &contents.write[0]);
+ 	encode_uint32(constant_map.size(), &contents.write[4]);
+ 	encode_uint32(token_lines.size(), &contents.write[8]);
++#endif
+ 	encode_uint32(token_counter, &contents.write[12]);
+ 
+ 	int buf_pos = 16;
+ 
+ 	// Save identifiers.
+ 	for (const StringName &id : rev_identifier_map) {
++#ifdef FORTRESSGD_NAMELESS
++		(void)id;
++#else
+ 		String s = id.operator String();
+ 		int len = s.length();
+ 
+ 		contents.resize(buf_pos + (len + 1) * 4);
+ 
+ 		encode_uint32(len, &contents.write[buf_pos]);
+ 		buf_pos += 4;
+ 
+ 		for (int i = 0; i < len; i++) {
+ 			uint8_t tmp[4];
+ 			encode_uint32(s[i], tmp);
+ 
+ 			for (int b = 0; b < 4; b++) {
+ 				contents.write[buf_pos + b] = tmp[b] ^ 0xb6;
+ 			}
+ 
+ 			buf_pos += 4;
+ 		}
++#endif
+ 	}
+ 
+ 	// Save constants.
+@@ -332,6 +370,7 @@ Vector<uint8_t> GDScriptTokenizerBuffer::parse_code_string(const String &p_code,
+ 	}
+ 
+ 	// Save lines and columns.
++#ifndef FORTRESSGD_NAMELESS
+ 	contents.resize(buf_pos + token_lines.size() * 16);
+ 	for (const KeyValue<uint32_t, uint32_t> &e : token_lines) {
+ 		encode_uint32(e.key, &contents.write[buf_pos]);
+@@ -345,10 +384,39 @@ Vector<uint8_t> GDScriptTokenizerBuffer::parse_code_string(const String &p_code,
+ 		encode_uint32(e.value, &contents.write[buf_pos]);
+ 		buf_pos += 4;
+ 	}
++#endif
+ 
+ 	// Store tokens.
+ 	contents.append_array(token_buffer);
+ 
++#ifdef FORTRESSGD_NAMELESS
++	{
++		int tpos = contents.size();
++		contents.resize(tpos + 8);
++		contents.write[tpos + 0] = 'F';
++		contents.write[tpos + 1] = 'G';
++		contents.write[tpos + 2] = 'D';
++		contents.write[tpos + 3] = 'N';
++		encode_uint32(rev_identifier_map.size(), &contents.write[tpos + 4]);
++		int fgd_pos = tpos + 8;
++		for (const StringName &id : rev_identifier_map) {
++			String s = id.operator String();
++			int len = s.length();
++			contents.resize(fgd_pos + (len + 1) * 4);
++			encode_uint32(len, &contents.write[fgd_pos]);
++			fgd_pos += 4;
++			for (int i = 0; i < len; i++) {
++				uint8_t tmp[4];
++				encode_uint32(s[i], tmp);
++				for (int b = 0; b < 4; b++) {
++					contents.write[fgd_pos + b] = tmp[b] ^ 0xb6;
++				}
++				fgd_pos += 4;
++			}
++		}
++	}
++#endif
++
+ 	Vector<uint8_t> buf;
+ 
+ 	// Save header.

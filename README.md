@@ -6,7 +6,7 @@ Open-source **release toolchain** for Godot 4. Not a fork. Not DRM. Not anti-che
 
 Designers keep the official Godot editor. Custom **export templates** are built in Docker or CI from a pinned Godot tag plus a small patch quilt. Production exports refuse to ship source, and `fortressgd verify` fails CI if they did.
 
-**Status:** Phase 3 is implemented (`init`, `doctor`, `secret`, production filters, `verify`, `templates build|list`, `export` with FGD-KDF-1, pack dialect). Later commands follow [`DESIGN.md`](DESIGN.md) in phases. Start with [`docs/getting-started.md`](docs/getting-started.md) — official editor filters + verify, no custom templates required. Derived-key templates and dialect packs are optional until you encrypt a Release PCK.
+**Status:** Phase 5 is implemented (`init`, `doctor`, `secret`, production filters, `verify`, `templates build|list`, `export` with FGD-KDF-1, pack dialect, mangling, nameless bytecode, opcode map, Ed25519 pack signatures). Flags `nameless_bytecode` and `sign_packs` stay off by default. Start with [`docs/getting-started.md`](docs/getting-started.md) — official editor filters + verify, no custom templates required. Derived-key templates and dialect packs are optional until you encrypt a Release PCK.
 
 | Phase | What you get |
 |---|---|
@@ -15,7 +15,7 @@ Designers keep the official Godot editor. Custom **export templates** are built 
 | 2 | Custom templates + derived AES key (`FGD-KDF-1`) |
 | 3 | Per-secret pack dialect |
 | 4 | GDScript mangling on export |
-| 5 | Nameless bytecode, signatures (later) |
+| 5 | Nameless bytecode, opcode map, Ed25519 pack signatures |
 
 Supported engine tags for v1: **Godot 4.6.2 and 4.7.x stable**. See `DESIGN.md` §4.
 

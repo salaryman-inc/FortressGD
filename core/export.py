@@ -173,6 +173,11 @@ def _production_mangle(cfg: dict[str, Any]) -> bool:
     return bool(production.get("mangle_scripts", False))
 
 
+def _production_sign_packs(cfg: dict[str, Any]) -> bool:
+    production = cfg.get("production") or {}
+    return bool(production.get("sign_packs", False))
+
+
 def write_export_source_map(
     export_path: Path,
     secret_hash_value: str,
@@ -329,12 +334,30 @@ def export_preset(
         raise UserError("export_presets.cfg contained secret or aes_key after export", NEXT_EXPORT)
 
     map_file = ""
+    artifact = Path(out_path or export_path)
+    if artifact and not artifact.is_absolute():
+        artifact = root / artifact
     if mangle_on:
-        artifact = Path(out_path or export_path)
-        if not artifact.is_absolute():
-            artifact = root / artifact
         written = write_export_source_map(artifact, secrethash, identifier_map)
         map_file = str(written)
+
+    if _production_sign_packs(cfg) and artifact and artifact.is_file():
+        from core.pack_sign import apply_signature, sign_index
+        from core.pack import read_pack_listing
+        from core.pack_dialect import dialect_params_for_secret, read_dialect_listing
+
+        packed = artifact.read_bytes()
+        if use_dialect:
+            magic, perm, aes_key = dialect_params_for_secret(secret, godot_ver)
+            listing = read_dialect_listing(
+                packed, magic=magic, perm=perm, aes_key=aes_key, source=str(artifact)
+            )
+        else:
+            listing = read_pack_listing(packed, source=str(artifact))
+        signature = sign_index(listing.index_bytes(packed), secret, godot_ver)
+        artifact.write_bytes(
+            apply_signature(packed, signature, listing.pck_start, listing.version)
+        )
 
     return {
         "preset": preset_name,

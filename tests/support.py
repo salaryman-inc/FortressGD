@@ -47,6 +47,9 @@ UPSTREAM_FILES = (
     "core/io/file_access_pack.h",
     "core/io/pck_packer.cpp",
     "editor/export/editor_export_platform.cpp",
+    "modules/gdscript/gdscript_tokenizer_buffer.cpp",
+    "modules/gdscript/gdscript_byte_codegen.h",
+    "modules/gdscript/gdscript_vm.cpp",
 )
 
 UPSTREAM_RAW = "https://raw.githubusercontent.com/godotengine/godot/{tag}-stable/{path}"

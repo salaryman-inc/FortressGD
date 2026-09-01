@@ -16,6 +16,8 @@ from core.pack import (
     PACK_FORMAT_V4,
     PACK_MAGIC,
     PackError,
+    PackedFile,
+    PackListing,
     SUPPORTED_FORMATS,
     _MAX_FILES,
     _MAX_PATH,
@@ -149,14 +151,42 @@ def encode_dialect_index(
     flags: int = 0,
     aes_key: bytes | None = None,
     iv: bytes | None = None,
+    contents: dict[str, bytes] | None = None,
+    signature: bytes | None = None,
 ) -> bytes:
     """
-    Build a dialect pack index (empty file bodies). Not a Godot packer.
+    Build a dialect pack index. Not a Godot packer.
 
     When PACK_DIR_ENCRYPTED is set, `aes_key` must be the FGD-KDF-1 output.
     """
     if magic == STOCK_PACK_MAGIC:
         raise PackError("dialect magic must not equal stock GDPC")
+    blobs = contents or {}
+    bodies = [blobs.get(path, b"") for path in paths]
+
+    records = bytearray()
+    records.extend(struct.pack("<I", len(paths)))
+    cursor = 0
+    for path, body in zip(paths, bodies):
+        raw = path.encode("utf-8")
+        pad = (4 - (len(raw) % 4)) % 4
+        records.extend(struct.pack("<I", len(raw) + pad))
+        records.extend(raw)
+        records.extend(b"\x00" * pad)
+        _write_index_fields(records, perm, cursor, len(body), b"\x00" * 16, 0)
+        cursor += len(body)
+    file_data = b"".join(bodies)
+
+    if flags & PACK_DIR_ENCRYPTED:
+        if aes_key is None:
+            raise PackError("encrypted dialect directory requires derived AES key")
+        nonce = iv if iv is not None else b"\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10"
+        file_count = records[:4]
+        rest = records[4:]
+        dir_blob = file_count + encrypt_fae_directory(rest, aes_key, nonce)
+    else:
+        dir_blob = bytes(records)
+
     buf = bytearray()
 
     def u32(value: int) -> None:
@@ -171,38 +201,31 @@ def encode_dialect_index(
     u32(minor)
     u32(patch)
     u32(flags)
+    file_base_at = len(buf)
     u64(0)  # file_base
     if version >= PACK_FORMAT_V3:
         dir_offset_at = len(buf)
         u64(0)
+        reserved_at = len(buf)
         for _ in range(16):
             u32(0)
         struct.pack_into("<Q", buf, dir_offset_at, len(buf))
+        if signature is not None:
+            if len(signature) != 64:
+                raise PackError("signature must be 64 bytes")
+            buf[reserved_at : reserved_at + 64] = signature
+        struct.pack_into("<Q", buf, file_base_at, len(buf) + len(dir_blob))
     else:
+        reserved_at = len(buf)
         for _ in range(16):
             u32(0)
-
-    records = bytearray()
-    records.extend(struct.pack("<I", len(paths)))
-    for path in paths:
-        raw = path.encode("utf-8")
-        pad = (4 - (len(raw) % 4)) % 4
-        records.extend(struct.pack("<I", len(raw) + pad))
-        records.extend(raw)
-        records.extend(b"\x00" * pad)
-        _write_index_fields(records, perm, 0, 0, b"\x00" * 16, 0)
-
-    if flags & PACK_DIR_ENCRYPTED:
-        if aes_key is None:
-            raise PackError("encrypted dialect directory requires derived AES key")
-        nonce = iv if iv is not None else b"\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10"
-        # file_count sits outside FileAccessEncrypted; records after it are encrypted.
-        file_count = records[:4]
-        rest = records[4:]
-        buf.extend(file_count)
-        buf.extend(encrypt_fae_directory(rest, aes_key, nonce))
-    else:
-        buf.extend(records)
+        if signature is not None:
+            if len(signature) != 64:
+                raise PackError("signature must be 64 bytes")
+            buf[reserved_at : reserved_at + 64] = signature
+        struct.pack_into("<Q", buf, file_base_at, len(buf) + len(dir_blob))
+    buf.extend(dir_blob)
+    buf.extend(file_data)
     return bytes(buf)
 
 
@@ -281,8 +304,41 @@ def list_dialect_paths_at(
     aes_key: bytes | None = None,
     source: str = "pack",
 ) -> list[str]:
+    return [
+        item.path
+        for item in read_dialect_listing_at(
+            data, offset, magic=magic, perm=perm, aes_key=aes_key, source=source
+        ).files
+    ]
+
+
+def read_dialect_listing(
+    data: bytes,
+    *,
+    magic: int,
+    perm: Sequence[int],
+    aes_key: bytes | None = None,
+    source: str = "pack",
+) -> PackListing:
+    offset = find_dialect_offset(data, magic)
+    if offset is None:
+        raise PackError("no FortressGD dialect pack in {0}".format(source))
+    return read_dialect_listing_at(
+        data, offset, magic=magic, perm=perm, aes_key=aes_key, source=source
+    )
+
+
+def read_dialect_listing_at(
+    data: bytes,
+    offset: int,
+    *,
+    magic: int,
+    perm: Sequence[int],
+    aes_key: bytes | None = None,
+    source: str = "pack",
+) -> PackListing:
     try:
-        return _read_dialect_index(data, offset, magic=magic, perm=perm, aes_key=aes_key)
+        return _read_dialect_listing(data, offset, magic=magic, perm=perm, aes_key=aes_key)
     except PackError:
         raise
     except (struct.error, IndexError, UnicodeDecodeError, ValueError) as exc:
@@ -321,6 +377,23 @@ def _read_dialect_index(
     perm: Sequence[int],
     aes_key: bytes | None,
 ) -> list[str]:
+    return [
+        item.path
+        for item in _read_dialect_listing(
+            data, pck_start, magic=magic, perm=perm, aes_key=aes_key
+        ).files
+    ]
+
+
+def _read_dialect_listing(
+    data: bytes,
+    pck_start: int,
+    *,
+    magic: int,
+    perm: Sequence[int],
+    aes_key: bytes | None,
+) -> PackListing:
+    raw_pack = data
     i = pck_start
     got, i = _u32(data, i)
     if got != (magic & 0xFFFFFFFF):
@@ -332,17 +405,22 @@ def _read_dialect_index(
     _ver_minor, i = _u32(data, i)
     _ver_patch, i = _u32(data, i)
     pack_flags, i = _u32(data, i)
-    _file_base, i = _u64(data, i)
+    file_base, i = _u64(data, i)
+    dir_offset = 0
     if version in (PACK_FORMAT_V3, PACK_FORMAT_V4):
         dir_offset, i = _u64(data, i)
         i = pck_start + dir_offset
+        file_base = file_base + pck_start
+        dir_abs = i
     else:
         i += 16 * 4
+        dir_abs = i
     if i < 0 or i + 4 > len(data):
         raise PackError("truncated dialect directory")
     file_count, i = _u32(data, i)
     if file_count > _MAX_FILES:
         raise PackError("implausible dialect file count {0}".format(file_count))
+    dir_end = i
     rest = data[i:]
     if pack_flags & PACK_DIR_ENCRYPTED:
         if not aes_key:
@@ -350,10 +428,11 @@ def _read_dialect_index(
         rest = decrypt_fae_directory(rest, aes_key)
         i = 0
         data = rest
+        dir_end = len(raw_pack)  # ciphertext through EOF of directory blob; bodies follow
     else:
         i = 0
         data = rest
-    paths: list[str] = []
+    files: list[PackedFile] = []
     for _ in range(file_count):
         sl, i = _u32(data, i)
         if sl > _MAX_PATH or i + sl > len(data):
@@ -361,12 +440,22 @@ def _read_dialect_index(
         raw = data[i : i + sl]
         i += sl
         path = raw.split(b"\x00", 1)[0].decode("utf-8")
-        _ofs, _size, _md5, flags, i = _read_index_fields(data, i, perm)
+        ofs, size, _md5, flags, i = _read_index_fields(data, i, perm)
         if flags & PACK_FILE_REMOVAL:
             continue
         if path:
-            paths.append(path)
-    return paths
+            files.append(PackedFile(path=path, ofs=ofs, size=size, flags=flags))
+    if not (pack_flags & PACK_DIR_ENCRYPTED):
+        dir_end = dir_abs + 4 + i
+    return PackListing(
+        pck_start=pck_start,
+        version=version,
+        file_base=file_base,
+        dir_offset=dir_offset,
+        dir_abs=dir_abs,
+        dir_end=dir_end,
+        files=files,
+    )
 
 
 def dialect_key_for_secret(secret: bytes, godot_tag: str, dialect_seed: bytes | None = None) -> bytes:

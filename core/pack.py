@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import struct
+from dataclasses import dataclass
 from pathlib import Path
 
 from core.errors import NEXT_VERIFY, UserError
@@ -30,6 +31,14 @@ class PackError(UserError):
         super().__init__(message, next_command)
 
 
+@dataclass(frozen=True)
+class PackedFile:
+    path: str
+    ofs: int
+    size: int
+    flags: int = 0
+
+
 def list_packed_paths_from_path(path: Path) -> list[str]:
     try:
         data = path.read_bytes()
@@ -42,10 +51,45 @@ def list_packed_paths_from_path(path: Path) -> list[str]:
 
 def list_packed_paths(data: bytes, *, source: str = "pack") -> list[str]:
     """Return packed file paths from a standalone PCK or an embedded GDPC region."""
+    return [item.path for item in list_packed_files(data, source=source)]
+
+
+def list_packed_files(data: bytes, *, source: str = "pack") -> list[PackedFile]:
+    listing = read_pack_listing(data, source=source)
+    return listing.files
+
+
+@dataclass(frozen=True)
+class PackListing:
+    pck_start: int
+    version: int
+    file_base: int
+    dir_offset: int
+    dir_abs: int
+    dir_end: int
+    files: list[PackedFile]
+
+    def blob(self, data: bytes, item: PackedFile) -> bytes:
+        if item.size <= 0:
+            return b""
+        start = self.file_base + item.ofs
+        if start < 0 or start + item.size > len(data):
+            raise PackError("truncated packed file {0}".format(item.path))
+        return data[start : start + item.size]
+
+    def index_bytes(self, data: bytes) -> bytes:
+        # Godot writes files then the directory (file_base < dir). Test fixtures
+        # may put the directory first (file_base > dir). Cover the index either way.
+        if self.file_base > self.dir_abs:
+            return data[self.dir_abs : self.file_base]
+        return data[self.dir_abs : self.dir_end]
+
+
+def read_pack_listing(data: bytes, *, source: str = "pack") -> PackListing:
     offset = find_gdpc_offset(data)
     if offset is None:
         raise PackError("no stock GDPC pack in {0}".format(source))
-    return list_packed_paths_at(data, offset, source=source)
+    return read_pack_listing_at(data, offset, source=source)
 
 
 def find_gdpc_offset(data: bytes) -> int | None:
@@ -79,8 +123,12 @@ def find_gdpc_offset(data: bytes) -> int | None:
 
 
 def list_packed_paths_at(data: bytes, offset: int, *, source: str = "pack") -> list[str]:
+    return [item.path for item in read_pack_listing_at(data, offset, source=source).files]
+
+
+def read_pack_listing_at(data: bytes, offset: int, *, source: str = "pack") -> PackListing:
     try:
-        return _read_index(data, offset)
+        return _read_listing(data, offset)
     except PackError:
         raise
     except (struct.error, IndexError, UnicodeDecodeError, ValueError) as exc:
@@ -116,6 +164,10 @@ def _probe_pack(data: bytes, offset: int) -> str:
 
 
 def _read_index(data: bytes, pck_start: int) -> list[str]:
+    return [item.path for item in _read_listing(data, pck_start).files]
+
+
+def _read_listing(data: bytes, pck_start: int) -> PackListing:
     i = pck_start
     magic, i = _u32(data, i)
     if magic != PACK_MAGIC:
@@ -129,18 +181,22 @@ def _read_index(data: bytes, pck_start: int) -> list[str]:
     pack_flags, i = _u32(data, i)
     if pack_flags & PACK_DIR_ENCRYPTED:
         raise PackError("cannot list packed paths (encrypted pack directory)")
-    _file_base, i = _u64(data, i)
+    file_base, i = _u64(data, i)
+    dir_offset = 0
     if version in (PACK_FORMAT_V3, PACK_FORMAT_V4):
         dir_offset, i = _u64(data, i)
         i = pck_start + dir_offset
+        file_base = file_base + pck_start
+        dir_abs = i
     else:
         i += 16 * 4  # reserved
+        dir_abs = i
     if i < 0 or i + 4 > len(data):
         raise PackError("truncated GDPC directory")
     file_count, i = _u32(data, i)
     if file_count > _MAX_FILES:
         raise PackError("implausible GDPC file count {0}".format(file_count))
-    paths: list[str] = []
+    files: list[PackedFile] = []
     for _ in range(file_count):
         sl, i = _u32(data, i)
         if sl > _MAX_PATH or i + sl > len(data):
@@ -148,15 +204,23 @@ def _read_index(data: bytes, pck_start: int) -> list[str]:
         raw = data[i : i + sl]
         i += sl
         path = raw.split(b"\x00", 1)[0].decode("utf-8")
-        _ofs, i = _u64(data, i)
-        _size, i = _u64(data, i)
+        ofs, i = _u64(data, i)
+        size, i = _u64(data, i)
         i += 16  # md5
         flags, i = _u32(data, i)
         if flags & PACK_FILE_REMOVAL:
             continue
         if path:
-            paths.append(path)
-    return paths
+            files.append(PackedFile(path=path, ofs=ofs, size=size, flags=flags))
+    return PackListing(
+        pck_start=pck_start,
+        version=version,
+        file_base=file_base,
+        dir_offset=dir_offset,
+        dir_abs=dir_abs,
+        dir_end=i,
+        files=files,
+    )
 
 
 def _u32(data: bytes, i: int) -> tuple[int, int]:

@@ -1,0 +1,62 @@
+diff --git a/modules/gdscript/gdscript_byte_codegen.h b/modules/gdscript/gdscript_byte_codegen.h
+--- a/modules/gdscript/gdscript_byte_codegen.h
++++ b/modules/gdscript/gdscript_byte_codegen.h
+@@ -35,6 +35,10 @@
+ #include "gdscript_function.h"
+ #include "gdscript_utility_functions.h"
+ 
++#ifdef FORTRESSGD_OPCODE_MAP
++#include "core/dialect.gen.h"
++#endif
++
+ #include "core/templates/rb_map.h"
+ 
+ class GDScriptByteCodeGenerator : public GDScriptCodeGenerator {
+@@ -378,11 +382,19 @@ class GDScriptByteCodeGenerator : public GDScriptCodeGenerator {
+ 	}
+ 
+ 	void append_opcode(GDScriptFunction::Opcode p_code) {
++#ifdef FORTRESSGD_OPCODE_MAP
++		opcodes.push_back((int)FGD_OPCODE_MAP[p_code]);
++#else
+ 		opcodes.push_back(p_code);
++#endif
+ 	}
+ 
+ 	void append_opcode_and_argcount(GDScriptFunction::Opcode p_code, int p_argument_count) {
++#ifdef FORTRESSGD_OPCODE_MAP
++		opcodes.push_back((int)FGD_OPCODE_MAP[p_code]);
++#else
+ 		opcodes.push_back(p_code);
++#endif
+ 		opcodes.push_back(p_argument_count);
+ 		instr_args_max = MAX(instr_args_max, p_argument_count);
+ 	}
+diff --git a/modules/gdscript/gdscript_vm.cpp b/modules/gdscript/gdscript_vm.cpp
+--- a/modules/gdscript/gdscript_vm.cpp
++++ b/modules/gdscript/gdscript_vm.cpp
+@@ -452,6 +452,24 @@ static String _get_var_type(const Variant *p_var) {
+ #define OPCODE_BREAK break
+ #define OPCODE_OUT break
+ #endif // defined(__GNUC__) || defined(__clang__)
++#ifdef FORTRESSGD_OPCODE_MAP
++#include "core/dialect.gen.h"
++#undef OPCODE_SWITCH
++#undef DISPATCH_OPCODE
++#if defined(__GNUC__) || defined(__clang__)
++#define OPCODE_SWITCH(m_test) goto *switch_table_ops[(int)FGD_OPCODE_UNMAP[(unsigned)(m_test)]];
++#ifdef DEBUG_ENABLED
++#define DISPATCH_OPCODE                                          \
++	last_opcode = (int)FGD_OPCODE_UNMAP[(unsigned)_code_ptr[ip]]; \
++	goto *switch_table_ops[last_opcode]
++#else // !DEBUG_ENABLED
++#define DISPATCH_OPCODE goto *switch_table_ops[(int)FGD_OPCODE_UNMAP[(unsigned)_code_ptr[ip]]]
++#endif // DEBUG_ENABLED
++#else // !(GNUC || clang)
++#define OPCODE_SWITCH(m_test) switch ((int)FGD_OPCODE_UNMAP[(unsigned)(m_test)])
++#define DISPATCH_OPCODE continue
++#endif
++#endif
+ 
+ // Helpers for VariantInternal methods in macros.
+ #define OP_GET_BOOL get_bool

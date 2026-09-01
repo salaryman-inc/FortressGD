@@ -20,6 +20,9 @@ class PatchTests(unittest.TestCase):
             names = require_series(tag_dir)
             self.assertEqual(names[0], "0001-key-derive.patch")
             self.assertEqual(names[1], "0002-pack-hooks.patch")
+            self.assertEqual(names[2], "0003-nameless-bytecode.patch")
+            self.assertEqual(names[3], "0004-opcode-map.patch")
+            self.assertEqual(names[4], "0005-pack-signatures.patch")
             patch = tag_dir / "0001-key-derive.patch"
             text = patch.read_text(encoding="utf-8")
             self.assertTrue(text.startswith("diff --git"), msg=tag)
@@ -34,6 +37,23 @@ class PatchTests(unittest.TestCase):
             self.assertIn("file_access_pack.cpp", hooks)
             self.assertIn("pck_packer.cpp", hooks)
             self.assertIn("editor_export_platform.cpp", hooks)
+            nameless = (tag_dir / "0003-nameless-bytecode.patch").read_text(encoding="utf-8")
+            self.assertTrue(nameless.startswith("diff --git"), msg=tag)
+            self.assertIn("FORTRESSGD_NAMELESS", nameless)
+            self.assertIn("FGDN", nameless)
+            self.assertIn("gdscript_tokenizer_buffer.cpp", nameless)
+            opmap = (tag_dir / "0004-opcode-map.patch").read_text(encoding="utf-8")
+            self.assertTrue(opmap.startswith("diff --git"), msg=tag)
+            self.assertIn("FORTRESSGD_OPCODE_MAP", opmap)
+            self.assertIn("FGD_OPCODE_MAP", opmap)
+            self.assertIn("FGD_OPCODE_UNMAP", opmap)
+            self.assertIn("gdscript_byte_codegen.h", opmap)
+            self.assertIn("gdscript_vm.cpp", opmap)
+            sig = (tag_dir / "0005-pack-signatures.patch").read_text(encoding="utf-8")
+            self.assertTrue(sig.startswith("diff --git"), msg=tag)
+            self.assertIn("FORTRESSGD_SIGN_PACKS", sig)
+            self.assertIn("fortressgd_ed25519", sig)
+            self.assertIn("FGD_PACK_PUBKEY", sig)
 
     def test_apply_check_on_upstream_tag(self) -> None:
         log_lines = []
@@ -63,8 +83,21 @@ class PatchTests(unittest.TestCase):
                 self.assertIn("FGD_INDEX_PERM", patched)
                 self.assertIn("FGD_INDEX_PERM", packer)
                 self.assertIn("FGD_INDEX_PERM", exporter)
+                tok = (work / "modules" / "gdscript" / "gdscript_tokenizer_buffer.cpp").read_text(
+                    encoding="utf-8"
+                )
+                codegen = (work / "modules" / "gdscript" / "gdscript_byte_codegen.h").read_text(
+                    encoding="utf-8"
+                )
+                vm = (work / "modules" / "gdscript" / "gdscript_vm.cpp").read_text(encoding="utf-8")
+                self.assertIn("FORTRESSGD_NAMELESS", tok)
+                self.assertIn("FGDN", tok)
+                self.assertIn("FGD_OPCODE_MAP", codegen)
+                self.assertIn("FGD_OPCODE_UNMAP", vm)
+                self.assertIn("FORTRESSGD_SIGN_PACKS", patched)
+                self.assertTrue((work / "core" / "fortressgd_ed25519.cpp").is_file())
                 log_lines.append(
-                    "{0}: git apply --check+apply ok; derive+wipe; dialect magic/perm hooks".format(tag)
+                    "{0}: git apply --check+apply ok; derive+wipe; dialect magic/perm; nameless; opcode map; sign".format(tag)
                 )
         self._log = "\n".join(log_lines)
 

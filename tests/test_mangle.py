@@ -397,12 +397,15 @@ class MangleStaticChecks(unittest.TestCase):
         for tag in ("4.6.2", "4.7.2"):
             series = (ROOT / "patches" / tag / "series").read_text(encoding="utf-8")
             self.assertEqual(
-                [ln.strip() for ln in series.splitlines() if ln.strip()],
+                [ln.strip() for ln in series.splitlines() if ln.strip()][:2],
                 ["0001-key-derive.patch", "0002-pack-hooks.patch"],
             )
             patch_dir = ROOT / "patches" / tag
             names = sorted(p.name for p in patch_dir.iterdir() if p.suffix == ".patch")
-            self.assertEqual(names, ["0001-key-derive.patch", "0002-pack-hooks.patch"])
+            self.assertIn("0001-key-derive.patch", names)
+            self.assertIn("0002-pack-hooks.patch", names)
+            # Phase 4 still adds no mangler engine patch; Phase 5 files are later in series.
+            self.assertFalse(any("mangle" in n for n in names))
 
     def test_agent_rules_doc(self) -> None:
         path = ROOT / "docs" / "agent-rules.md"

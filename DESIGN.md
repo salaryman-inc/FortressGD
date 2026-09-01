@@ -362,10 +362,11 @@ Export packer:
 
 Do not reimplement the full Godot packer in Python in v1.
 
-### 8.4 Later (do not implement until version gate)
+### 8.4 Phase 5 (nameless bytecode, opcode map, pack signatures)
 
-- Opcode permutation table for GDScript VM (`opcode_map.py`).
-- Ed25519 signatures over the pack index.
+- Opcode permutation table for GDScript VM (`opcode_map.py`): data-only `FGD_OPCODE_MAP` / `FGD_OPCODE_UNMAP` in `dialect.gen.h`. Compiler emit and VM dispatch use the table when `FORTRESSGD_OPCODE_MAP` is compiled in.
+- Ed25519 signatures over the pack index when `[production].sign_packs = true`. Public key is data-only (`FGD_PACK_PUBKEY`); the private seed is derived from the project secret and is not persisted.
+- Nameless bytecode (`0003-nameless-bytecode.patch`): omit stock GDSC identifier/line tables from packed `.gdc`; runtime names live in an `FGDN` trailer. `fortressgd verify` fails if those debug tables are still present when `[production].nameless_bytecode = true`.
 
 ---
 

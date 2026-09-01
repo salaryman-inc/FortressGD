@@ -167,9 +167,11 @@ def cmd_verify(args: argparse.Namespace) -> int:
     cfg = _load_cwd_config()
     production = cfg.get("production") or {}
     dialect = bool(production.get("dialect", False))
+    nameless_bytecode = bool(production.get("nameless_bytecode", False))
+    sign_packs = bool(production.get("sign_packs", False))
     secret = None
     godot_tag = None
-    if dialect:
+    if dialect or sign_packs:
         hex_secret = load_secret_hex(
             secret_file=getattr(args, "secret_file", None),
             environ=os.environ,
@@ -177,12 +179,16 @@ def cmd_verify(args: argparse.Namespace) -> int:
         )
         secret = secret_bytes_from_hex(hex_secret)
         godot_tag = concrete_godot_tag(str(cfg["godot"]))
+    elif nameless_bytecode and cfg.get("godot"):
+        godot_tag = concrete_godot_tag(str(cfg["godot"]))
     result = verify_artifact(
         artifact,
         include=include,
         dialect=dialect,
         secret=secret,
         godot_tag=godot_tag,
+        nameless_bytecode=nameless_bytecode,
+        sign_packs=sign_packs,
     )
     if result.leaks:
         raise format_verify_leaks(result)
