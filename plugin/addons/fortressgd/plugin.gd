@@ -2,8 +2,14 @@
 extends EditorPlugin
 
 const FGDConfig := preload("res://addons/fortressgd/config.gd")
+const FGDExportPlugin := preload("res://addons/fortressgd/export_plugin.gd")
+
+var _export_plugin: EditorExportPlugin
+
 
 func _enter_tree() -> void:
+	_export_plugin = FGDExportPlugin.new()
+	add_export_plugin(_export_plugin)
 	var result: Dictionary = FGDConfig.load_project_toml()
 	if not result.get("ok", false):
 		var err := str(result.get("error", "failed to read .fortressgd.toml"))
@@ -14,7 +20,9 @@ func _enter_tree() -> void:
 
 
 func _exit_tree() -> void:
-	pass
+	if _export_plugin:
+		remove_export_plugin(_export_plugin)
+		_export_plugin = null
 
 
 func _get_plugin_name() -> String:

@@ -1,4 +1,4 @@
-"""fortressgd CLI: init, doctor, secret generate, secret status."""
+"""fortressgd CLI: init, doctor, secret, verify."""
 
 from __future__ import annotations
 
@@ -7,13 +7,16 @@ import os
 import sys
 from pathlib import Path
 
-from core.errors import NEXT_HELP, NEXT_SECRET, UserError
+from core.config import load_path
+from core.errors import NEXT_HELP, NEXT_SECRET, UserError, VerifyError
 from core.project import (
+    CONFIG_NAME,
     doctor_project,
     format_doctor_ok,
     format_init_ok,
     init_project,
 )
+from core.verify import format_verify_leaks, format_verify_ok, verify_artifact
 from core.secret import (
     ENV_NAME,
     generate_secret_hex,
@@ -34,7 +37,7 @@ class _Parser(argparse.ArgumentParser):
 def build_parser() -> argparse.ArgumentParser:
     parser = _Parser(
         prog="fortressgd",
-        description="FortressGD — Godot 4 release toolchain (Phase 0: init, doctor, secret).",
+        description="FortressGD — Godot 4 release toolchain (init, doctor, secret, verify).",
     )
     parser.add_argument("--version", action="version", version="fortressgd {0}".format(__version__))
     secret_file_help = "secret file path (64 hex chars, mode 0600). Also: {0}".format(ENV_NAME)
@@ -56,6 +59,12 @@ def build_parser() -> argparse.ArgumentParser:
     gen.add_argument("--secret-file", default=argparse.SUPPRESS, help=secret_file_help)
     st = secret_sub.add_parser("status", help="report present/missing; never print the secret")
     st.add_argument("--secret-file", default=argparse.SUPPRESS, help=secret_file_help)
+
+    ver = sub.add_parser(
+        "verify",
+        help="list packed paths with a stock GDPC parser; fail on §6.3 leaks",
+    )
+    ver.add_argument("artifact", help="PATH.pck or PATH.exe")
     return parser
 
 
@@ -106,6 +115,28 @@ def cmd_secret_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def _include_from_cwd() -> list[str]:
+    toml_path = Path.cwd() / CONFIG_NAME
+    if not toml_path.is_file():
+        return []
+    cfg = load_path(toml_path)
+    filters = cfg.get("filters") or {}
+    include = filters.get("include") or []
+    if not isinstance(include, list):
+        return []
+    return [p for p in include if isinstance(p, str)]
+
+
+def cmd_verify(args: argparse.Namespace) -> int:
+    artifact = Path(args.artifact)
+    include = _include_from_cwd()
+    result = verify_artifact(artifact, include=include)
+    if result.leaks:
+        raise format_verify_leaks(result)
+    sys.stdout.write(format_verify_ok(result) + "\n")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     parser = build_parser()
@@ -128,7 +159,12 @@ def main(argv: list[str] | None = None) -> int:
                 return cmd_secret_generate(args)
             if args.secret_command == "status":
                 return cmd_secret_status(args)
+        if args.command == "verify":
+            return cmd_verify(args)
         raise UserError("unknown command", NEXT_HELP)
+    except VerifyError as err:
+        sys.stderr.write(err.format() + "\n")
+        return 2
     except UserError as err:
         sys.stderr.write(err.format() + "\n")
         return 1

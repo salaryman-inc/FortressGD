@@ -1,4 +1,4 @@
-"""Layout and plugin source checks for DESIGN.md Phase 0."""
+"""Layout and plugin source checks for DESIGN.md Phase 0–1."""
 
 from __future__ import annotations
 
@@ -57,12 +57,55 @@ class LayoutTests(unittest.TestCase):
         plugin_gd = (addon / "plugin.gd").read_text(encoding="utf-8")
         self.assertIn("extends EditorPlugin", plugin_gd)
         self.assertIn("config.gd", plugin_gd)
+        self.assertIn("add_export_plugin", plugin_gd)
+        self.assertIn("export_plugin.gd", plugin_gd)
         config_gd = (addon / "config.gd").read_text(encoding="utf-8")
         self.assertIn(".fortressgd.toml", config_gd)
         self.assertIn("unknown key", config_gd)
         self.assertIn("load_project_toml", config_gd)
         schema = json.loads((addon / "schema.json").read_text(encoding="utf-8"))
         self.assertIn("root", schema)
+
+    def test_export_plugin_skips_section_6_3_on_production_tag(self) -> None:
+        addon = ROOT / "plugin" / "addons" / "fortressgd"
+        export_gd = (addon / "export_plugin.gd").read_text(encoding="utf-8")
+        self.assertIn("extends EditorExportPlugin", export_gd)
+        self.assertIn("_export_file", export_gd)
+        self.assertIn("skip()", export_gd)
+        self.assertIn("fortressgd_production", export_gd)
+        filters_gd = (addon / "filters.gd").read_text(encoding="utf-8")
+        self.assertIn("should_skip_forced", filters_gd)
+        self.assertIn("filters.json", filters_gd)
+        for pattern in (
+            "*.cs",
+            "*.gd",
+            "*.sln",
+            "*.csproj",
+            "*.blend",
+            "*.psd",
+            "*.kra",
+            "*.tmp",
+            "addons/fortressgd/**",
+            "*.fortressgd.map.json",
+        ):
+            self.assertIn('"{0}"'.format(pattern), (addon / "filters.json").read_text(encoding="utf-8"))
+
+    def test_getting_started_covers_verify_without_custom_templates(self) -> None:
+        path = ROOT / "docs" / "getting-started.md"
+        self.assertTrue(path.is_file())
+        text = path.read_text(encoding="utf-8")
+        lower = text.lower()
+        self.assertIn("fortressgd verify", lower)
+        self.assertIn("fortressgd_production", text)
+        self.assertIn("official", lower)
+        self.assertTrue(
+            "not required" in lower or "without custom templates" in lower,
+            "getting-started must not make custom templates a prerequisite",
+        )
+        self.assertNotRegex(
+            text,
+            r"(?i)first\s+run\s+`?fortressgd templates build",
+        )
 
 
 if __name__ == "__main__":

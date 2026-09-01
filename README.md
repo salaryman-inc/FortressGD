@@ -6,7 +6,7 @@ Open-source **release toolchain** for Godot 4. Not a fork. Not DRM. Not anti-che
 
 Designers keep the official Godot editor. Custom **export templates** are built in Docker or CI from a pinned Godot tag plus a small patch quilt. Production exports refuse to ship source, and `fortressgd verify` fails CI if they did.
 
-**Status:** Phase 0 is implemented (`init`, `doctor`, `secret generate`, `secret status`, plugin reads `.fortressgd.toml`). Later commands follow [`DESIGN.md`](DESIGN.md) in phases.
+**Status:** Phase 1 is implemented (`init`, `doctor`, `secret`, production export filters, `fortressgd verify`). Later commands follow [`DESIGN.md`](DESIGN.md) in phases. Start with [`docs/getting-started.md`](docs/getting-started.md) — official editor filters + verify, no custom templates required.
 
 | Phase | What you get |
 |---|---|

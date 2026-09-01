@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""In-repo test runner for FortressGD Phase 0."""
+"""In-repo test runner for FortressGD."""
 
 from __future__ import annotations
 

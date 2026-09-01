@@ -1,0 +1,66 @@
+# Getting started
+
+Phase 1 of FortressGD is **export hygiene**: keep source, work files, and plugin internals out of a Release pack, then prove it with `fortressgd verify`.
+
+You do this with the **official Godot editor**. Custom export templates, Docker, and `fortressgd templates build` are **not required** for this workflow.
+
+## 1. Install into a Godot 4.6.2 / 4.7.x project
+
+From a FortressGD checkout:
+
+```bash
+cd /path/to/your/godot/project
+python3 /path/to/FortressGD/cli/fortressgd init
+```
+
+This writes `.fortressgd.toml` (commit it; it has no secret), suggests `.gitignore` entries, and copies `addons/fortressgd`.
+
+Enable the **FortressGD** plugin in **Project → Project Settings → Plugins**.
+
+## 2. Mark a production export preset
+
+In **Project → Export**, open the preset you use for Release (not your debug preset):
+
+1. Set **GDScript Export Mode** to **Binary tokens** or **Compressed binary tokens** (Godot’s default). That packs bytecode (`.gdc`) instead of GDScript text.
+2. Add the custom feature tag `fortressgd_production` (Resources / features field on the preset).
+
+Presets **without** that tag are not force-filtered. Keep a debug preset without it.
+
+When the tag is on, the export plugin **skips** these paths unless the same pattern is listed in `[filters].include` in `.fortressgd.toml`:
+
+- `*.gd` (text scripts — bytecode only), `*.cs`
+- DCC / work files: `*.sln` `*.csproj` `*.blend` `*.psd` `*.kra` `*.tmp`
+- `addons/fortressgd/**`
+- `*.fortressgd.map.json`
+
+## 3. Export as usual
+
+Export PCK/ZIP or a full project from the official editor. You do not need FortressGD templates for leak checks.
+
+## 4. Verify the artifact
+
+```bash
+python3 /path/to/FortressGD/cli/fortressgd verify path/to/game.pck
+# also:  fortressgd verify path/to/game.exe
+```
+
+`verify` lists packed paths with a **stock GDPC** parser (no FortressGD dialect, no encryption key) and fails if any packed path matches the excludes above.
+
+| Exit | Meaning |
+|---|---|
+| 0 | leak-free listing |
+| 2 | policy failure (leaks); stderr includes `error:` and `Run:` |
+| 1 | missing/unreadable artifact or bad config |
+
+Allowlist example — pack a specific text script that would otherwise fail:
+
+```toml
+[filters]
+include = ["mods/hook.gd"]
+```
+
+Re-export, then run `fortressgd verify` again.
+
+## What this does not do yet
+
+Derived PCK encryption, custom templates, and pack dialect come in later phases (`fortressgd templates build` in Docker/CI). Skip those until you need them. A debugger can still dump decrypted resources from a running client; see `THREAT_MODEL.md`.

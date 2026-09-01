@@ -6,6 +6,7 @@ NEXT_INIT = "fortressgd init"
 NEXT_DOCTOR = "fortressgd doctor"
 NEXT_SECRET = "fortressgd secret generate"
 NEXT_HELP = "fortressgd --help"
+NEXT_VERIFY = "fortressgd verify PATH.pck"
 
 
 class UserError(Exception):
@@ -21,3 +22,14 @@ class UserError(Exception):
 
 class ConfigError(UserError):
     """Invalid or unknown keys in `.fortressgd.toml`."""
+
+
+class VerifyError(Exception):
+    """Verify / policy failure. CLI maps this to exit code 2."""
+
+    def __init__(self, message: str, next_command: str = NEXT_DOCTOR) -> None:
+        super().__init__(message)
+        self.next_command = next_command
+
+    def format(self) -> str:
+        return "error: {0}\nRun: {1}".format(str(self), self.next_command)

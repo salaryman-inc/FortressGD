@@ -1,0 +1,15 @@
+{
+  "feature_tag": "fortressgd_production",
+  "forced_exclude": [
+    "*.cs",
+    "*.gd",
+    "*.sln",
+    "*.csproj",
+    "*.blend",
+    "*.psd",
+    "*.kra",
+    "*.tmp",
+    "addons/fortressgd/**",
+    "*.fortressgd.map.json"
+  ]
+}
