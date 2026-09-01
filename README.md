@@ -4,7 +4,7 @@ Open-source **release toolchain** for Godot 4. Not a fork. Not DRM. Not anti-che
 
 > Export a Godot game that stock GDRE/KeyDot cannot one-click recover, without maintaining a fork. This raises the cost of automated recovery. It does not make a local client unextractable.
 
-Designers keep the official Godot editor. Custom **export templates** are built in Docker or CI from a pinned Godot tag plus a small patch quilt. Production exports refuse to ship source, and `forgekit verify` fails CI if they did.
+Designers keep the official Godot editor. Custom **export templates** are built in Docker or CI from a pinned Godot tag plus a small patch quilt. Production exports refuse to ship source, and `fortressgd verify` fails CI if they did.
 
 **Status:** spec and repo skeleton. Implementation follows [`DESIGN.md`](DESIGN.md) in phases. Commands below are the intended v1 interface; they are not all wired yet.
 
@@ -12,7 +12,7 @@ Designers keep the official Godot editor. Custom **export templates** are built 
 |---|---|
 | 0 | `init`, `doctor`, secret helpers, plugin reads config |
 | 1 | Release filters + `verify` leak checks |
-| 2 | Custom templates + derived AES key (`FK-KDF-1`) |
+| 2 | Custom templates + derived AES key (`FGD-KDF-1`) |
 | 3 | Per-secret pack dialect |
 | 4 | GDScript mangling on export |
 | 5 | Nameless bytecode, signatures (later) |
@@ -42,7 +42,7 @@ FortressGD is the pipeline: filters + derived key + optional dialect + optional 
 
 - Keep the official editor for day-to-day work
 - Build `template_release` binaries in Docker from `patches/<godot-tag>/`
-- Derive the PCK AES key (`FK-KDF-1`, HKDF-SHA256) instead of embedding the raw blob
+- Derive the PCK AES key (`FGD-KDF-1`, HKDF-SHA256) instead of embedding the raw blob
 - Optionally change pack magic and index layout per project secret
 - Strip source (`.gd` text, `.cs`, DCC files, source maps) from Release
 - Optionally mangle GDScript identifiers at export
@@ -73,29 +73,29 @@ You do not need SCons or a local Godot source tree on designer machines.
 
 ```bash
 # in your Godot project root
-forgekit init
-# writes .forgekit.toml, suggests .gitignore entries, installs addons/forgekit
+fortressgd init
+# writes .fortressgd.toml, suggests .gitignore entries, installs addons/fortressgd
 
-forgekit secret generate
-export FORGEKIT_SECRET="$(cat .forgekit.secret)"   # or use your OS keychain / CI secret
-# add .forgekit.secret to .gitignore  — never commit this
+fortressgd secret generate
+export FORTRESSGD_SECRET="$(cat .fortressgd.secret)"   # or use your OS keychain / CI secret
+# add .fortressgd.secret to .gitignore  — never commit this
 
-forgekit templates build --godot 4.6.2 --platform linux
+fortressgd templates build --godot 4.6.2 --platform linux
 # also: --platform windows
 
-forgekit export --preset Linux
-forgekit verify path/to/your_game.pck
+fortressgd export --preset Linux
+fortressgd verify path/to/your_game.pck
 ```
 
 In the editor: enable the FortressGD plugin, turn **Production export** on for the Release preset, export as usual. If templates for `(godot, secret_hash, platform)` are missing, export is blocked with the exact `templates build` command to run.
 
-Rotating `FORGEKIT_SECRET` requires rebuilding templates. Old packs will not load. That is intended.
+Rotating `FORTRESSGD_SECRET` requires rebuilding templates. Old packs will not load. That is intended.
 
 ---
 
 ## Configuration
 
-`.forgekit.toml` lives at the project root and **is committed**. It must not contain the secret.
+`.fortressgd.toml` lives at the project root and **is committed**. It must not contain the secret.
 
 ```toml
 schema = 1
@@ -117,7 +117,7 @@ exclude = [
   "*.psd",
   "*.kra",
   "*.tmp",
-  "*.forgekit.map.json",
+  "*.fortressgd.map.json",
 ]
 include = []
 
@@ -127,20 +127,20 @@ build = ["windows", "linux"]
 
 Release exports also force-exclude GDScript **text** (bytecode only) unless you allowlist a path. Dynamic `call("name")` / `rpc("name")` / `set("prop")` fail the export when mangling is on — use Callables. See `docs/agent-rules.md` once that file exists.
 
-Secret sources, in order: `--secret-file`, `FORGEKIT_SECRET`, optional OS keychain.
+Secret sources, in order: `--secret-file`, `FORTRESSGD_SECRET`, optional OS keychain.
 
 ---
 
 ## Commands
 
 ```text
-forgekit init
-forgekit doctor
-forgekit secret generate | forgekit secret status
-forgekit templates build [--godot X.Y.Z] [--platform windows|linux]
-forgekit templates list
-forgekit export --preset NAME
-forgekit verify PATH.pck|PATH.exe
+fortressgd init
+fortressgd doctor
+fortressgd secret generate | fortressgd secret status
+fortressgd templates build [--godot X.Y.Z] [--platform windows|linux]
+fortressgd templates list
+fortressgd export --preset NAME
+fortressgd verify PATH.pck|PATH.exe
 ```
 
 Exit codes: `0` ok, `1` config/user error, `2` verify/policy failure, `3` tool or engine build failure.
@@ -153,14 +153,14 @@ Build templates once per `(godot version, patchset, secret hash, platform)` and 
 
 ```yaml
 # sketch — action lands with Phase 2
-- uses: you/forgekit/actions/build-templates@v1
+- uses: you/fortressgd/actions/build-templates@v1
   with:
     godot_version: "4.6.2"
     platforms: "linux,windows"
-    secret: ${{ secrets.FORGEKIT_SECRET }}
+    secret: ${{ secrets.FORTRESSGD_SECRET }}
 ```
 
-Then `forgekit export` + `forgekit verify` on the artifact. Optional `FORGEKIT_UNPACKER_TESTS=1` runs pinned KeyDot/GDRE versions; those tools failing to recover the project is a pass.
+Then `fortressgd export` + `fortressgd verify` on the artifact. Optional `FORTRESSGD_UNPACKER_TESTS=1` runs pinned KeyDot/GDRE versions; those tools failing to recover the project is a pass.
 
 ---
 
@@ -169,8 +169,8 @@ Then `forgekit export` + `forgekit verify` on the artifact. Optional `FORGEKIT_U
 ```text
 DESIGN.md              source of truth for implementers
 THREAT_MODEL.md        short threat model
-plugin/addons/forgekit editor plugin
-cli/                   forgekit CLI
+plugin/addons/fortressgd editor plugin
+cli/                   fortressgd CLI
 core/                  shared library
 generator/             dialect.gen.h
 patches/<godot-tag>/   quilt applied to a pinned upstream tag
