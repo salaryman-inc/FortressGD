@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -30,6 +31,10 @@ class UnpackerLockTests(unittest.TestCase):
         binary = os.environ.get("FORTRESSGD_KEYDOT") or shutil.which("keydot")
         if not binary or not Path(binary).is_file():
             self.skipTest("KeyDot binary not present")
+        lock = json.loads((ROOT / "testdata" / "fixtures" / "unpackers.lock.json").read_text(encoding="utf-8"))
+        pinned = next(t["sha256"] for t in lock["tools"] if t.get("name") == "KeyDot")
+        actual = hashlib.sha256(Path(binary).read_bytes()).hexdigest()
+        self.assertEqual(actual, pinned, msg="KeyDot binary does not match the pinned sha256 in unpackers.lock.json")
         target = os.environ.get("FORTRESSGD_PROTECTED_EXE")
         if not target or not Path(target).is_file():
             self.skipTest("no protected exe (FORTRESSGD_PROTECTED_EXE)")
