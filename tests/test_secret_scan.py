@@ -48,8 +48,9 @@ class SecretScanTests(unittest.TestCase):
                 text = path.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError):
                 continue
-            # Image/content digests are not project secrets.
-            cleaned = re.sub(r"(?i)(?:@)?sha256:[0-9a-f]{64}", "", text)
+            # Labelled content digests (`@sha256:<hex>`, `"sha256": "<hex>"`,
+            # `# sha256 <hex>`) are not project secrets.
+            cleaned = re.sub(r"(?i)sha256[\"'\s:=]{0,4}[0-9a-f]{64}", "", text)
             if looks_like_secret_blob(cleaned):
                 offenders.append(str(path.relative_to(ROOT)))
         self.assertEqual(offenders, [], msg="standalone 64-hex blobs in {0}".format(offenders))

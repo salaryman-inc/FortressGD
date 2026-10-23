@@ -37,7 +37,7 @@ CI obtains the binary from GitHub Releases (do not vendor it):
 ```bash
 curl -L -o keydot.exe \
   https://github.com/Titoot/KeyDot/releases/download/v1.0.3/keydot.exe
-# sha256 048cd2db98af3d09612284bdebd7b4f8-99dfef085edce9f24d3d2b921248f326
+# sha256 048cd2db98af3d09612284bdebd7b4f899dfef085edce9f24d3d2b921248f326
 export FORTRESSGD_UNPACKER_TESTS=1
 export FORTRESSGD_KEYDOT="$PWD/keydot.exe"
 python3 tests/run.py
