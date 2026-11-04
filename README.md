@@ -37,6 +37,8 @@ Start with leak checks on the official editor — no Docker, no custom templates
 - Strips comments, `assert`, `print_debug`, and `breakpoint`
 - Renames user identifiers with a PRNG seeded from `secret_hash`
 - Unmarked `call("name")` / `rpc("name")` / `set("prop")` **fail the export** — use Callables
+- Never rewrites scripts under `addons/`; names an addon mentions stay unmangled in your scripts
+- Leaves names alone that it cannot follow: members accessed on other objects, names in string literals, `@export` vars, and names used in scenes, resources and `project.godot`
 - Writes `*.fortressgd.map.json` next to the artifact, not inside the pack
 
 **Nameless bytecode** (off by default)

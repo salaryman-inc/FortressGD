@@ -26,6 +26,7 @@ UNSAFE_CALLEES = frozenset({"call", "rpc", "set"})
 DECL_KEYWORDS = frozenset({"func", "var", "const", "signal", "enum", "class", "for"})
 SKIP_DIR_NAMES = frozenset({".godot", ".git", "__pycache__"})
 PLUGIN_ADDON = "addons/fortressgd"
+ADDONS_DIR = "addons"
 # Text files that refer to script members by name (scenes, resources, autoloads).
 TEXT_RESOURCE_SUFFIXES = (".tscn", ".tres")
 TEXT_RESOURCE_NAMES = ("project.godot",)
@@ -133,15 +134,39 @@ def _iter_project_files(root: Path, wanted) -> list[tuple[Path, str]]:
     return found
 
 
+def _under(rel: str, directory: str) -> bool:
+    return rel == directory or rel.startswith(directory + "/")
+
+
 def iter_gdscript_files(root: Path) -> list[Path]:
-    """Game scripts that would be compiled for a pack. Skips the FortressGD addon."""
+    """Game scripts to mangle. Never anything under ``addons/``: third-party
+    plugins refer to their own members by string and expose APIs that game code
+    and scenes call by name, and the user does not own that code."""
 
     def wanted(rel: str) -> bool:
-        if not rel.endswith(".gd"):
-            return False
-        return not (rel == PLUGIN_ADDON or rel.startswith(PLUGIN_ADDON + "/"))
+        return rel.endswith(".gd") and not _under(rel, ADDONS_DIR)
 
     return [path for path, _rel in _iter_project_files(root, wanted)]
+
+
+def iter_scan_only_gdscript_files(root: Path) -> list[Path]:
+    """Addon scripts: never rewritten, but scanned so that names they mention stay
+    unmangled in game scripts. The FortressGD addon is never packed and is skipped."""
+
+    def wanted(rel: str) -> bool:
+        return rel.endswith(".gd") and _under(rel, ADDONS_DIR) and not _under(rel, PLUGIN_ADDON)
+
+    return [path for path, _rel in _iter_project_files(root, wanted)]
+
+
+def collect_scan_only_names(sources: Iterable[str]) -> set[str]:
+    """Every identifier token and identifier-shaped string piece in scan-only
+    (addon) scripts. Broad on purpose: any name an addon mentions stays unmangled."""
+    names: set[str] = set()
+    for source in sources:
+        names.update(tok.value for tok in tokenize(source) if tok.kind == "ident")
+        names |= collect_string_identifier_names(source)
+    return names
 
 
 def collect_resource_reference_names(root: Path) -> set[str]:

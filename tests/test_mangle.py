@@ -16,6 +16,8 @@ from core.mangle import (
     MangleError,
     collect_resource_reference_names,
     collect_user_identifiers,
+    iter_gdscript_files,
+    iter_scan_only_gdscript_files,
     mangled_identifier,
     mangle_scripts,
     reserved_names,
@@ -556,7 +558,69 @@ class MangleSceneReferenceExportTests(unittest.TestCase):
             self.assertIn("warning: cannot scan binary resource foo.res for mangled names", proc.stderr)
 
 
+class MangleAddonExportTests(unittest.TestCase):
+    _project = MangleExportPathTests._project
+    _export = MangleSceneReferenceExportTests._export
+
+    ADDON = (
+        "@tool\nextends Node\n\n"
+        "func bar() -> void:\n\tpass\n\n"
+        "func go(game) -> void:\n"
+        '\tcall("bar")\n'
+        "\tprint(game.score)\n"
+    )
+    GAME = "extends Node\n\nvar score := 0\nvar lives := 3\n\nfunc _ready() -> void:\n\tscore += lives\n"
+
+    def _addon_project(self, tmp: str) -> Path:
+        root = self._project(tmp, mangle=True, script=self.GAME)
+        addon = root / "addons" / "foo" / "foo.gd"
+        addon.parent.mkdir(parents=True)
+        addon.write_text(self.ADDON, encoding="utf-8")
+        return root
+
+    def test_addon_scripts_are_not_rewritten(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._addon_project(tmp)
+            proc, data = self._export(root)
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            # The stub records each script as Godot sees it during the export.
+            self.assertEqual(data["scripts"]["addons/foo/foo.gd"], self.ADDON)
+            self.assertEqual((root / "addons" / "foo" / "foo.gd").read_text(encoding="utf-8"), self.ADDON)
+
+    def test_game_names_used_by_addon_are_not_renamed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._addon_project(tmp)
+            proc, data = self._export(root)
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            payload = json.loads(source_map_path(root / "build" / "game.x86_64").read_text(encoding="utf-8"))
+            self.assertNotIn("score", payload["identifiers"])
+            self.assertIn("lives", payload["identifiers"])
+            self.assertIn("var score", data["scripts"]["player.gd"])
+
+    def test_iter_gdscript_files_skips_addons(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for rel in ("main.gd", "ui/hud.gd", "addons/foo/foo.gd", "addons/fortressgd/mangle.gd", ".godot/x.gd"):
+                path = root / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("extends Node\n", encoding="utf-8")
+            rels = lambda paths: sorted(p.relative_to(root.resolve()).as_posix() for p in paths)  # noqa: E731
+            self.assertEqual(rels(iter_gdscript_files(root)), ["main.gd", "ui/hud.gd"])
+            self.assertEqual(rels(iter_scan_only_gdscript_files(root)), ["addons/foo/foo.gd"])
+
+
 class MangleStaticChecks(unittest.TestCase):
+    def test_plugin_never_rewrites_addons(self) -> None:
+        gd = _mangle_gd()
+        walk = _gd_func_body(gd, "_walk")
+        self.assertIn("rel.begins_with(ADDONS_DIR + \"/\")", walk)
+        self.assertIn('const ADDONS_DIR := "addons"', gd)
+        apply = _gd_func_body(gd, "apply_project")
+        self.assertIn("list_scan_only_gdscript_files()", apply)
+        self.assertIn("collect_scan_only_names(", apply)
+        # Unsafe-call scanning only covers the files that get rewritten.
+        self.assertIn("for path in list_gdscript_files()", apply)
+
     def test_plugin_keeps_scene_and_export_names(self) -> None:
         gd = _mangle_gd()
         self.assertIn('val.begins_with("@export")', _gd_func_body(gd, "_has_export_annotation"))

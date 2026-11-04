@@ -7,6 +7,7 @@ const RESERVED_PATH := "res://addons/fortressgd/mangle_reserved.json"
 const KEEP_PREFIX := "## fortressgd:keep"
 const MANGLE_INFO := "fortressgd-mangle-v1"
 const PLUGIN_ADDON := "addons/fortressgd"
+const ADDONS_DIR := "addons"
 const MAP_SUFFIX := ".fortressgd.map.json"
 
 const KIND_IDENT := "ident"
@@ -95,10 +96,42 @@ static func source_map_text(secrethash: String, mapping: Dictionary) -> String:
 	return JSON.stringify(payload, "\t") + "\n"
 
 
+## Game scripts to mangle. Never anything under addons/ (third-party plugin code).
 static func list_gdscript_files() -> PackedStringArray:
 	var out := PackedStringArray()
 	_walk("res://", out)
 	return out
+
+
+## Addon scripts: never rewritten, only scanned so the names they mention stay
+## unmangled in game scripts. The FortressGD addon is never packed and is skipped.
+static func list_scan_only_gdscript_files() -> PackedStringArray:
+	var out := PackedStringArray()
+	var all_files := PackedStringArray()
+	_walk_all("res://" + ADDONS_DIR, all_files)
+	for path in all_files:
+		var res_path: String = path
+		var rel := res_path.substr(6) if res_path.begins_with("res://") else res_path
+		if not res_path.ends_with(".gd"):
+			continue
+		if rel == PLUGIN_ADDON or rel.begins_with(PLUGIN_ADDON + "/"):
+			continue
+		out.append(res_path)
+	return out
+
+
+## Every identifier token and identifier-shaped string piece in addon scripts.
+## Dictionary used as a set. Mirrors core/mangle.py collect_scan_only_names.
+static func collect_scan_only_names(sources: Array) -> Dictionary:
+	var names := {}
+	for src in sources:
+		var source: String = src
+		for tok in tokenize(source):
+			var t: Dictionary = tok
+			if str(t["kind"]) == KIND_IDENT:
+				names[str(t["value"])] = true
+		names.merge(collect_string_identifier_names(source))
+	return names
 
 
 static func apply_project(secrethash: String) -> Dictionary:
@@ -124,6 +157,10 @@ static func apply_project(secrethash: String) -> Dictionary:
 	# may reference in a way the rewrite cannot follow. Mirrors core/mangle.py.
 	var excluded := {}
 	excluded.merge(collect_resource_reference_names())
+	var addon_sources: Array = []
+	for addon_path in list_scan_only_gdscript_files():
+		addon_sources.append(FileAccess.get_file_as_string(addon_path))
+	excluded.merge(collect_scan_only_names(addon_sources))
 	for path in files.keys():
 		excluded.merge(collect_foreign_member_names(str(files[path])))
 		excluded.merge(collect_string_identifier_names(str(files[path])))
@@ -825,7 +862,8 @@ static func _walk(dir_path: String, out: PackedStringArray) -> void:
 		var rel := child
 		if rel.begins_with("res://"):
 			rel = rel.substr(6)
-		if rel == PLUGIN_ADDON or rel.begins_with(PLUGIN_ADDON + "/"):
+		# Nothing under addons/ is rewritten (this includes addons/fortressgd).
+		if rel == ADDONS_DIR or rel.begins_with(ADDONS_DIR + "/"):
 			name = d.get_next()
 			continue
 		if d.current_is_dir():

@@ -14,7 +14,9 @@ from core.kdf import aes_key_hex, secret_hash
 from core.mangle import (
     binary_resource_paths,
     collect_resource_reference_names,
+    collect_scan_only_names,
     iter_gdscript_files,
+    iter_scan_only_gdscript_files,
     mangle_scripts,
     source_map_json,
     source_map_path,
@@ -341,7 +343,10 @@ def export_preset(
             sources,
             secret_hash=secrethash,
             rename=True,
-            exclude=collect_resource_reference_names(root),
+            exclude=collect_resource_reference_names(root)
+            | collect_scan_only_names(
+                addon.read_text(encoding="utf-8") for addon in iter_scan_only_gdscript_files(root)
+            ),
         )
         warnings.extend(
             "cannot scan binary resource {0} for mangled names".format(rel)
