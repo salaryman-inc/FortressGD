@@ -113,6 +113,13 @@ static func apply_project(secrethash: String) -> Dictionary:
 	for path in files.keys():
 		for ident in collect_user_identifiers(str(files[path]), reserved):
 			user[ident] = true
+	# A name is renamed everywhere or nowhere. Drop every name that something
+	# may reference in a way the rewrite cannot follow. Mirrors core/mangle.py.
+	var excluded := {}
+	for path in files.keys():
+		excluded.merge(collect_foreign_member_names(str(files[path])))
+	for name in excluded.keys():
+		user.erase(name)
 	var mapping := {}
 	var used := reserved.duplicate()
 	var originals: Array = user.keys()
@@ -224,6 +231,25 @@ static func collect_user_identifiers(source: String, reserved: Dictionary) -> Pa
 			continue
 		out.append(str(ident))
 	return out
+
+
+## Names accessed as `receiver.name` through a receiver other than self/super.
+## Returns a Dictionary used as a set. Mirrors core/mangle.py.
+static func collect_foreign_member_names(source: String) -> Dictionary:
+	var tokens: Array = tokenize(source)
+	var names := {}
+	for i in range(tokens.size()):
+		var tok: Dictionary = tokens[i]
+		if str(tok["kind"]) != KIND_IDENT:
+			continue
+		var dot := _prev_code_index(tokens, i)
+		if dot < 0 or str(tokens[dot]["kind"]) != KIND_PUNCT or str(tokens[dot]["value"]) != ".":
+			continue
+		var recv := _prev_code_index(tokens, dot)
+		if recv >= 0 and str(tokens[recv]["kind"]) == KIND_IDENT and str(tokens[recv]["value"]) in ["self", "super"]:
+			continue
+		names[str(tok["value"])] = true
+	return names
 
 
 static func rewrite_source(source: String, mapping: Dictionary, strip: bool) -> String:
@@ -481,10 +507,15 @@ static func _line_is_kept(line: int, keep_same: Dictionary, keep_only: Dictionar
 	return false
 
 
-static func _prev_code(tokens: Array, i: int) -> Variant:
+static func _prev_code_index(tokens: Array, i: int) -> int:
 	var j := i - 1
 	while j >= 0 and str(tokens[j]["kind"]) in [KIND_SPACE, KIND_NEWLINE, KIND_COMMENT]:
 		j -= 1
+	return j
+
+
+static func _prev_code(tokens: Array, i: int) -> Variant:
+	var j := _prev_code_index(tokens, i)
 	if j < 0:
 		return null
 	return tokens[j]

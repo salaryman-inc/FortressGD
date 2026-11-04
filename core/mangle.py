@@ -190,6 +190,28 @@ def collect_user_identifiers(source: str) -> set[str]:
     return user
 
 
+def collect_foreign_member_names(source: str) -> set[str]:
+    """Names accessed as ``receiver.name`` through a receiver other than self/super.
+
+    The rewrite cannot tell which object owns such a member (it may be an engine
+    object, or a script that never declared it), so these names are not renamed
+    anywhere. ``1.5`` is one number token and never yields a ``.`` here.
+    """
+    tokens = tokenize(source)
+    names: set[str] = set()
+    for i, tok in enumerate(tokens):
+        if tok.kind != "ident":
+            continue
+        dot = _prev_code_index(tokens, i)
+        if dot < 0 or tokens[dot].kind != "punct" or tokens[dot].value != ".":
+            continue
+        recv = _prev_code_index(tokens, dot)
+        if recv >= 0 and tokens[recv].kind == "ident" and tokens[recv].value in ("self", "super"):
+            continue
+        names.add(tok.value)
+    return names
+
+
 def rewrite_source(source: str, mapping: dict[str, str], *, strip: bool = True) -> str:
     tokens = tokenize(source)
     if strip:
@@ -226,6 +248,10 @@ def mangle_scripts(
     user: set[str] = set()
     for source in files.values():
         user |= collect_user_identifiers(source)
+    # A name is renamed everywhere or nowhere. Drop every name that something
+    # may reference in a way the rewrite cannot follow.
+    for source in files.values():
+        user -= collect_foreign_member_names(source)
 
     mapping: dict[str, str] = {}
     used: set[str] = set(reserved_names())
@@ -451,10 +477,16 @@ def _line_is_kept(line: int, keep_same: set[int], keep_only: set[int], nonempty:
     return False
 
 
-def _prev_code(tokens: list[Token], i: int) -> Token | None:
+def _prev_code_index(tokens: list[Token], i: int) -> int:
+    """Index of the code token before i (skipping space/newline/comment), or -1."""
     j = i - 1
     while j >= 0 and tokens[j].kind in ("space", "newline", "comment"):
         j -= 1
+    return j
+
+
+def _prev_code(tokens: list[Token], i: int) -> Token | None:
+    j = _prev_code_index(tokens, i)
     if j < 0:
         return None
     return tokens[j]

@@ -134,6 +134,52 @@ class MangleTransformTests(unittest.TestCase):
         src = 'logger.print_debug("x")\nobj.assert(1)\nother.breakpoint\n'
         self.assertEqual(rewrite_source(src, {}), src)
 
+    def test_foreign_member_access_is_not_renamed(self) -> None:
+        src = (
+            "extends Node\nvar speed = 5\nfunc _ready():\n"
+            "    var other = get_node(\"Enemy\")\n    other.speed = 10\n"
+        )
+        out, mapping = mangle_scripts({"a.gd": src}, secret_hash="abc123", rename=True)
+        self.assertNotIn("speed", mapping)
+        self.assertIn("var speed = 5", out["a.gd"])
+        # `other` is a local and is still renamed; the member after the dot is not.
+        self.assertIn(mapping["other"] + ".speed = 10", out["a.gd"])
+
+    def test_self_member_access_is_renamed(self) -> None:
+        src = "extends Node\nvar hp = 3\nfunc hit():\n    self.hp -= 1\n    hp -= 1\n    super.hit()\n"
+        out, mapping = mangle_scripts({"a.gd": src}, secret_hash=self.HASH, rename=True)
+        self.assertIn("hp", mapping)
+        new = mapping["hp"]
+        self.assertIn("self.{0} -= 1".format(new), out["a.gd"])
+        self.assertIn("\n    {0} -= 1".format(new), out["a.gd"])
+        self.assertNotRegex(out["a.gd"], r"\bhp\b")
+        # super.hit() keeps hit renameable: it is the same script's method.
+        self.assertIn("hit", mapping)
+
+    def test_foreign_access_in_another_file_blocks_rename(self) -> None:
+        files = {
+            "a.gd": "extends Node\nvar speed = 1\nfunc go():\n    speed += 1\n",
+            "b.gd": "extends Node\nfunc push(enemy):\n    enemy.speed = 0\n",
+        }
+        out, mapping = mangle_scripts(files, secret_hash=self.HASH, rename=True)
+        self.assertNotIn("speed", mapping)
+        self.assertIn("var speed = 1", out["a.gd"])
+        self.assertIn(".speed = 0", out["b.gd"])
+
+    def test_enum_member_via_type_is_not_renamed(self) -> None:
+        src = "extends Node\nenum State { IDLE, RUN }\nvar s = State.IDLE\nfunc f():\n    return IDLE\n"
+        out, mapping = mangle_scripts({"a.gd": src}, secret_hash=self.HASH, rename=True)
+        self.assertNotIn("IDLE", mapping)
+        # The enum type is still renamed consistently; only the member is kept.
+        self.assertIn(mapping["State"] + ".IDLE", out["a.gd"])
+        self.assertIn("return IDLE", out["a.gd"])
+        self.assertIn("{ IDLE,", out["a.gd"])
+
+    def test_numbers_do_not_count_as_member_access(self) -> None:
+        src = "extends Node\nvar scale_x = 1.5\nfunc f():\n    return scale_x * 2.0\n"
+        _out, mapping = mangle_scripts({"a.gd": src}, secret_hash=self.HASH, rename=True)
+        self.assertIn("scale_x", mapping)
+
     def test_reserved_set_keeps_lifecycle(self) -> None:
         names = reserved_names()
         self.assertIn("_ready", names)
@@ -373,6 +419,13 @@ def _gd_func(source: str, name: str) -> str:
 
 
 class MangleStaticChecks(unittest.TestCase):
+    def test_plugin_excludes_foreign_member_names(self) -> None:
+        gd = _mangle_gd()
+        body = _gd_func_body(gd, "collect_foreign_member_names")
+        self.assertIn('["self", "super"]', body)
+        self.assertIn("collect_foreign_member_names(", _gd_func_body(gd, "apply_project"))
+        self.assertIn("user.erase(", _gd_func_body(gd, "apply_project"))
+
     def test_plugin_strip_emits_pass(self) -> None:
         body = _gd_func_body(_mangle_gd(), "_strip_tokens")
         self.assertEqual(body.count('_tok(KIND_IDENT, "pass"'), 2)
