@@ -144,14 +144,12 @@ def upsert_ini_key(text: str, section: str, key: str, value: str) -> str:
             key_line = i
     assignment = "{0}={1}\n".format(key, value)
     if key_line is not None:
-        nl = "" if lines[key_line].endswith("\n") else ""
-        lines[key_line] = assignment if lines[key_line].endswith("\n") else assignment.rstrip("\n") + nl
-        if lines[key_line].endswith("\n") is False and text.endswith("\n"):
-            lines[key_line] = assignment
         lines[key_line] = assignment
         return "".join(lines)
     if in_section:
         insert_at = next_section if next_section is not None else len(lines)
+        if insert_at > 0 and not lines[insert_at - 1].endswith("\n"):
+            lines[insert_at - 1] += "\n"
         lines.insert(insert_at, assignment)
         return "".join(lines)
     extra = ""
