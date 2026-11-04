@@ -429,7 +429,7 @@ Build templates once per `(godot version, patchset, secret hash, platform)` and 
 
 Cache key: `fgd-templates-{godot}-{patchset}-{secret_hash}-{platform}`. The secret is passed at **run** time; it is not a Docker build-arg and must not land in image layers.
 
-Optional unpacker regression (`FORTRESSGD_UNPACKER_TESTS=1`) runs pinned KeyDot/GDRE versions; those tools failing to recover the project is a pass. See [`docs/ci.md`](docs/ci.md).
+Optional unpacker regression (`FORTRESSGD_UNPACKER_TESTS=1`) runs a pinned KeyDot version; KeyDot failing to recover the key or project is a pass. GDRE Tools, gdke and GodotPCKExplorer are not pinned or tested yet, so the claim that they fail rests on design reasoning, not on a test run. See [`docs/ci.md`](docs/ci.md).
 
 ---
 
@@ -459,7 +459,7 @@ Tests: `python3 tests/run.py`.
 
 | | Official encrypt | Godot-Secure | GDMaim | ChaosProtector | FortressGD |
 |---|---|---|---|---|---|
-| Stock KeyDot/GDRE | Usually succeed | Usually fail | Pack still opens | Claim fail (Windows) | Target: fail + CI proof |
+| Stock KeyDot/GDRE | Usually succeed | Usually fail | Pack still opens | Claim fail (Windows) | Target: fail (KeyDot tested in CI; GDRE not yet) |
 | Editor | Official + custom templates | Patched editor | Official | Official | Official |
 | Source leaks | Your problem | Your problem | Your problem | Your problem | `verify` fails the build |
 | Script names | Intact | Intact | Mangled | Intact | Optional mangler |

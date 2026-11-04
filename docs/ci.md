@@ -49,6 +49,8 @@ If that cross-compile fails in your environment, build on a Windows runner with 
 
 `testdata/fixtures/unpackers.lock.json` pins KeyDot **v1.0.3** (`https://github.com/Titoot/KeyDot`).
 
+Only KeyDot is pinned today. GDRE Tools (gdsdecomp), gdke and GodotPCKExplorer, which DESIGN.md §1 also names, have no regression test yet.
+
 CI obtains the binary from GitHub Releases (do not vendor it):
 
 ```bash
