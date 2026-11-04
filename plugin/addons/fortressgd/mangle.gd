@@ -136,36 +136,62 @@ static func collect_scan_only_names(sources: Array) -> Dictionary:
 
 static func apply_project(secrethash: String) -> Dictionary:
 	## Returns { ok, error, backups, mapping }. backups: path -> original text.
-	var reserved := reserved_names()
 	var files := {}
 	var backups := {}
 	for path in list_gdscript_files():
 		var src := FileAccess.get_file_as_string(path)
 		files[path] = src
+	# Project-wide names that scenes, resources, project.godot and addon scripts
+	# mention: never renamed. Mirrors core/export.py.
+	var exclude := {}
+	exclude.merge(collect_resource_reference_names())
+	var addon_sources: Array = []
+	for addon_path in list_scan_only_gdscript_files():
+		addon_sources.append(FileAccess.get_file_as_string(addon_path))
+	exclude.merge(collect_scan_only_names(addon_sources))
+	for res_path in binary_resource_paths():
+		push_warning("FortressGD: cannot scan binary resource %s for mangled names" % res_path)
+	var result := mangle_sources(files, secrethash, exclude)
+	if not result.get("ok", false):
+		return {"ok": false, "error": str(result.get("error", "mangle failed")), "backups": {}, "mapping": {}}
+	var sources: Dictionary = result["sources"]
+	for path in files.keys():
+		var rewritten: String = sources[path]
+		var original: String = str(files[path])
+		if rewritten != original:
+			backups[path] = original
+			var fh := FileAccess.open(path, FileAccess.WRITE)
+			if fh == null:
+				restore(backups)
+				return {"ok": false, "error": "cannot write mangled %s" % path, "backups": {}, "mapping": {}}
+			fh.store_string(rewritten)
+			fh.close()
+	return {"ok": true, "error": "", "backups": backups, "mapping": result["mapping"]}
+
+
+## Pure transform: no file I/O. files maps path -> source text; exclude is a
+## Dictionary set of names never to rename. Returns
+## { ok, error, sources: path -> mangled text, mapping: original -> mangled }.
+## Mirrors core/mangle.py mangle_scripts; tests/mangle_corpus checks both.
+static func mangle_sources(files: Dictionary, secrethash: String, exclude: Dictionary = {}) -> Dictionary:
+	var reserved := reserved_names()
 	var hits: Array = []
 	var paths: Array = files.keys()
 	paths.sort()
 	for path in paths:
 		hits.append_array(find_unsafe_calls(str(files[path]), str(path)))
 	if hits.size() > 0:
-		return {"ok": false, "error": _format_unsafe(hits), "backups": {}, "mapping": {}}
+		return {"ok": false, "error": _format_unsafe(hits), "sources": {}, "mapping": {}}
 	var user := {}
 	for path in files.keys():
 		for ident in collect_user_identifiers(str(files[path]), reserved):
 			user[ident] = true
 	# A name is renamed everywhere or nowhere. Drop every name that something
-	# may reference in a way the rewrite cannot follow. Mirrors core/mangle.py.
-	var excluded := {}
-	excluded.merge(collect_resource_reference_names())
-	var addon_sources: Array = []
-	for addon_path in list_scan_only_gdscript_files():
-		addon_sources.append(FileAccess.get_file_as_string(addon_path))
-	excluded.merge(collect_scan_only_names(addon_sources))
+	# may reference in a way the rewrite cannot follow.
+	var excluded := exclude.duplicate()
 	for path in files.keys():
 		excluded.merge(collect_foreign_member_names(str(files[path])))
 		excluded.merge(collect_string_identifier_names(str(files[path])))
-	for res_path in binary_resource_paths():
-		push_warning("FortressGD: cannot scan binary resource %s for mangled names" % res_path)
 	for name in excluded.keys():
 		user.erase(name)
 	var mapping := {}
@@ -176,18 +202,10 @@ static func apply_project(secrethash: String) -> Dictionary:
 		var name := mangled_identifier(str(original), secrethash, used, reserved)
 		mapping[str(original)] = name
 		used[name] = true
+	var sources := {}
 	for path in files.keys():
-		var rewritten := rewrite_source(str(files[path]), mapping, true)
-		var original: String = str(files[path])
-		if rewritten != original:
-			backups[path] = original
-			var fh := FileAccess.open(path, FileAccess.WRITE)
-			if fh == null:
-				restore(backups)
-				return {"ok": false, "error": "cannot write mangled %s" % path, "backups": {}, "mapping": {}}
-			fh.store_string(rewritten)
-			fh.close()
-	return {"ok": true, "error": "", "backups": backups, "mapping": mapping}
+		sources[path] = rewrite_source(str(files[path]), mapping, true)
+	return {"ok": true, "error": "", "sources": sources, "mapping": mapping}
 
 
 static func restore(backups: Dictionary) -> void:

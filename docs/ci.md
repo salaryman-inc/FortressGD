@@ -63,3 +63,15 @@ python3 tests/run.py
 ```
 
 When those env vars are set and the binary is present, KeyDot failing to extract the 32-byte key / recover the project from a Phase-2 protected exe is a **pass**. Absence of the binary must not fail the default test run.
+
+## Mangler parity (optional, needs Godot)
+
+`tests/mangle_corpus/` holds golden cases for the GDScript mangler, which exists in Python (`core/mangle.py`, CLI exports) and GDScript (`plugin/addons/fortressgd/mangle.gd`, editor exports). `python3 tests/run.py` always checks the Python side. To check the GDScript side on the same cases, run with a Godot 4.6.2 / 4.7.2 binary:
+
+```bash
+export FORTRESSGD_GODOT_TESTS=1
+export GODOT=/path/to/Godot_v4.6.2-stable_linux.x86_64
+python3 tests/run.py
+```
+
+See [`tests/mangle_corpus/README.md`](../tests/mangle_corpus/README.md) for adding cases.

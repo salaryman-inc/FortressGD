@@ -1,0 +1,1 @@
+unsafe call/rpc/set("…") at a.gd:3, b.gd:3, b.gd:4 (use a Callable, or mark with ## fortressgd:keep)

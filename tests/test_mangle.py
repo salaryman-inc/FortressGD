@@ -610,6 +610,18 @@ class MangleAddonExportTests(unittest.TestCase):
 
 
 class MangleStaticChecks(unittest.TestCase):
+    def test_plugin_has_pure_mangle_sources_for_the_corpus(self) -> None:
+        gd = _mangle_gd()
+        self.assertIn(
+            "static func mangle_sources(files: Dictionary, secrethash: String, exclude: Dictionary = {}) -> Dictionary:",
+            gd,
+        )
+        body = _gd_func_body(gd, "mangle_sources")
+        self.assertNotIn("FileAccess", body)
+        self.assertNotIn("DirAccess", body)
+        runner = (ROOT / "tests" / "gd" / "run_mangle_corpus.gd").read_text(encoding="utf-8")
+        self.assertIn("FGDMangle.mangle_sources(files, secrethash, exclude)", runner)
+
     def test_plugin_never_rewrites_addons(self) -> None:
         gd = _mangle_gd()
         walk = _gd_func_body(gd, "_walk")
@@ -640,7 +652,7 @@ class MangleStaticChecks(unittest.TestCase):
         self.assertIn('begins_with("&")', body)
         self.assertIn('begins_with("^")', body)
         self.assertIn('.replace(":", "/").replace(".", "/").split("/")', body)
-        self.assertIn("collect_string_identifier_names(", _gd_func_body(gd, "apply_project"))
+        self.assertIn("collect_string_identifier_names(", _gd_func_body(gd, "mangle_sources"))
 
     def test_agent_rules_mention_string_literal_and_runtime_names(self) -> None:
         text = (ROOT / "docs" / "agent-rules.md").read_text(encoding="utf-8")
@@ -652,8 +664,9 @@ class MangleStaticChecks(unittest.TestCase):
         gd = _mangle_gd()
         body = _gd_func_body(gd, "collect_foreign_member_names")
         self.assertIn('["self", "super"]', body)
-        self.assertIn("collect_foreign_member_names(", _gd_func_body(gd, "apply_project"))
-        self.assertIn("user.erase(", _gd_func_body(gd, "apply_project"))
+        self.assertIn("collect_foreign_member_names(", _gd_func_body(gd, "mangle_sources"))
+        self.assertIn("user.erase(", _gd_func_body(gd, "mangle_sources"))
+        self.assertIn("mangle_sources(files, secrethash, exclude)", _gd_func_body(gd, "apply_project"))
 
     def test_plugin_strip_emits_pass(self) -> None:
         body = _gd_func_body(_mangle_gd(), "_strip_tokens")
