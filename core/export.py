@@ -190,6 +190,44 @@ def write_export_source_map(
     return dest
 
 
+def _production_verify_on_export(cfg: dict) -> bool:
+    """[production].verify_on_export; absent means true (DESIGN.md §6, README)."""
+    production = cfg.get("production") or {}
+    return bool(production.get("verify_on_export", True))
+
+
+def verify_target(artifact: Path, *, use_dialect: bool, secret: bytes, godot_tag: str) -> Path:
+    """
+    The file verify_on_export checks: the artifact when it holds a pack (a .pck, or
+    an executable with an embedded pack), else the sibling <stem>.pck that a
+    non-embedded Windows / Linux export writes next to the executable.
+    """
+    from core.pack import find_gdpc_offset
+    from core.pack_dialect import dialect_params_for_secret, find_dialect_offset
+
+    if artifact.suffix.lower() == ".zip":
+        raise UserError(
+            "verify_on_export does not support .zip exports yet; "
+            "set verify_on_export = false or export a .pck",
+            NEXT_EXPORT,
+        )
+    if artifact.is_file():
+        data = artifact.read_bytes()
+        if find_gdpc_offset(data) is not None:
+            return artifact
+        if use_dialect:
+            magic = dialect_params_for_secret(secret, godot_tag)[0]
+            if find_dialect_offset(data, magic) is not None:
+                return artifact
+    sibling = artifact.with_suffix(".pck")
+    if sibling != artifact and sibling.is_file():
+        return sibling
+    raise UserError(
+        "verify_on_export found no pack in {0} or {1}".format(artifact, sibling),
+        NEXT_EXPORT,
+    )
+
+
 def _pack_output_path(export_path: str) -> str:
     """--export-pack wants a .pck/.zip path; keep those, otherwise swap the suffix."""
     if not export_path:
@@ -359,6 +397,13 @@ def export_preset(
             apply_signature(packed, signature, listing.pck_start, listing.version)
         )
 
+    verify_line = ""
+    if _production_verify_on_export(cfg):
+        from core.verify import format_verify_ok, verify_with_config
+
+        target = verify_target(artifact, use_dialect=use_dialect, secret=secret, godot_tag=godot_ver)
+        verify_line = format_verify_ok(verify_with_config(target, cfg, secret))
+
     return {
         "preset": preset_name,
         "platform": platform,
@@ -370,4 +415,5 @@ def export_preset(
         "export_mode": "export-pack" if use_dialect else "export-release",
         "mangle_scripts": "1" if mangle_on else "0",
         "source_map": map_file,
+        "verify": verify_line,
     }

@@ -89,7 +89,10 @@ def _write_godot_stub_bin(directory: Path, log_path: Path) -> Path:
         "    'scripts': scripts,\n"
         "}}\n"
         "log.write_text(json.dumps(payload), encoding='utf-8')\n"
-        "raise SystemExit(0)\n".format(str(log_path)),
+        "sys.path.insert(0, {1!r})\n"
+        "from tests.godot_stub import write_artifact\n"
+        "write_artifact(sys.argv)\n"
+        "raise SystemExit(0)\n".format(str(log_path), str(ROOT)),
         encoding="utf-8",
     )
     path.chmod(path.stat().st_mode | stat.S_IXUSR)

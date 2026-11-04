@@ -17,7 +17,7 @@ from core.templates import (
     templates_cache_dir,
 )
 from generator.dialect import derive_dialect_salt
-from tests.support import base_env, run_fortressgd, write_godot_stub
+from tests.support import ROOT, base_env, run_fortressgd, write_godot_stub
 
 
 PRESETS = """[preset.0]
@@ -54,7 +54,10 @@ def _write_godot_stub_bin(directory: Path, log_path: Path) -> Path:
         "    'FORTRESSGD_SECRET': os.environ.get('FORTRESSGD_SECRET'),\n"
         "}}\n"
         "log.write_text(json.dumps(payload), encoding='utf-8')\n"
-        "raise SystemExit(0)\n".format(str(log_path)),
+        "sys.path.insert(0, {1!r})\n"
+        "from tests.godot_stub import write_artifact\n"
+        "write_artifact(sys.argv)\n"
+        "raise SystemExit(0)\n".format(str(log_path), str(ROOT)),
         encoding="utf-8",
     )
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
@@ -192,6 +195,89 @@ class TemplatesExportCliTests(unittest.TestCase):
             self.assertNotIn(derived, presets)
             self.assertNotIn(secret_hex, presets)
             self.assertEqual(presets, PRESETS)
+
+
+    def _export_with_stub(self, root: Path, **stub_env: str):
+        """Cache a stub template, then run `fortressgd export` with a stub godot."""
+        secret = bytes.fromhex(read_secret_file(root / ".fortressgd.secret"))
+        cache = templates_cache_dir(root / "cache")
+        cache.mkdir(parents=True, exist_ok=True)
+        name = template_filename("4.6.2", "linux", "x86_64", patchset_for_tag("4.6.2"), secret_hash(secret))
+        (cache / name).write_bytes(b"stub-template")
+        bindir = root / "bin"
+        _write_godot_stub_bin(bindir, root / "godot-env.json")
+        env = base_env()
+        env["PATH"] = str(bindir) + os.pathsep + env.get("PATH", "")
+        env.update(stub_env)
+        return run_fortressgd("export", "--preset", "Linux", cwd=root, env=env)
+
+    def _set_verify_on_export(self, root: Path, enabled: bool) -> None:
+        toml = root / ".fortressgd.toml"
+        text = toml.read_text(encoding="utf-8")
+        text = text.replace(
+            "verify_on_export = true", "verify_on_export = {0}".format("true" if enabled else "false")
+        )
+        toml.write_text(text, encoding="utf-8")
+
+    def test_export_runs_verify_and_fails_on_leak(self) -> None:
+        for dialect in (False, True):
+            with self.subTest(dialect=dialect), tempfile.TemporaryDirectory() as tmp:
+                root = self._project(tmp)
+                self._set_dialect(root, dialect)
+                proc = self._export_with_stub(root, FGD_STUB_FILES="main.tscn,scripts/main.gd")
+                self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+                self.assertIn("scripts/main.gd", proc.stderr)
+                self.assertIn("leaked", proc.stderr)
+
+    def test_export_verify_passes_clean_pack(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            self._set_dialect(root, False)
+            proc = self._export_with_stub(root)
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertIn("ok: exported preset Linux", proc.stdout)
+            self.assertIn("ok: no production leaks in game.x86_64 (2 packed files)", proc.stdout)
+
+    def test_export_verify_off_skips(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            self._set_dialect(root, False)
+            self._set_verify_on_export(root, False)
+            proc = self._export_with_stub(root, FGD_STUB_FILES="main.tscn,scripts/main.gd")
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertNotIn("no production leaks", proc.stdout)
+
+    def test_export_verify_absent_key_means_on(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            self._set_dialect(root, False)
+            toml = root / ".fortressgd.toml"
+            toml.write_text(
+                toml.read_text(encoding="utf-8").replace("verify_on_export = true\n", ""), encoding="utf-8"
+            )
+            self.assertNotIn("verify_on_export", toml.read_text(encoding="utf-8"))
+            proc = self._export_with_stub(root, FGD_STUB_FILES="main.tscn,scripts/main.gd")
+            self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+
+    def test_export_verify_uses_sibling_pck(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            self._set_dialect(root, False)
+            proc = self._export_with_stub(root, FGD_STUB_SIBLING="1")
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertIn("ok: no production leaks in game.pck", proc.stdout)
+            leak = self._export_with_stub(root, FGD_STUB_SIBLING="1", FGD_STUB_FILES="main.tscn,x.gd")
+            self.assertEqual(leak.returncode, 2, leak.stdout + leak.stderr)
+            self.assertIn("x.gd", leak.stderr)
+
+    def test_export_verify_without_any_pack_names_both_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            self._set_dialect(root, False)
+            proc = self._export_with_stub(root, FGD_STUB_NO_ARTIFACT="1")
+            self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+            self.assertIn("game.x86_64", proc.stderr)
+            self.assertIn("game.pck", proc.stderr)
 
 
 if __name__ == "__main__":

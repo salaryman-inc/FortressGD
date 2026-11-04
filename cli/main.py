@@ -29,11 +29,10 @@ from core.secret import (
 from core.templates import (
     SUPPORTED_PLATFORMS,
     build_templates,
-    concrete_godot_tag,
     list_cached_templates,
     resolve_cache_dir_from_config,
 )
-from core.verify import format_verify_leaks, format_verify_ok, verify_artifact
+from core.verify import config_needs_secret, format_verify_ok, verify_with_config
 from core.version import __version__
 
 
@@ -154,48 +153,18 @@ def cmd_secret_status(args: argparse.Namespace) -> int:
     return 0
 
 
-def _filter_patterns(cfg: dict, key: str) -> list[str]:
-    """`[filters].include` or `[filters].exclude` as a list of strings."""
-    filters = cfg.get("filters") or {}
-    values = filters.get(key) or []
-    if not isinstance(values, list):
-        return []
-    return [p for p in values if isinstance(p, str)]
-
-
 def cmd_verify(args: argparse.Namespace) -> int:
     artifact = Path(args.artifact)
     cfg = _load_cwd_config()
-    include = _filter_patterns(cfg, "include")
-    exclude = _filter_patterns(cfg, "exclude")
-    production = cfg.get("production") or {}
-    dialect = bool(production.get("dialect", False))
-    nameless_bytecode = bool(production.get("nameless_bytecode", False))
-    sign_packs = bool(production.get("sign_packs", False))
-    secret = None
-    godot_tag = concrete_godot_tag(str(cfg["godot"])) if cfg.get("godot") else None
     secret_file = getattr(args, "secret_file", None)
     # Load the secret whenever one is available: encrypted packs need it to list
     # their files. It is an error to lack one only when the pack or config needs it.
-    needs_secret = dialect or sign_packs
     present = secret_status(secret_file=secret_file, environ=os.environ, cwd=Path.cwd())
-    if needs_secret or present["state"] == "present":
+    secret = None
+    if config_needs_secret(cfg) or present["state"] == "present":
         hex_secret = load_secret_hex(secret_file=secret_file, environ=os.environ, cwd=Path.cwd())
         secret = secret_bytes_from_hex(hex_secret)
-    if needs_secret and not godot_tag:
-        raise UserError("godot version required in {0}".format(CONFIG_NAME), NEXT_HELP)
-    result = verify_artifact(
-        artifact,
-        include=include,
-        exclude=exclude,
-        dialect=dialect,
-        secret=secret,
-        godot_tag=godot_tag,
-        nameless_bytecode=nameless_bytecode,
-        sign_packs=sign_packs,
-    )
-    if result.leaks:
-        raise format_verify_leaks(result)
+    result = verify_with_config(artifact, cfg, secret)
     sys.stdout.write(format_verify_ok(result) + "\n")
     return 0
 
@@ -264,6 +233,8 @@ def cmd_export(args: argparse.Namespace) -> int:
     sys.stdout.write(
         "ok: exported preset {0} ({1})\n".format(result["preset"], result["platform"])
     )
+    if result.get("verify"):
+        sys.stdout.write(result["verify"] + "\n")
     return 0
 
 

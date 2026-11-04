@@ -240,6 +240,51 @@ def _named_gdc_paths(data: bytes, listing: PackListing, aes_key: bytes | None) -
     return named
 
 
+def _filter_patterns(cfg: dict, key: str) -> list[str]:
+    filters = cfg.get("filters") or {}
+    values = filters.get(key) or []
+    if not isinstance(values, list):
+        return []
+    return [p for p in values if isinstance(p, str)]
+
+
+def config_needs_secret(cfg: dict) -> bool:
+    """True when verify cannot run without the project secret for this config."""
+    production = cfg.get("production") or {}
+    return bool(production.get("dialect", False)) or bool(production.get("sign_packs", False))
+
+
+def verify_with_config(artifact: Path, cfg: dict, secret: bytes | None) -> VerifyResult:
+    """
+    Verify an artifact the way `.fortressgd.toml` asks. Shared by `fortressgd verify`
+    and `fortressgd export` (verify_on_export) so the two cannot drift apart.
+
+    Raises the leak VerifyError from format_verify_leaks when excluded paths are packed.
+    """
+    production = cfg.get("production") or {}
+    dialect = bool(production.get("dialect", False))
+    godot_tag = None
+    if cfg.get("godot"):
+        from core.templates import concrete_godot_tag
+
+        godot_tag = concrete_godot_tag(str(cfg["godot"]))
+    if config_needs_secret(cfg) and not godot_tag:
+        raise PackError("verify needs the godot version from .fortressgd.toml", NEXT_VERIFY)
+    result = verify_artifact(
+        artifact,
+        include=_filter_patterns(cfg, "include"),
+        exclude=_filter_patterns(cfg, "exclude"),
+        dialect=dialect,
+        secret=secret,
+        godot_tag=godot_tag,
+        nameless_bytecode=bool(production.get("nameless_bytecode", False)),
+        sign_packs=bool(production.get("sign_packs", False)),
+    )
+    if result.leaks:
+        raise format_verify_leaks(result)
+    return result
+
+
 def format_verify_ok(result: VerifyResult) -> str:
     return "ok: no production leaks in {0} ({1} packed files)".format(
         result.artifact.name, len(result.paths)

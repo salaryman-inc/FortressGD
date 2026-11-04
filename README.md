@@ -139,7 +139,8 @@ export FORTRESSGD_SECRET="$(cat .fortressgd.secret)"
 fortressgd templates build --godot 4.6.2 --platform linux
 fortressgd templates build --godot 4.6.2 --platform windows
 
-# 5. Export + leak-check
+# 5. Export. With verify_on_export = true (the default) export also runs verify
+#    and exits 2 on a leak. Run verify on its own in CI or on any artifact.
 fortressgd export --preset Linux
 fortressgd verify path/to/your_game.pck
 ```
@@ -212,8 +213,8 @@ mangle_scripts = false
 export FORTRESSGD_SECRET="$(cat .fortressgd.secret)"
 fortressgd doctor
 fortressgd templates build --godot 4.6.2 --platform linux
-fortressgd export --preset Linux
-fortressgd verify build/game.pck
+fortressgd export --preset Linux      # verifies the artifact when verify_on_export = true
+fortressgd verify build/game.pck      # the same check, for CI or a copied artifact
 ```
 
 `export` sets `GODOT_SCRIPT_ENCRYPTION_KEY` to `FGD-KDF-1(secret, salt)` for that process only, points the preset at the cached FortressGD template, and restores `export_presets.cfg` afterwards. Missing templates print the exact `templates build` command to run.
@@ -237,8 +238,8 @@ export FORTRESSGD_SECRET="$(cat .fortressgd.secret)"
 export FORTRESSGD_GODOT=/path/to/fortressgd-headless-editor   # patched, target=editor
 
 fortressgd templates build --godot 4.6.2 --platform linux
-fortressgd export --preset Linux
-fortressgd verify build/game.pck
+fortressgd export --preset Linux      # verifies the artifact when verify_on_export = true
+fortressgd verify build/game.pck      # the same check, for CI or a copied artifact
 ```
 
 `templates build` produces `template_release` binaries (the runtime). Dialect **packing** needs a separate FortressGD-patched **headless editor** (`scons target=editor`, same patches and `dialect.gen.h`). Point `FORTRESSGD_GODOT` at that binary. `export` then runs `--export-pack`. A stock GDPC listing of the resulting pack must fail; `verify` checks that.
@@ -317,7 +318,7 @@ cache_dir = "~/.cache/fortressgd"
 | `production.mangle_scripts` | Rename identifiers and strip debug statements. |
 | `production.nameless_bytecode` | Omit stock `.gdc` debug name tables. |
 | `production.sign_packs` | Ed25519 signature over the pack index. |
-| `production.verify_on_export` | Keep true; always run `fortressgd verify` on the artifact. |
+| `production.verify_on_export` | Keep true (the default when absent). `export` then runs the same check as `fortressgd verify` on the artifact, or on the `<name>.pck` next to an executable without an embedded pack, and exits 2 on a leak. `.zip` exports are not supported yet. |
 | `filters.exclude` | Extra exclude globs (forced excludes still apply). |
 | `filters.include` | Allowlist that overrides a forced exclude. |
 | `platforms.build` | Default platforms for `templates build`. |
@@ -351,7 +352,7 @@ Every command accepts `--secret-file PATH`. `--platform` is repeatable (`--platf
 | `secret status` | `present` / `missing`; never prints the secret. |
 | `templates build` | Docker-build `template_release` for `(godot, secret_hash, platform)`. |
 | `templates list` | Names of cached templates. |
-| `export` | Production export with derived AES key (and dialect/mangle/sign when enabled). |
+| `export` | Production export with derived AES key (and dialect/mangle/sign when enabled), then `verify` when `verify_on_export` is true. |
 | `verify` | List packed paths; fail on leaked excludes, leftover debug tables, or bad signatures. |
 
 Exit codes: `0` ok, `1` config/user error, `2` verify/policy failure, `3` tool or engine build failure. Errors print `error: …` and `Run: <next command>`.
