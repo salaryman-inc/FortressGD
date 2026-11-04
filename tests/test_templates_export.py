@@ -338,5 +338,15 @@ class TemplatesExportCliTests(unittest.TestCase):
                 self.assertFalse(Path(str(root.resolve()) + ".fortressgd.map.json").exists())
 
 
+    def test_export_warns_on_dotnet_project(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            self._set_dialect(root, False)
+            (root / ".godot" / "mono").mkdir(parents=True)
+            proc = self._export_with_stub(root)
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertIn("warning: .NET project", proc.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

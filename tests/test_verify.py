@@ -102,6 +102,30 @@ class VerifyCliTests(unittest.TestCase):
             self.assertIn("design_docs/notes.txt", combined)
             self.assertIn("(design_docs/*)", combined)
 
+    def test_pdb_in_pack_or_next_to_artifact_exits_2(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            inside = _write_pck(root, "inside.pck", ["main.tscn", "Game.pdb"])
+            proc = run_fortressgd("verify", str(inside), cwd=root)
+            self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+            self.assertIn("Game.pdb", proc.stderr)
+        for rel in ("Game.pdb", "data_Game_linuxbsd_x86_64/Game.pdb"):
+            with self.subTest(rel=rel), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                build = root / "build"
+                build.mkdir()
+                exe = build / "game.x86_64"
+                exe.write_bytes(embed_exe(make_gdpc(["main.tscn"])))
+                clean = run_fortressgd("verify", str(exe), cwd=root)
+                self.assertEqual(clean.returncode, 0, clean.stdout + clean.stderr)
+                pdb = build / rel
+                pdb.parent.mkdir(parents=True, exist_ok=True)
+                pdb.write_bytes(b"Microsoft C/C++ MSF 7.00")
+                proc = run_fortressgd("verify", str(exe), cwd=root)
+                self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+                self.assertIn(rel, proc.stderr)
+                self.assertIn("next to the artifact", proc.stderr)
+
     def test_missing_and_unreadable_exit_1(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

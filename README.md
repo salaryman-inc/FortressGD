@@ -16,7 +16,8 @@ Start with leak checks on the official editor — no Docker, no custom templates
 
 **Export hygiene**
 
-- Production presets skip GDScript **text**, C# source, DCC work files, plugin internals, and source maps unless you allowlist a path
+- Production presets skip GDScript **text**, C# source files, .NET `.pdb` symbols, DCC work files, plugin internals, and source maps unless you allowlist a path
+- **C# caveat:** a .NET game still ships its compiled assembly, which decompiles to near-original C#. FortressGD does not obfuscate it; `doctor` and `export` warn on .NET projects (see [`THREAT_MODEL.md`](THREAT_MODEL.md))
 - Official-editor workflow: add the `fortressgd_production` feature tag and export as usual
 - `fortressgd verify` lists packed paths and fails CI if excluded files leaked
 

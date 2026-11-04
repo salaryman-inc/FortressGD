@@ -25,6 +25,7 @@ _SPEC_FORCED_EXCLUDE: tuple[str, ...] = (
     "*.tmp",
     "addons/fortressgd/**",
     "*.fortressgd.map.json",
+    "*.pdb",
 )
 
 FEATURE_TAG = "fortressgd_production"
@@ -87,6 +88,29 @@ def effective_exclude_patterns(exclude: Sequence[str] | None = None) -> list[str
         if pat not in out:
             out.append(pat)
     return out
+
+
+DOTNET_MARKER = "*.pdb next to the artifact"
+
+
+def sidecar_pdb_leaks(artifact) -> list[Leak]:
+    """.NET debug symbols shipped beside the artifact.
+
+    A PDB restores names and line numbers when the managed assembly is
+    decompiled. Checks the artifact's directory and Godot's data_<name>_* folders
+    next to it, where .NET exports put their assemblies.
+    """
+    from pathlib import Path
+
+    folder = Path(artifact).resolve().parent
+    found: list[Leak] = []
+    candidates = list(folder.glob("*.pdb"))
+    for data_dir in folder.glob("data_*"):
+        if data_dir.is_dir():
+            candidates.extend(data_dir.rglob("*.pdb"))
+    for pdb in sorted(set(candidates)):
+        found.append(Leak(path=pdb.relative_to(folder).as_posix(), pattern=DOTNET_MARKER))
+    return found
 
 
 def find_leaks(

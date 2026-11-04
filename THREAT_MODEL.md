@@ -14,6 +14,7 @@ See `DESIGN.md` §1.3 for the normative text. This page is the short form for RE
 - A person who reverse-engineers this game’s pack dialect and writes a dedicated unpacker.
 - Texture/audio ripping from memory or disk after decrypt.
 - Gameplay cheats that need a server to prevent.
+- Decompiling a .NET game's managed assembly. Excluding `.cs` only keeps the source *text* out of the pack; the compiled C# still ships and tools such as ILSpy or dnSpy turn it back into near-original source in one click. FortressGD does not obfuscate .NET assemblies. It does refuse to ship `.pdb` debug symbols, which would also restore names and line numbers. Use a .NET obfuscator if your C# needs protection.
 
 ## Consequence
 

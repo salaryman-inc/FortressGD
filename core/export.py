@@ -21,7 +21,7 @@ from core.mangle import (
     source_map_json,
     source_map_path,
 )
-from core.project import CONFIG_NAME, require_godot_root
+from core.project import CONFIG_NAME, DOTNET_WARNING, is_dotnet_project, require_godot_root
 from core.secret import load_secret_hex, secret_bytes_from_hex
 from core.templates import (
     DEFAULT_ARCH,
@@ -383,6 +383,8 @@ def export_preset(
 
     mangle_on = _production_mangle(cfg)
     warnings: list[str] = []
+    if is_dotnet_project(root):
+        warnings.append(DOTNET_WARNING[len("warning: "):])
     script_backups: dict[Path, str] = {}
     identifier_map: dict[str, str] = {}
     if mangle_on:

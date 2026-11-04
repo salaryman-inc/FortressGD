@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Sequence
 
 from core.errors import NEXT_DOCTOR, NEXT_SECRET, NEXT_VERIFY, VerifyError
-from core.filters import Leak, find_leaks
+from core.filters import Leak, find_leaks, sidecar_pdb_leaks
 from core.gdc import CompressedGdscError, has_debug_name_tables
 from core.pack import (
     PACK_DIR_ENCRYPTED,
@@ -107,7 +107,7 @@ def verify_artifact(
         listing = read_stock_listing(data, secret=secret, godot_tag=godot_tag, source=str(artifact))
         packed = [item.path for item in listing.files]
 
-    leaks = find_leaks(packed, include=include, exclude=exclude)
+    leaks = find_leaks(packed, include=include, exclude=exclude) + sidecar_pdb_leaks(artifact)
     result = VerifyResult(
         artifact=artifact,
         paths=packed,

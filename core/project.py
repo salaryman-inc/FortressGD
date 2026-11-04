@@ -126,6 +126,19 @@ def plugin_diff(project_root: Path) -> tuple[str, list[str]]:
     return "match", []
 
 
+DOTNET_WARNING = (
+    "warning: .NET project: excluding .cs keeps source text out of the pack, but the "
+    "shipped managed assembly decompiles to near-original C# (ILSpy, dnSpy). FortressGD "
+    "does not obfuscate it. See THREAT_MODEL.md."
+)
+
+
+def is_dotnet_project(root: Path) -> bool:
+    """A *.csproj at the project root, or Godot's .godot/mono folder."""
+    root = Path(root)
+    return any(root.glob("*.csproj")) or (root / ".godot" / "mono").is_dir()
+
+
 def doctor_project(
     cwd: Path,
     *,
@@ -166,6 +179,8 @@ def doctor_project(
         )
     if secret["state"] == "present":
         _check_secret_hygiene(secret, secret_file=secret_file, environ=environ, cwd=root)
+    if is_dotnet_project(root):
+        warnings.append(DOTNET_WARNING)
     if secret["state"] == "missing":
         warnings.append(
             "warning: secret missing\nRun: {0}".format(NEXT_SECRET)

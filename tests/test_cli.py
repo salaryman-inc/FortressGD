@@ -210,6 +210,21 @@ class CliTests(unittest.TestCase):
             )
             self.assertEqual(run_fortressgd("doctor", cwd=root).returncode, 0)
 
+    def test_doctor_warns_on_dotnet_project(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_godot_stub(root)
+            self.assertEqual(run_fortressgd("init", cwd=root).returncode, 0)
+            plain = run_fortressgd("doctor", cwd=root)
+            self.assertNotIn(".NET project", plain.stdout + plain.stderr)
+            (root / "Game.csproj").write_text("<Project Sdk=\"Godot.NET.Sdk/4.6.2\" />\n", encoding="utf-8")
+            doc = run_fortressgd("doctor", cwd=root)
+            self.assertEqual(doc.returncode, 0, doc.stderr)
+            combined = doc.stdout + doc.stderr
+            self.assertIn("warning: .NET project", combined)
+            self.assertIn("decompiles", combined)
+            self.assertIn("does not obfuscate", combined)
+
     def test_doctor_warns_if_plugin_differs_from_cli_package(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
