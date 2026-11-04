@@ -2,17 +2,29 @@
 
 from __future__ import annotations
 
+import struct
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
-from core.errors import NEXT_DOCTOR, NEXT_VERIFY, VerifyError
+from core.errors import NEXT_DOCTOR, NEXT_SECRET, NEXT_VERIFY, VerifyError
 from core.filters import Leak, find_leaks
 from core.gdc import has_debug_name_tables
-from core.pack import PackError, PackListing, list_packed_paths, read_pack_listing
+from core.pack import (
+    PACK_DIR_ENCRYPTED,
+    PackError,
+    PackListing,
+    find_gdpc_offset,
+    list_packed_paths,
+    read_pack_listing_at,
+)
 from core.pack_dialect import (
+    STOCK_INDEX_PERM,
+    STOCK_PACK_MAGIC,
+    dialect_key_for_secret,
     dialect_params_for_secret,
     read_dialect_listing,
+    read_dialect_listing_at,
 )
 from core.pack_sign import (
     SIG_LEN,
@@ -20,6 +32,10 @@ from core.pack_sign import (
     read_reserved_signature,
     verify_index,
 )
+
+
+# magic, version, major, minor, patch (u32 each), then pack flags.
+_HEADER_FLAGS_OFFSET = 20
 
 
 @dataclass(frozen=True)
@@ -85,7 +101,7 @@ def verify_artifact(
                 NEXT_DOCTOR,
             )
     else:
-        listing = read_pack_listing(data, source=str(artifact))
+        listing = _read_stock_listing(data, secret=secret, godot_tag=godot_tag, source=str(artifact))
         packed = [item.path for item in listing.files]
 
     leaks = find_leaks(packed, include=include)
@@ -122,6 +138,52 @@ def verify_artifact(
                 NEXT_DOCTOR,
             )
     return result
+
+
+def _stock_dir_encrypted(data: bytes, offset: int) -> bool:
+    """True when the stock GDPC header at offset has PACK_DIR_ENCRYPTED set."""
+    flags_at = offset + _HEADER_FLAGS_OFFSET
+    if flags_at + 4 > len(data):
+        return False
+    return bool(struct.unpack_from("<I", data, flags_at)[0] & PACK_DIR_ENCRYPTED)
+
+
+def _read_stock_listing(
+    data: bytes,
+    *,
+    secret: bytes | None,
+    godot_tag: str | None,
+    source: str,
+) -> PackListing:
+    """
+    Stock GDPC listing. `fortressgd export` with dialect=false always encrypts the
+    directory with the derived key, so an encrypted directory is read with that key
+    (stock magic and field order).
+    """
+    offset = find_gdpc_offset(data)
+    if offset is None:
+        raise PackError("no stock GDPC pack in {0}".format(source))
+    if not _stock_dir_encrypted(data, offset):
+        return read_pack_listing_at(data, offset, source=source)
+    if secret is None:
+        raise PackError(
+            "encrypted pack directory; verify needs the project secret "
+            "(.fortressgd.secret or FORTRESSGD_SECRET)",
+            NEXT_SECRET,
+        )
+    if not godot_tag:
+        raise PackError(
+            "encrypted pack directory; verify needs the godot version from .fortressgd.toml",
+            NEXT_VERIFY,
+        )
+    return read_dialect_listing_at(
+        data,
+        offset,
+        magic=STOCK_PACK_MAGIC,
+        perm=STOCK_INDEX_PERM,
+        aes_key=dialect_key_for_secret(secret, godot_tag),
+        source=source,
+    )
 
 
 def _named_gdc_paths(data: bytes, listing: PackListing) -> list[str]:

@@ -18,9 +18,9 @@ from core.gdc import (
     parse_gdsc_engine_order,
 )
 from core.pack import PACK_DIR_ENCRYPTED
-from core.pack_dialect import dialect_params_for_secret, encode_dialect_index
+from core.pack_dialect import dialect_key_for_secret, dialect_params_for_secret, encode_dialect_index
 from core.pack_sign import apply_signature, public_key_for_secret, sign_index, verify_index
-from core.secret import read_secret_file, secret_bytes_from_hex
+from core.secret import generate_secret_hex, read_secret_file, secret_bytes_from_hex
 from tests.gdpc_fixture import embed_exe, make_gdpc
 from tests.support import run_fortressgd, write_godot_stub
 
@@ -105,6 +105,79 @@ class VerifyCliTests(unittest.TestCase):
                 self.assertIn("main.gd", b.stdout + b.stderr)
             self.assertEqual(codes_clean, [0, 0])
             self.assertEqual(codes_leak, [2, 2])
+
+    def _derived_key_project(self, root: Path) -> bytes:
+        """The README's derived-key flow: dialect = false, encrypted stock pack."""
+        write_godot_stub(root)
+        text = default_toml_text().replace("dialect = true", "dialect = false")
+        (root / ".fortressgd.toml").write_text(text, encoding="utf-8")
+        self.assertEqual(run_fortressgd("secret", "generate", cwd=root).returncode, 0)
+        return secret_bytes_from_hex(read_secret_file(root / ".fortressgd.secret"))
+
+    def test_stock_encrypted_directory_with_secret_lists_and_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            secret = self._derived_key_project(root)
+            pck = root / "game.pck"
+            pck.write_bytes(
+                make_gdpc(
+                    ["main.tscn", "main.gdc", "icon.png"],
+                    flags=PACK_DIR_ENCRYPTED,
+                    aes_key=dialect_key_for_secret(secret, "4.6.2"),
+                )
+            )
+            exe = root / "game.exe"
+            exe.write_bytes(embed_exe(pck.read_bytes()))
+            for artifact in (pck, exe):
+                proc = run_fortressgd("verify", str(artifact), cwd=root)
+                combined = proc.stdout + proc.stderr
+                self.assertEqual(proc.returncode, 0, combined)
+                self.assertIn("3 packed files", combined)
+                self.assertNotIn(secret.hex(), combined)
+
+    def test_stock_encrypted_directory_leak_exits_2(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            secret = self._derived_key_project(root)
+            pck = root / "game.pck"
+            pck.write_bytes(
+                make_gdpc(
+                    ["main.tscn", "main.gd"],
+                    flags=PACK_DIR_ENCRYPTED,
+                    aes_key=dialect_key_for_secret(secret, "4.6.2"),
+                )
+            )
+            proc = run_fortressgd("verify", str(pck), cwd=root)
+            combined = proc.stdout + proc.stderr
+            self.assertEqual(proc.returncode, 2, combined)
+            self.assertIn("main.gd", combined)
+
+    def test_stock_encrypted_directory_without_secret_exits_1(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            secret = self._derived_key_project(root)
+            pck = root / "game.pck"
+            pck.write_bytes(
+                make_gdpc(["main.tscn"], flags=PACK_DIR_ENCRYPTED, aes_key=dialect_key_for_secret(secret, "4.6.2"))
+            )
+            (root / ".fortressgd.secret").unlink()
+            proc = run_fortressgd("verify", str(pck), cwd=root)
+            self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+            self.assertIn("FORTRESSGD_SECRET", proc.stderr)
+            self.assertIn("encrypted pack directory", proc.stderr)
+
+    def test_stock_encrypted_directory_wrong_secret_exits_1(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._derived_key_project(root)
+            other = secret_bytes_from_hex(generate_secret_hex())
+            pck = root / "game.pck"
+            pck.write_bytes(
+                make_gdpc(["main.tscn"], flags=PACK_DIR_ENCRYPTED, aes_key=dialect_key_for_secret(other, "4.6.2"))
+            )
+            proc = run_fortressgd("verify", str(pck), cwd=root)
+            self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+            self.assertIn("invalid key", proc.stderr)
 
     def _dialect_project(self, root: Path) -> bytes:
         write_godot_stub(root)

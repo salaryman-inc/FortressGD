@@ -175,17 +175,17 @@ def cmd_verify(args: argparse.Namespace) -> int:
     nameless_bytecode = bool(production.get("nameless_bytecode", False))
     sign_packs = bool(production.get("sign_packs", False))
     secret = None
-    godot_tag = None
-    if dialect or sign_packs:
-        hex_secret = load_secret_hex(
-            secret_file=getattr(args, "secret_file", None),
-            environ=os.environ,
-            cwd=Path.cwd(),
-        )
+    godot_tag = concrete_godot_tag(str(cfg["godot"])) if cfg.get("godot") else None
+    secret_file = getattr(args, "secret_file", None)
+    # Load the secret whenever one is available: encrypted packs need it to list
+    # their files. It is an error to lack one only when the pack or config needs it.
+    needs_secret = dialect or sign_packs
+    present = secret_status(secret_file=secret_file, environ=os.environ, cwd=Path.cwd())
+    if needs_secret or present["state"] == "present":
+        hex_secret = load_secret_hex(secret_file=secret_file, environ=os.environ, cwd=Path.cwd())
         secret = secret_bytes_from_hex(hex_secret)
-        godot_tag = concrete_godot_tag(str(cfg["godot"]))
-    elif nameless_bytecode and cfg.get("godot"):
-        godot_tag = concrete_godot_tag(str(cfg["godot"]))
+    if needs_secret and not godot_tag:
+        raise UserError("godot version required in {0}".format(CONFIG_NAME), NEXT_HELP)
     result = verify_artifact(
         artifact,
         include=include,

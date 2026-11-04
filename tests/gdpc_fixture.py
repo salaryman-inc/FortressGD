@@ -5,6 +5,7 @@ from __future__ import annotations
 import struct
 
 PACK_MAGIC = 0x43504447
+PACK_DIR_ENCRYPTED = 1 << 0
 
 
 def make_gdpc(
@@ -17,8 +18,16 @@ def make_gdpc(
     flags: int = 0,
     contents: dict[str, bytes] | None = None,
     signature: bytes | None = None,
+    aes_key: bytes | None = None,
+    iv: bytes | None = None,
 ) -> bytes:
-    """Build an unencrypted Godot 4 pack (v2 / v3 / v4). Empty bodies unless `contents`."""
+    """
+    Build a Godot 4 pack (v2 / v3 / v4). Empty bodies unless `contents`.
+
+    With `flags & 1` (PACK_DIR_ENCRYPTED) and `aes_key`, the directory is stored as
+    upstream does: plaintext u32 file_count, then a FileAccessEncrypted blob of the
+    records. Without `aes_key` only the header flag is set.
+    """
     blobs = contents or {}
     bodies = [blobs.get(path, b"") for path in paths]
 
@@ -30,7 +39,6 @@ def make_gdpc(
     def du64(value: int) -> None:
         dir_buf.extend(struct.pack("<Q", value))
 
-    du32(len(paths))
     cursor = 0
     for path, body in zip(paths, bodies):
         raw = path.encode("utf-8")
@@ -44,6 +52,13 @@ def make_gdpc(
         du32(0)
         cursor += len(body)
     file_data = b"".join(bodies)
+    count = struct.pack("<I", len(paths))
+    if flags & PACK_DIR_ENCRYPTED and aes_key is not None:
+        from core.pack_dialect import encrypt_fae_directory
+
+        dir_buf = bytearray(count + encrypt_fae_directory(bytes(dir_buf), aes_key, iv or bytes(range(16))))
+    else:
+        dir_buf = bytearray(count + bytes(dir_buf))
 
     buf = bytearray()
 

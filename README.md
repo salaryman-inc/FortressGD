@@ -218,6 +218,8 @@ fortressgd verify build/game.pck
 
 `export` sets `GODOT_SCRIPT_ENCRYPTION_KEY` to `FGD-KDF-1(secret, salt)` for that process only, points the preset at the cached FortressGD template, and restores `export_presets.cfg` afterwards. Missing templates print the exact `templates build` command to run.
 
+The exported pack's directory is encrypted with that derived key, so `verify` reads it with the project secret and the `godot` version from `.fortressgd.toml`. Without the secret, `verify` exits 1 and says so.
+
 ### Full production (dialect + mangling)
 
 This is the example `.fortressgd.toml` default:
