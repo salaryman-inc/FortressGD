@@ -104,6 +104,31 @@ class PatchTests(unittest.TestCase):
                 self.assertIn("FGD_OPCODE_MAP", codegen)
                 self.assertIn("FGD_OPCODE_UNMAP", vm)
                 self.assertIn("FORTRESSGD_SIGN_PACKS", patched)
+                # #11: signatures are enforced, cover encrypted directories, and are
+                # verified before any index entry is registered.
+                sign_start = patched.index("struct FGDPackEntry")
+                sign_block = patched[sign_start : patched.index("return true;", sign_start)]
+                self.assertIn("FGD_REQUIRE_PACK_SIGNATURE", sign_block, msg=tag)
+                self.assertIn('"Pack signature missing."', sign_block, msg=tag)
+                self.assertNotIn("!enc_directory &&", sign_block, msg=tag)
+                self.assertIn("fgd_dir_abs + 4 + 16 + 8 + 16", sign_block, msg=tag)
+                verify_at = sign_block.index("fortressgd_ed25519_verify(")
+                push_at = sign_block.index("fgd_entries.push_back(fgd_entry);")
+                register_at = sign_block.index("for (const FGDPackEntry &fgd_e : fgd_entries)")
+                self.assertLess(push_at, verify_at, msg=tag)
+                self.assertLess(verify_at, register_at, msg=tag)
+                self.assertEqual(
+                    sign_block.count("PackedData::get_singleton()->add_path("),
+                    2,  # the #else (no SIGN_PACKS) branch and the deferred one
+                    msg=tag,
+                )
+                if tag == "4.7.2":
+                    # The V4 sparse-bundle salt at offset 40 is read before, and instead
+                    # of, the signature.
+                    salt_at = patched.index("Vector<uint8_t> salt_data = f->get_buffer(32);")
+                    sig_at = patched.index("f->get_buffer(fgd_sig, 64);")
+                    self.assertLess(salt_at, sig_at)
+                    self.assertIn("not supported for encrypted sparse bundles", patched)
                 self.assertTrue((work / "core" / "fortressgd_ed25519.cpp").is_file())
                 log_lines.append(
                     "{0}: git apply --check+apply ok; derive+wipe; dialect magic/perm; nameless; opcode map; sign".format(tag)

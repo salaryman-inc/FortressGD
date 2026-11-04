@@ -18,6 +18,7 @@ SUPPORTED_FORMATS = frozenset({PACK_FORMAT_V2, PACK_FORMAT_V3, PACK_FORMAT_V4})
 
 PACK_DIR_ENCRYPTED = 1 << 0  # pack header flag
 PACK_REL_FILEBASE = 1 << 1
+PACK_SPARSE_BUNDLE = 1 << 2  # Godot 4.7 V4 header flag
 PACK_FILE_ENCRYPTED = 1 << 0  # per-file index flag (same value, different field)
 PACK_FILE_REMOVAL = 1 << 1
 
@@ -79,10 +80,12 @@ class PackListing:
         return data[start : start + item.size]
 
     def index_bytes(self, data: bytes) -> bytes:
-        # Godot writes files then the directory (file_base < dir). Test fixtures
-        # may put the directory first (file_base > dir). Cover the index either way.
-        if self.file_base > self.dir_abs:
-            return data[self.dir_abs : self.file_base]
+        """The signed range: the on-disk directory from dir_abs to its end.
+
+        For an encrypted directory that is the plaintext u32 file_count plus the
+        FileAccessEncrypted blob, exactly what the engine patch verifies
+        (patches/<tag>/0005-pack-signatures.patch).
+        """
         return data[self.dir_abs : self.dir_end]
 
 

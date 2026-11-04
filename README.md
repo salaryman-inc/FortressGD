@@ -257,7 +257,10 @@ See [`docs/agent-rules.md`](docs/agent-rules.md).
 
 ### Nameless bytecode and pack signatures
 
-Both stay **off** until you opt in. They need FortressGD templates rebuilt after you flip the flag.
+Both stay **off** until you opt in.
+
+- `nameless_bytecode` is checked by `verify` only. Every FortressGD template can load nameless bytecode, so toggling it needs no template rebuild.
+- `sign_packs` needs the signature-required template variant (its name ends in `-sig`). Rebuild templates after turning it on: `templates build` reads `sign_packs` from `.fortressgd.toml` (or pass `--require-signature`; the GitHub Action takes `sign_packs: "true"`). That template refuses packs whose index signature is missing, zeroed, or invalid, including encrypted packs. `export` signs the pack and fails if only the non-`-sig` template is cached. Encrypted sparse bundles (Godot 4.7) cannot be signed.
 
 ```toml
 [production]

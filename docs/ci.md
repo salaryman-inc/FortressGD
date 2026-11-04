@@ -12,6 +12,8 @@
 
 Cache key: `fgd-templates-{godot}-{patchset}-{secret_hash}-{platform}` (the Action restores `~/.cache/fortressgd/templates` under that key).
 
+Set `sign_packs: "true"` when the project has `[production].sign_packs = true`. The Action then builds the `-sig` template variant, which refuses unsigned or tampered packs, and appends `-sig` to the cache key.
+
 The secret is an Actions secret passed at **run** time. It is not a Docker build-arg and must not land in image layers.
 
 ### Keeping the secret out of logs and caches

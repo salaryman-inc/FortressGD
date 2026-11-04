@@ -289,14 +289,17 @@ If a C# project cannot run without `.cs` in the PCK on a given Godot version, `f
 ### 7.1 Naming
 
 ```
-godot-<ver>-template_release-<platform>-<arch>-fgd<patchset12>-<secrethash16>
+godot-<ver>-template_release-<platform>-<arch>-fgd<patchset12>-<secrethash16>[-sig]
 ```
 
 Example:
 
 ```
 godot-4.6.2-template_release-windows-x86_64-fgd3a1c0b9d2e4f-9f3c1a77b0e2d145
+godot-4.6.2-template_release-windows-x86_64-fgd3a1c0b9d2e4f-9f3c1a77b0e2d145-sig
 ```
+
+The `-sig` variant is built when `[production].sign_packs = true` and refuses packs without a valid index signature (§8.4). The two variants never share a cache entry.
 
 ### 7.2 Build
 
@@ -315,7 +318,8 @@ Docker image `Dockerfile.templates`:
   "kdf": "FGD-KDF-1",
   "dialect_id": "…",
   "platform": "windows",
-  "arch": "x86_64"
+  "arch": "x86_64",
+  "require_signature": false
 }
 ```
 
@@ -324,7 +328,7 @@ Do not put the raw secret or `aes_key` in the manifest.
 ### 7.3 Cache
 
 `~/.cache/fortressgd/templates/<filename>`.  
-CI: restore cache key `fgd-templates-{godot}-{patchset}-{secret_hash}-{platform}`.
+CI: restore cache key `fgd-templates-{godot}-{patchset}-{secret_hash}-{platform}`, with `-sig` appended for the signature-required variant.
 
 ---
 
@@ -366,6 +370,10 @@ Do not reimplement the full Godot packer in Python in v1.
 
 - Opcode permutation table for GDScript VM (`opcode_map.py`): data-only `FGD_OPCODE_MAP` / `FGD_OPCODE_UNMAP` in `dialect.gen.h`. Compiler emit and VM dispatch use the table when `FORTRESSGD_OPCODE_MAP` is compiled in.
 - Ed25519 signatures over the pack index when `[production].sign_packs = true`. Public key is data-only (`FGD_PACK_PUBKEY`); the private seed is derived from the project secret and is not persisted.
+  - Signed message: `"fortressgd.pack.sig.v1"` + the on-disk directory bytes from the directory offset to the end of the directory. For an encrypted directory that is the plaintext `u32 file_count` plus the FileAccessEncrypted blob (`md5[16]`, `u64 length`, `iv[16]`, ciphertext padded to 16 bytes). The 64-byte signature sits in the reserved header area at offset 40 (V3/V4).
+  - The template verifies the signature before it registers any index entry, for plaintext and encrypted directories alike.
+  - **How a template learns signatures are required (decision, #11):** `templates build` with `sign_packs = true` passes `FGD_REQUIRE_SIGNATURE=1` into Docker; the generator writes `FGD_REQUIRE_PACK_SIGNATURE = 1` into `dialect.gen.h` (0 otherwise); `manifest.json` records `"require_signature"`; the filename gets `-sig` (§7.1). Such a template refuses a pack whose signature is missing, all-zero, or invalid. `-DFORTRESSGD_SIGN_PACKS` stays compiled into every template, so a template without the requirement still rejects an invalid non-zero signature. `fortressgd export` with `sign_packs = true` fails if only the non-`-sig` template is cached.
+  - **Encrypted sparse bundles on 4.7.2 (decision, #11):** unsupported with `sign_packs`. Godot 4.7 stores the sparse-bundle directory salt at header offset 40, where the signature goes. The patched reader reads the salt there as upstream does and, when a signature is required, refuses to load such a pack; `fortressgd export` refuses to sign one. Windows and Linux exports are not sparse by default.
 - Nameless bytecode (`0003-nameless-bytecode.patch`): omit stock GDSC identifier/line tables from packed `.gdc`; runtime names live in an `FGDN` trailer. `fortressgd verify` fails if those debug tables are still present when `[production].nameless_bytecode = true`.
 
 ---

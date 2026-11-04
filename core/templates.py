@@ -31,16 +31,24 @@ def templates_cache_dir(cache_dir: str | Path | None = None) -> Path:
     return base / "templates"
 
 
+SIGNATURE_SUFFIX = "-sig"
+
+
 def template_filename(
     godot: str,
     platform: str,
     arch: str,
     patchset: str,
     secrethash: str,
+    *,
+    require_signature: bool = False,
 ) -> str:
-    """godot-<ver>-template_release-<platform>-<arch>-fgd<patchset12>-<secrethash16>"""
-    return "godot-{0}-template_release-{1}-{2}-fgd{3}-{4}".format(
-        godot, platform, arch, patchset, secrethash
+    """godot-<ver>-template_release-<platform>-<arch>-fgd<patchset12>-<secrethash16>[-sig]
+
+    The -sig variant refuses packs without a valid index signature (sign_packs).
+    """
+    return "godot-{0}-template_release-{1}-{2}-fgd{3}-{4}{5}".format(
+        godot, platform, arch, patchset, secrethash, SIGNATURE_SUFFIX if require_signature else ""
     )
 
 
@@ -65,8 +73,11 @@ def find_cached_template(
     patchset: str,
     secrethash: str,
     cache_dir: str | Path | None = None,
+    require_signature: bool = False,
 ) -> Path | None:
-    name = template_filename(godot, platform, arch, patchset, secrethash)
+    name = template_filename(
+        godot, platform, arch, patchset, secrethash, require_signature=require_signature
+    )
     path = templates_cache_dir(cache_dir) / name
     if path.is_file():
         return path
@@ -92,7 +103,8 @@ def manifest_dict(
     dialect: str,
     platform: str,
     arch: str = DEFAULT_ARCH,
-) -> dict[str, str]:
+    require_signature: bool = False,
+) -> dict[str, Any]:
     return {
         "godot": godot,
         "patchset_id": patchset,
@@ -102,10 +114,11 @@ def manifest_dict(
         "platform": platform,
         "arch": arch,
         "generator_version": str(GENERATOR_VERSION),
+        "require_signature": bool(require_signature),
     }
 
 
-def write_manifest(path: Path, data: dict[str, str]) -> None:
+def write_manifest(path: Path, data: dict[str, Any]) -> None:
     if "secret" in {k.lower() for k in data} or "aes_key" in {k.lower() for k in data}:
         raise ToolError("refusing to write secret or aes_key into manifest.json", NEXT_TEMPLATES)
     text = json.dumps(data, indent=2, sort_keys=True) + "\n"
@@ -206,6 +219,7 @@ def build_templates(
     patches_dir: Path | None = None,
     skip_scons: bool = False,
     dialect: bool = True,
+    require_signature: bool = False,
 ) -> list[Path]:
     """
     Generate dialect.gen.h, refuse empty/failed series, run Docker template build,
@@ -235,7 +249,7 @@ def build_templates(
     with tempfile.TemporaryDirectory(prefix="fortressgd-tmpl-") as tmp:
         tmp_path = Path(tmp)
         header = tmp_path / "dialect.gen.h"
-        write_dialect_header(header, secret, tag)
+        write_dialect_header(header, secret, tag, require_signature=require_signature)
         secret_path = tmp_path / "secret"
         secret_path.write_text(hex_secret + "\n", encoding="ascii")
         os.chmod(secret_path, 0o600)
@@ -269,6 +283,8 @@ def build_templates(
                     "FORTRESSGD_SKIP_SCONS={0}".format("1" if skip else "0"),
                     "-e",
                     "FGD_DIALECT={0}".format("1" if dialect else "0"),
+                    "-e",
+                    "FGD_REQUIRE_SIGNATURE={0}".format("1" if require_signature else "0"),
                     "-v",
                     "{0}:/run/secrets/fortressgd:ro".format(secret_path),
                     "-v",
@@ -288,7 +304,9 @@ def build_templates(
                     "template build failed for {0}: {1}".format(platform, detail),
                     templates_build_command(tag, platform),
                 )
-            name = template_filename(tag, platform, DEFAULT_ARCH, pset, secrethash)
+            name = template_filename(
+                tag, platform, DEFAULT_ARCH, pset, secrethash, require_signature=require_signature
+            )
             src_bin = out_dir / name
             src_man = out_dir / (name + ".manifest.json")
             if not src_man.is_file():
@@ -317,12 +335,12 @@ def build_templates(
                 )
             shutil.copy2(src_bin, dest_bin)
             shutil.copy2(src_man, dest_man)
-            _assert_manifest_safe(dest_man, secrethash)
+            _assert_manifest_safe(dest_man, secrethash, require_signature)
             produced.append(dest_bin)
         return produced
 
 
-def _assert_manifest_safe(path: Path, secrethash: str) -> None:
+def _assert_manifest_safe(path: Path, secrethash: str, require_signature: bool = False) -> None:
     data = json.loads(path.read_text(encoding="utf-8"))
     if data.get("kdf") != KDF_NAME:
         raise ToolError("manifest kdf is not {0}".format(KDF_NAME), NEXT_TEMPLATES)
@@ -330,3 +348,5 @@ def _assert_manifest_safe(path: Path, secrethash: str) -> None:
         raise ToolError("manifest contains secret or aes_key", NEXT_TEMPLATES)
     if data.get("secret_hash") != secrethash:
         raise ToolError("manifest secret_hash mismatch", NEXT_TEMPLATES)
+    if bool(data.get("require_signature", False)) != bool(require_signature):
+        raise ToolError("manifest require_signature mismatch", NEXT_TEMPLATES)

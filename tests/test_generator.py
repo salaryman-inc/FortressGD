@@ -51,6 +51,14 @@ class GeneratorTests(unittest.TestCase):
         self.assertNotEqual(magic, STOCK_PACK_MAGIC)
         self.assertIn("0x{0:08x}".format(magic), a)
 
+    def test_header_require_pack_signature_flag(self) -> None:
+        secret = bytes(range(1, 33))
+        off = render_dialect_header(secret, "4.6.2")
+        on = render_dialect_header(secret, "4.6.2", require_signature=True)
+        self.assertIn("static const uint8_t FGD_REQUIRE_PACK_SIGNATURE = 0;", off)
+        self.assertIn("static const uint8_t FGD_REQUIRE_PACK_SIGNATURE = 1;", on)
+        self.assertNotIn("FGD_REQUIRE_PACK_SIGNATURE = 1;", off)
+
     def test_header_shards_round_trip_to_secret(self) -> None:
         salt, masks, shards, did = dialect_material(self.secret, "4.6.2")
         self.assertEqual(decode_shards(shards, masks), self.secret)

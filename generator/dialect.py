@@ -157,12 +157,15 @@ def render_dialect_header(
     secret: bytes,
     godot_tag: str,
     dialect_seed: bytes | None = None,
+    *,
+    require_signature: bool = False,
 ) -> str:
     """
     Data-only C header. No executable snippets derived from the secret.
 
     Contains FGD_DIALECT_SALT[16], FGD_SHARD_MASKS[4][8], FGD_SHARDS[4][8],
-    FGD_PACK_MAGIC, FGD_INDEX_PERM[4], FGD_OPCODE_MAP/UNMAP, FGD_PACK_PUBKEY.
+    FGD_PACK_MAGIC, FGD_INDEX_PERM[4], FGD_OPCODE_MAP/UNMAP, FGD_PACK_PUBKEY, and
+    FGD_REQUIRE_PACK_SIGNATURE (1 when the template must refuse unsigned packs).
     """
     from core.pack_sign import public_key_for_secret
     from generator.opcode_map import render_opcode_arrays
@@ -191,6 +194,7 @@ def render_dialect_header(
     lines.extend(
         [
             _c_array("FGD_PACK_PUBKEY", pubkey),
+            "\tstatic const uint8_t FGD_REQUIRE_PACK_SIGNATURE = {0};".format(1 if require_signature else 0),
             "",
             "#endif /* FORTRESSGD_DIALECT_GEN_H */",
             "",
@@ -204,8 +208,13 @@ def write_dialect_header(
     secret: bytes,
     godot_tag: str,
     dialect_seed: bytes | None = None,
+    *,
+    require_signature: bool = False,
 ) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render_dialect_header(secret, godot_tag, dialect_seed), encoding="utf-8")
+    path.write_text(
+        render_dialect_header(secret, godot_tag, dialect_seed, require_signature=require_signature),
+        encoding="utf-8",
+    )
     return path

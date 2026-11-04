@@ -104,7 +104,7 @@ def verify_artifact(
                 NEXT_DOCTOR,
             )
     else:
-        listing = _read_stock_listing(data, secret=secret, godot_tag=godot_tag, source=str(artifact))
+        listing = read_stock_listing(data, secret=secret, godot_tag=godot_tag, source=str(artifact))
         packed = [item.path for item in listing.files]
 
     leaks = find_leaks(packed, include=include, exclude=exclude)
@@ -152,7 +152,7 @@ def _stock_dir_encrypted(data: bytes, offset: int) -> bool:
     return bool(struct.unpack_from("<I", data, flags_at)[0] & PACK_DIR_ENCRYPTED)
 
 
-def _read_stock_listing(
+def read_stock_listing(
     data: bytes,
     *,
     secret: bytes | None,

@@ -20,6 +20,9 @@ OUT_DIR="${OUT_DIR:-/out}"
 SKIP_SCONS="${FORTRESSGD_SKIP_SCONS:-0}"
 GODOT_SRC="${GODOT_SRC:-/work/godot}"
 FGD_DIALECT="${FGD_DIALECT:-1}"
+# 1 when [production].sign_packs is true: dialect.gen.h sets FGD_REQUIRE_PACK_SIGNATURE,
+# the template refuses unsigned packs, and its name gets the -sig suffix.
+FGD_REQUIRE_SIGNATURE="${FGD_REQUIRE_SIGNATURE:-0}"
 FGD_CCFLAGS="-DFORTRESSGD_OPCODE_MAP -DFORTRESSGD_NAMELESS -DFORTRESSGD_SIGN_PACKS"
 if [ "$FGD_DIALECT" = "1" ]; then
     FGD_CCFLAGS="$FGD_CCFLAGS -DFORTRESSGD_DIALECT"
@@ -66,6 +69,10 @@ if [ -n "${FGD_PATCHSET:-}" ] && [ "$FGD_PATCHSET" != "$PATCHSET_ID" ]; then
 fi
 
 NAME="godot-${FGD_GODOT}-template_release-${FGD_PLATFORM}-${FGD_ARCH}-fgd${PATCHSET_ID}-${SECRET_HASH}"
+if [ "$FGD_REQUIRE_SIGNATURE" = "1" ]; then
+    NAME="${NAME}-sig"
+    grep -q "FGD_REQUIRE_PACK_SIGNATURE = 1;" "$HEADER_SRC" || err "FGD_REQUIRE_SIGNATURE=1 but dialect.gen.h does not require signatures"
+fi
 DIALECT_ID="${FGD_DIALECT_ID:-}"
 
 clone_godot() {
@@ -88,9 +95,9 @@ apply_series() {
 }
 
 write_manifest() {
-    python3 - "$OUT_DIR/$NAME.manifest.json" "$FGD_GODOT" "$PATCHSET_ID" "$SECRET_HASH" "$FGD_PLATFORM" "$FGD_ARCH" "$DIALECT_ID" "$SKIP_SCONS" <<'PY'
+    python3 - "$OUT_DIR/$NAME.manifest.json" "$FGD_GODOT" "$PATCHSET_ID" "$SECRET_HASH" "$FGD_PLATFORM" "$FGD_ARCH" "$DIALECT_ID" "$SKIP_SCONS" "$FGD_REQUIRE_SIGNATURE" <<'PY'
 import json, sys
-path, godot, patchset, secrethash, platform, arch, dialect, skip = sys.argv[1:9]
+path, godot, patchset, secrethash, platform, arch, dialect, skip, require_sig = sys.argv[1:10]
 data = {
     "godot": godot,
     "patchset_id": patchset,
@@ -99,6 +106,7 @@ data = {
     "dialect_id": dialect,
     "platform": platform,
     "arch": arch,
+    "require_signature": require_sig == "1",
 }
 if skip == "1":
     data["skip_scons"] = "1"

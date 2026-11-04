@@ -194,6 +194,33 @@ def write_export_source_map(
     return dest
 
 
+def _sign_exported_pack(pack_file: Path, *, use_dialect: bool, secret: bytes, godot_tag: str) -> None:
+    """Write the Ed25519 index signature into the pack header's reserved area."""
+    import struct
+
+    from core.pack import PACK_DIR_ENCRYPTED, PACK_FORMAT_V4, PACK_SPARSE_BUNDLE
+    from core.pack_dialect import dialect_params_for_secret, read_dialect_listing
+    from core.pack_sign import apply_signature, sign_index
+    from core.verify import read_stock_listing
+
+    packed = pack_file.read_bytes()
+    if use_dialect:
+        magic, perm, aes_key = dialect_params_for_secret(secret, godot_tag)
+        listing = read_dialect_listing(packed, magic=magic, perm=perm, aes_key=aes_key, source=str(pack_file))
+    else:
+        listing = read_stock_listing(packed, secret=secret, godot_tag=godot_tag, source=str(pack_file))
+    flags = struct.unpack_from("<I", packed, listing.pck_start + 20)[0]
+    if listing.version == PACK_FORMAT_V4 and flags & PACK_DIR_ENCRYPTED and flags & PACK_SPARSE_BUNDLE:
+        # Godot 4.7 stores the sparse-bundle salt where the signature goes.
+        raise UserError(
+            "sign_packs does not support encrypted sparse bundles ({0}); "
+            "set sign_packs = false or export a regular pack".format(pack_file.name),
+            NEXT_EXPORT,
+        )
+    signature = sign_index(listing.index_bytes(packed), secret, godot_tag)
+    pack_file.write_bytes(apply_signature(packed, signature, listing.pck_start, listing.version))
+
+
 def _production_verify_on_export(cfg: dict) -> bool:
     """[production].verify_on_export; absent means true (DESIGN.md §6, README)."""
     production = cfg.get("production") or {}
@@ -202,7 +229,7 @@ def _production_verify_on_export(cfg: dict) -> bool:
 
 def verify_target(artifact: Path, *, use_dialect: bool, secret: bytes, godot_tag: str) -> Path:
     """
-    The file verify_on_export checks: the artifact when it holds a pack (a .pck, or
+    The pack file to sign and verify: the artifact when it holds a pack (a .pck, or
     an executable with an embedded pack), else the sibling <stem>.pck that a
     non-embedded Windows / Linux export writes next to the executable.
     """
@@ -227,7 +254,7 @@ def verify_target(artifact: Path, *, use_dialect: bool, secret: bytes, godot_tag
     if sibling != artifact and sibling.is_file():
         return sibling
     raise UserError(
-        "verify_on_export found no pack in {0} or {1}".format(artifact, sibling),
+        "export produced no pack to sign or verify in {0} or {1}".format(artifact, sibling),
         NEXT_EXPORT,
     )
 
@@ -279,6 +306,7 @@ def export_preset(
     platform = fgd_platform_for_preset(preset)
     pset = patchset_for_tag(godot_ver)
     cache = resolve_cache_dir_from_config(cfg)
+    sign_packs = _production_sign_packs(cfg)
     template = find_cached_template(
         godot=godot_ver,
         platform=platform,
@@ -286,8 +314,24 @@ def export_preset(
         patchset=pset,
         secrethash=secrethash,
         cache_dir=cache,
+        require_signature=sign_packs,
     )
     if template is None:
+        unsigned = sign_packs and find_cached_template(
+            godot=godot_ver,
+            platform=platform,
+            arch=DEFAULT_ARCH,
+            patchset=pset,
+            secrethash=secrethash,
+            cache_dir=cache,
+        )
+        if unsigned:
+            raise UserError(
+                "sign_packs is true, but the cached template was built without the signature "
+                "requirement ({0}); a template that does not require signatures loads unsigned "
+                "or tampered packs".format(Path(unsigned).name),
+                templates_build_command(godot_ver, platform),
+            )
         raise missing_template_error(godot_ver, secrethash, platform)
 
     index = preset["_index"]
@@ -394,22 +438,16 @@ def export_preset(
         written = write_export_source_map(artifact, secrethash, identifier_map)
         map_file = str(written)
 
-    if _production_sign_packs(cfg) and artifact and artifact.is_file():
-        from core.pack_sign import apply_signature, sign_index
-        from core.pack import read_pack_listing
-        from core.pack_dialect import dialect_params_for_secret, read_dialect_listing
-
-        packed = artifact.read_bytes()
-        if use_dialect:
-            magic, perm, aes_key = dialect_params_for_secret(secret, godot_ver)
-            listing = read_dialect_listing(
-                packed, magic=magic, perm=perm, aes_key=aes_key, source=str(artifact)
+    if sign_packs:
+        if artifact.suffix.lower() == ".zip":
+            raise UserError(
+                "sign_packs does not support .zip exports yet; export a .pck", NEXT_EXPORT
             )
-        else:
-            listing = read_pack_listing(packed, source=str(artifact))
-        signature = sign_index(listing.index_bytes(packed), secret, godot_ver)
-        artifact.write_bytes(
-            apply_signature(packed, signature, listing.pck_start, listing.version)
+        _sign_exported_pack(
+            verify_target(artifact, use_dialect=use_dialect, secret=secret, godot_tag=godot_ver),
+            use_dialect=use_dialect,
+            secret=secret,
+            godot_tag=godot_ver,
         )
 
     verify_line = ""

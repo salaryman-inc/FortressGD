@@ -21,8 +21,10 @@ from core.pack import PACK_DIR_ENCRYPTED, PACK_FILE_ENCRYPTED
 from core.pack_dialect import (
     dialect_key_for_secret,
     dialect_params_for_secret,
+    embed_exe_dialect,
     encode_dialect_index,
     encrypt_fae_directory,
+    read_dialect_listing,
 )
 from core.pack_sign import apply_signature, public_key_for_secret, sign_index, verify_index
 from core.secret import generate_secret_hex, read_secret_file, secret_bytes_from_hex
@@ -411,6 +413,37 @@ class VerifyCliTests(unittest.TestCase):
                 pck.write_bytes(make_gdpc(["main.tscn", "main.gdc"], contents={"main.gdc": blob}))
                 proc = run_fortressgd("verify", str(pck), cwd=root)
                 self.assertEqual(proc.returncode, expected, name + ": " + proc.stdout + proc.stderr)
+
+    def test_sign_packs_encrypted_dialect_index_range(self) -> None:
+        secret = bytes(range(1, 33))
+        magic, perm, key = dialect_params_for_secret(secret, "4.6.2")
+        body = b"B" * 37
+        pck = encode_dialect_index(
+            ["main.tscn", "main.gdc"], magic=magic, perm=perm, flags=PACK_DIR_ENCRYPTED,
+            aes_key=key, contents={"main.gdc": body},
+        )
+        exe = embed_exe_dialect(pck, magic)
+        for data in (pck, exe):
+            listing = read_dialect_listing(data, magic=magic, perm=perm, aes_key=key)
+            index = listing.index_bytes(data)
+            # Engine formula (0005-pack-signatures.patch): dir_abs + 4 + 16 + 8 + 16 + padded(length).
+            length = struct.unpack_from("<Q", data, listing.dir_abs + 4 + 16)[0]
+            engine_end = listing.dir_abs + 4 + 16 + 8 + 16 + length + (16 - length % 16) % 16
+            self.assertEqual(listing.dir_end, engine_end)
+            self.assertEqual(index, data[listing.dir_abs : engine_end])
+            # The range ends at the end of the encrypted blob, not at EOF / the bodies.
+            self.assertLess(listing.dir_end, len(data))
+            self.assertNotIn(body, index)
+            self.assertNotIn(b"GDPC", index[-12:])
+
+    def test_sign_packs_encrypted_stock_index_range(self) -> None:
+        key = bytes(range(32))
+        data = make_gdpc(["main.tscn", "main.gdc"], flags=PACK_DIR_ENCRYPTED, aes_key=key, contents={"main.gdc": b"C" * 21})
+        from core.pack_dialect import STOCK_INDEX_PERM, STOCK_PACK_MAGIC, read_dialect_listing_at
+
+        listing = read_dialect_listing_at(data, 0, magic=STOCK_PACK_MAGIC, perm=STOCK_INDEX_PERM, aes_key=key)
+        self.assertEqual(listing.dir_end, listing.file_base)
+        self.assertEqual(listing.index_bytes(data), data[listing.dir_abs : listing.file_base])
 
     def test_sign_packs_valid_missing_and_wrong(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

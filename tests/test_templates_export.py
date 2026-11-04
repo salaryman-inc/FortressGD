@@ -197,12 +197,15 @@ class TemplatesExportCliTests(unittest.TestCase):
             self.assertEqual(presets, PRESETS)
 
 
-    def _export_with_stub(self, root: Path, **stub_env: str):
+    def _export_with_stub(self, root: Path, *, require_signature: bool = False, **stub_env: str):
         """Cache a stub template, then run `fortressgd export` with a stub godot."""
         secret = bytes.fromhex(read_secret_file(root / ".fortressgd.secret"))
         cache = templates_cache_dir(root / "cache")
         cache.mkdir(parents=True, exist_ok=True)
-        name = template_filename("4.6.2", "linux", "x86_64", patchset_for_tag("4.6.2"), secret_hash(secret))
+        name = template_filename(
+            "4.6.2", "linux", "x86_64", patchset_for_tag("4.6.2"), secret_hash(secret),
+            require_signature=require_signature,
+        )
         (cache / name).write_bytes(b"stub-template")
         bindir = root / "bin"
         _write_godot_stub_bin(bindir, root / "godot-env.json")
@@ -278,6 +281,45 @@ class TemplatesExportCliTests(unittest.TestCase):
             self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
             self.assertIn("game.x86_64", proc.stderr)
             self.assertIn("game.pck", proc.stderr)
+
+
+    def _enable_sign_packs(self, root: Path) -> None:
+        toml = root / ".fortressgd.toml"
+        toml.write_text(
+            toml.read_text(encoding="utf-8").replace("sign_packs = false", "sign_packs = true"), encoding="utf-8"
+        )
+
+    def test_export_sign_packs_refuses_template_without_requirement(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            self._set_dialect(root, False)
+            self._enable_sign_packs(root)
+            proc = self._export_with_stub(root, require_signature=False)
+            self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+            self.assertIn("without the signature requirement", proc.stderr)
+            self.assertIn("fortressgd templates build", proc.stderr)
+
+    def test_export_sign_packs_signs_encrypted_pack_and_verify_checks_it(self) -> None:
+        for dialect in (False, True):
+            for sibling in ("", "1"):
+                with self.subTest(dialect=dialect, sibling=bool(sibling)), tempfile.TemporaryDirectory() as tmp:
+                    root = self._project(tmp)
+                    self._set_dialect(root, dialect)
+                    self._enable_sign_packs(root)
+                    proc = self._export_with_stub(root, require_signature=True, FGD_STUB_SIBLING=sibling)
+                    self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+                    self.assertIn("no production leaks", proc.stdout)
+                    pack = root / "build" / ("game.pck" if sibling or dialect else "game.x86_64")
+                    data = bytearray(pack.read_bytes())
+                    self.assertNotEqual(bytes(data[40:104]), b"\x00" * 64)
+                    ok = run_fortressgd("verify", str(pack), cwd=root)
+                    self.assertEqual(ok.returncode, 0, ok.stdout + ok.stderr)
+                    # A zeroed signature no longer verifies.
+                    data[40:104] = b"\x00" * 64
+                    pack.write_bytes(bytes(data))
+                    bad = run_fortressgd("verify", str(pack), cwd=root)
+                    self.assertEqual(bad.returncode, 2, bad.stdout + bad.stderr)
+                    self.assertIn("pack signature", bad.stderr)
 
 
 if __name__ == "__main__":

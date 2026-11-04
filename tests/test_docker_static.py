@@ -93,6 +93,63 @@ class DockerStaticTests(unittest.TestCase):
             run = step.split("run: |", 1)[-1]
             self.assertNotIn("inputs.secret", run)
 
+    def test_entrypoint_passes_require_signature_through(self) -> None:
+        entry = (ROOT / "docker" / "entrypoint.sh").read_text(encoding="utf-8")
+        self.assertIn('FGD_REQUIRE_SIGNATURE="${FGD_REQUIRE_SIGNATURE:-0}"', entry)
+        self.assertIn('NAME="${NAME}-sig"', entry)
+        self.assertIn('"require_signature": require_sig == "1"', entry)
+        self.assertIn("FGD_REQUIRE_PACK_SIGNATURE = 1;", entry)
+        templates = (ROOT / "core" / "templates.py").read_text(encoding="utf-8")
+        self.assertIn('"FGD_REQUIRE_SIGNATURE={0}"', templates)
+        action = (ROOT / "actions" / "build-templates" / "action.yml").read_text(encoding="utf-8")
+        self.assertIn("--require-signature", action)
+        self.assertIn("'-sig'", action)
+        self.assertTrue(
+            template_filename("4.6.2", "linux", "x86_64", "a" * 12, "b" * 16, require_signature=True).endswith("-sig")
+        )
+        data = manifest_dict(
+            godot="4.6.2", patchset="a" * 12, secrethash="b" * 16, dialect="c" * 16,
+            platform="linux", require_signature=True,
+        )
+        self.assertIs(data["require_signature"], True)
+
+    def test_shipped_entrypoint_require_signature_names_and_records_variant(self) -> None:
+        secret_hex = generate_secret_hex()
+        secret = secret_bytes_from_hex(secret_hex)
+        pset = patchset_for_tag("4.6.2")
+        _salt, _masks, _shards, did = dialect_material(secret, "4.6.2")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            secret_file = tmp_path / "secret"
+            secret_file.write_text(secret_hex + "\n", encoding="ascii")
+            header = tmp_path / "dialect.gen.h"
+            out_dir = tmp_path / "out"
+            out_dir.mkdir()
+            godot_src = seed_mini_godot_tree("4.6.2", tmp_path / "godot")
+            env = os.environ.copy()
+            env.update({
+                "GODOT_VERSION": "4.6.2-stable", "FGD_GODOT": "4.6.2", "FGD_PLATFORM": "linux",
+                "FGD_ARCH": "x86_64", "FGD_DIALECT_ID": did, "FGD_PATCHSET": pset,
+                "FORTRESSGD_SECRET_FILE": str(secret_file), "FORTRESSGD_SKIP_SCONS": "1",
+                "FGD_DIALECT": "1", "FGD_REQUIRE_SIGNATURE": "1",
+                "PATCHES_DIR": str(ROOT / "patches" / "4.6.2"), "DIALECT_HEADER": str(header),
+                "OUT_DIR": str(out_dir), "GODOT_SRC": str(godot_src), "GIT_TERMINAL_PROMPT": "0",
+            })
+            # A header that does not require signatures is refused.
+            write_dialect_header(header, secret, "4.6.2")
+            bad = subprocess.run(["sh", str(ROOT / "docker" / "entrypoint.sh")], capture_output=True, text=True, env=env, timeout=180)
+            self.assertNotEqual(bad.returncode, 0)
+            self.assertIn("does not require signatures", bad.stderr)
+            write_dialect_header(header, secret, "4.6.2", require_signature=True)
+            run = subprocess.run(["sh", str(ROOT / "docker" / "entrypoint.sh")], capture_output=True, text=True, env=env, timeout=180)
+            self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+            name = template_filename("4.6.2", "linux", "x86_64", pset, secret_hash(secret), require_signature=True)
+            self.assertTrue((out_dir / name).is_file(), sorted(p.name for p in out_dir.iterdir()))
+            manifest = json.loads((out_dir / (name + ".manifest.json")).read_text(encoding="utf-8"))
+            self.assertIs(manifest["require_signature"], True)
+            installed = (godot_src / "core" / "dialect.gen.h").read_text(encoding="utf-8")
+            self.assertIn("FGD_REQUIRE_PACK_SIGNATURE = 1;", installed)
+
     def test_shipped_entrypoint_skip_scons_applies_series_and_manifest(self) -> None:
         """Drive docker/entrypoint.sh (the shipped template-build entry) far enough
         to clone/apply/install header and emit §7 name + manifest. Skip-scons avoids

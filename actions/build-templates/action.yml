@@ -11,6 +11,10 @@ inputs:
   secret:
     description: "32-byte project secret as 64 hex chars. Must be an encrypted Actions secret (secrets.*), never a variable or matrix value."
     required: true
+  sign_packs:
+    description: "true to build the -sig template variant that refuses unsigned packs (match production.sign_packs)"
+    required: false
+    default: "false"
   scan_paths:
     description: "Extra comma-separated paths (e.g. a source-map directory) to scan for secret material before the job ends"
     required: false
@@ -87,7 +91,7 @@ runs:
       uses: actions/cache@v4
       with:
         path: ~/.cache/fortressgd/templates
-        key: fgd-templates-${{ steps.meta.outputs.godot }}-${{ steps.meta.outputs.patchset }}-${{ steps.meta.outputs.secret_hash }}-${{ inputs.platforms }}
+        key: fgd-templates-${{ steps.meta.outputs.godot }}-${{ steps.meta.outputs.patchset }}-${{ steps.meta.outputs.secret_hash }}-${{ inputs.platforms }}${{ inputs.sign_packs == 'true' && '-sig' || '' }}
 
     - name: Build templates
       shell: bash
@@ -101,6 +105,9 @@ runs:
         for p in "${PLATS[@]}"; do
           ARGS+=(--platform "$p")
         done
+        if [ "${{ inputs.sign_packs }}" = "true" ]; then
+          ARGS+=(--require-signature)
+        fi
         python3 cli/fortressgd templates build --godot "${{ inputs.godot_version }}" "${ARGS[@]}" 2>&1 \
           | tee "$RUNNER_TEMP/fortressgd-templates-build.log"
 

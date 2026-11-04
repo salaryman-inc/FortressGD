@@ -65,6 +65,16 @@ def encrypt_fae_directory(plaintext: bytes, key: bytes, iv: bytes) -> bytes:
     return digest + struct.pack("<Q", len(plaintext)) + iv + cipher
 
 
+def fae_blob_length(blob: bytes) -> int:
+    """On-disk size of the FileAccessEncrypted blob at the start of `blob`:
+    md5[16] + u64 length + iv[16] + ciphertext padded to 16 bytes."""
+    if len(blob) < 40:
+        raise PackError("truncated encrypted pack directory")
+    length = struct.unpack_from("<Q", blob, 16)[0]
+    padded = length + (16 - length % 16) % 16
+    return 16 + 8 + 16 + padded
+
+
 def decrypt_fae_blob(blob: bytes, key: bytes) -> bytes:
     """
     Inverse of encrypt_fae_directory. Raises PackError on a bad key or truncated blob.
@@ -405,7 +415,6 @@ def _read_dialect_listing(
     perm: Sequence[int],
     aes_key: bytes | None,
 ) -> PackListing:
-    raw_pack = data
     i = pck_start
     got, i = _u32(data, i)
     if got != (magic & 0xFFFFFFFF):
@@ -437,10 +446,10 @@ def _read_dialect_listing(
     if pack_flags & PACK_DIR_ENCRYPTED:
         if not aes_key:
             raise PackError("cannot list packed paths (encrypted pack directory)")
+        dir_end = dir_abs + 4 + fae_blob_length(rest)
         rest = decrypt_fae_directory(rest, aes_key)
         i = 0
         data = rest
-        dir_end = len(raw_pack)  # ciphertext through EOF of directory blob; bodies follow
     else:
         i = 0
         data = rest

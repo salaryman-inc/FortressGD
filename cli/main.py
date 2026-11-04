@@ -98,6 +98,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="override patches/<tag> parent (tests/CI)",
     )
+    build.add_argument(
+        "--require-signature",
+        action="store_true",
+        help="build the -sig variant that refuses unsigned packs (default: toml production.sign_packs)",
+    )
     tmpl_sub.add_parser("list", help="list cached templates")
 
     exp = sub.add_parser("export", help="production export with derived AES key")
@@ -191,10 +196,12 @@ def cmd_templates_build(args: argparse.Namespace) -> int:
     cache = resolve_cache_dir_from_config(cfg) if cfg else None
     patches_dir = Path(args.patches_dir) if args.patches_dir else None
     dialect = True
+    require_signature = bool(args.require_signature)
     if cfg:
         production = cfg.get("production") or {}
         if "dialect" in production:
             dialect = bool(production["dialect"])
+        require_signature = require_signature or bool(production.get("sign_packs", False))
     produced = build_templates(
         godot=godot,
         platforms=platforms,
@@ -204,6 +211,7 @@ def cmd_templates_build(args: argparse.Namespace) -> int:
         cache_dir=cache,
         patches_dir=patches_dir,
         dialect=dialect,
+        require_signature=require_signature,
     )
     for path in produced:
         sys.stdout.write(path.name + "\n")

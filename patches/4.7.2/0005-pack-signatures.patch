@@ -514,11 +514,10 @@ index 0000000..e55b5f4
 +	return memcmp(rcheck, p_sig, 32) == 0 ? 1 : 0;
 +}
 diff --git a/core/io/file_access_pack.cpp b/core/io/file_access_pack.cpp
+index 11fc950..8b06bb9 100644
 --- a/core/io/file_access_pack.cpp
 +++ b/core/io/file_access_pack.cpp
-@@ -35,5 +35,10 @@
- #include "core/io/file_access_patched.h"
- #include "core/object/script_language.h"
+@@ -36,2 +36,7 @@
  #include "core/os/os.h"
 +#ifdef FORTRESSGD_SIGN_PACKS
 +#include "core/dialect.gen.h"
@@ -526,38 +525,61 @@ diff --git a/core/io/file_access_pack.cpp b/core/io/file_access_pack.cpp
 +#include <cstring>
 +#endif
  #include "core/version.h"
- 
-@@ -306,16 +311,24 @@ bool PackedSourcePCK::try_open_pack(const String &p_path, bool p_replace_files,
- 	if ((version == PACK_FORMAT_VERSION_V4) || (version == PACK_FORMAT_VERSION_V3) || (version == PACK_FORMAT_VERSION_V2 && rel_filebase)) {
- 		file_base += pck_start_pos;
- 	}
+@@ -310,2 +315,9 @@ bool PackedSourcePCK::try_open_pack(const String &p_path, bool p_replace_files,
  
 +#ifdef FORTRESSGD_SIGN_PACKS
++	// Index signature: 64 bytes in the reserved area at header offset 40 (V3/V4).
++	// fgd_dir_abs stays 0 for formats without that field.
 +	uint8_t fgd_sig[64] = { 0 };
 +	int64_t fgd_dir_abs = 0;
++	Ref<FileAccess> fgd_raw = f;
 +#endif
  	if (version == PACK_FORMAT_VERSION_V3 || version == PACK_FORMAT_VERSION_V4) {
- 		// V3/V4: Read directory offset and skip reserved part of the header.
- 		uint64_t dir_offset = f->get_64() + pck_start_pos;
+@@ -318,2 +330,12 @@ bool PackedSourcePCK::try_open_pack(const String &p_path, bool p_replace_files,
+ 		}
 +#ifdef FORTRESSGD_SIGN_PACKS
-+		f->get_buffer(fgd_sig, 64);
-+		fgd_dir_abs = (int64_t)dir_offset;
++		if (sparse_bundle && enc_directory && version == PACK_FORMAT_VERSION_V4) {
++			// The salt occupies offset 40, where the signature would go. FortressGD
++			// pack signatures do not support encrypted sparse bundles.
++			ERR_FAIL_COND_V_MSG(FGD_REQUIRE_PACK_SIGNATURE, false, "Pack signatures are not supported for encrypted sparse bundles.");
++		} else {
++			f->get_buffer(fgd_sig, 64);
++			fgd_dir_abs = (int64_t)dir_offset;
++		}
 +#endif
- 		if (sparse_bundle && enc_directory && version == PACK_FORMAT_VERSION_V4) {
- 			// V4: Read encrypted directory salt.
- 			Vector<uint8_t> salt_data = f->get_buffer(32);
- 			salt.append_latin1(Span((const char *)salt_data.ptr(), salt_data.size()));
- 		}
  		f->seek(dir_offset);
- 	} else if (version == PACK_FORMAT_VERSION_V2) {
- 		// V2: Directory directly after the header.
- 		for (int i = 0; i < 16; i++) {
-@@ -369,6 +384,36 @@ bool PackedSourcePCK::try_open_pack(const String &p_path, bool p_replace_files,
- 			PackedData::get_singleton()->add_path(p_path, path, file_base + ofs, size, md5, this, p_replace_files, (flags & PACK_FILE_ENCRYPTED), sparse_bundle, (flags & PACK_FILE_DELTA), salt);
- 		}
- 	}
+@@ -343,2 +365,12 @@ bool PackedSourcePCK::try_open_pack(const String &p_path, bool p_replace_files,
+ 
 +#ifdef FORTRESSGD_SIGN_PACKS
-+	if (!enc_directory && (version == PACK_FORMAT_VERSION_V3 || version == PACK_FORMAT_VERSION_V4)) {
++	struct FGDPackEntry {
++		String path;
++		uint64_t ofs = 0;
++		uint64_t size = 0;
++		uint8_t md5[16] = { 0 };
++		uint32_t flags = 0;
++	};
++	Vector<FGDPackEntry> fgd_entries;
++#endif
+ 	for (int i = 0; i < file_count; i++) {
+@@ -380,2 +412,12 @@ bool PackedSourcePCK::try_open_pack(const String &p_path, bool p_replace_files,
+ 
++#ifdef FORTRESSGD_SIGN_PACKS
++		// Register nothing until the index signature is verified below.
++		FGDPackEntry fgd_entry;
++		fgd_entry.path = path;
++		fgd_entry.ofs = ofs;
++		fgd_entry.size = size;
++		memcpy(fgd_entry.md5, md5, 16);
++		fgd_entry.flags = flags;
++		fgd_entries.push_back(fgd_entry);
++#else
+ 		if (flags & PACK_FILE_REMOVAL) { // The file was removed.
+@@ -385,3 +427,50 @@ bool PackedSourcePCK::try_open_pack(const String &p_path, bool p_replace_files,
+ 		}
++#endif
++	}
++#ifdef FORTRESSGD_SIGN_PACKS
++	{
 +		bool fgd_sig_present = false;
 +		for (int i = 0; i < 64; i++) {
 +			if (fgd_sig[i]) {
@@ -565,27 +587,41 @@ diff --git a/core/io/file_access_pack.cpp b/core/io/file_access_pack.cpp
 +				break;
 +			}
 +		}
-+		if (fgd_sig_present) {
-+			int64_t save = f->get_position();
-+			int64_t n = save - fgd_dir_abs;
-+			if (n > 0) {
-+				Vector<uint8_t> idx;
-+				idx.resize(n);
-+				f->seek(fgd_dir_abs);
-+				f->get_buffer(idx.ptrw(), n);
-+				const uint8_t prefix[22] = { 'f','o','r','t','r','e','s','s','g','d','.','p','a','c','k','.','s','i','g','.','v','1' };
-+				Vector<uint8_t> msg;
-+				msg.resize(22 + idx.size());
-+				memcpy(msg.ptrw(), prefix, 22);
-+				memcpy(msg.ptrw() + 22, idx.ptr(), idx.size());
-+				if (!fortressgd_ed25519_verify(FGD_PACK_PUBKEY, msg.ptr(), msg.size(), fgd_sig)) {
-+					ERR_FAIL_V_MSG(false, "Pack signature check failed.");
-+				}
++		if (FGD_REQUIRE_PACK_SIGNATURE) {
++			ERR_FAIL_COND_V_MSG(fgd_dir_abs == 0, false, "Pack signature required, but this pack format has no signature field.");
++			ERR_FAIL_COND_V_MSG(!fgd_sig_present, false, "Pack signature missing.");
++		}
++		if (fgd_sig_present && fgd_dir_abs != 0) {
++			// Signed message: "fortressgd.pack.sig.v1" + the on-disk directory bytes from
++			// dir_abs to the end of the directory. An encrypted directory is the plaintext
++			// u32 file_count, then the FileAccessEncrypted blob: md5[16], u64 length,
++			// iv[16], ciphertext padded to 16 bytes. Matches core/pack.py index_bytes.
++			int64_t fgd_dir_end = 0;
++			if (enc_directory) {
++				fgd_raw->seek(fgd_dir_abs + 4 + 16);
++				uint64_t fgd_len = fgd_raw->get_64();
++				uint64_t fgd_padded = (fgd_len % 16) ? fgd_len + 16 - (fgd_len % 16) : fgd_len;
++				fgd_dir_end = fgd_dir_abs + 4 + 16 + 8 + 16 + (int64_t)fgd_padded;
++			} else {
++				fgd_dir_end = fgd_raw->get_position();
 +			}
-+			f->seek(save);
++			int64_t fgd_n = fgd_dir_end - fgd_dir_abs;
++			ERR_FAIL_COND_V_MSG(fgd_n <= 0 || fgd_dir_end > (int64_t)fgd_raw->get_length(), false, "Pack signature check failed.");
++			const uint8_t prefix[22] = { 'f', 'o', 'r', 't', 'r', 'e', 's', 's', 'g', 'd', '.', 'p', 'a', 'c', 'k', '.', 's', 'i', 'g', '.', 'v', '1' };
++			Vector<uint8_t> msg;
++			msg.resize(22 + fgd_n);
++			memcpy(msg.ptrw(), prefix, 22);
++			fgd_raw->seek(fgd_dir_abs);
++			fgd_raw->get_buffer(msg.ptrw() + 22, fgd_n);
++			ERR_FAIL_COND_V_MSG(!fortressgd_ed25519_verify(FGD_PACK_PUBKEY, msg.ptr(), msg.size(), fgd_sig), false, "Pack signature check failed.");
 +		}
 +	}
++	for (const FGDPackEntry &fgd_e : fgd_entries) {
++		if (fgd_e.flags & PACK_FILE_REMOVAL) { // The file was removed.
++			PackedData::get_singleton()->remove_path(fgd_e.path);
++		} else {
++			PackedData::get_singleton()->add_path(p_path, fgd_e.path, file_base + fgd_e.ofs, fgd_e.size, fgd_e.md5, this, p_replace_files, (fgd_e.flags & PACK_FILE_ENCRYPTED), sparse_bundle, (fgd_e.flags & PACK_FILE_DELTA), salt);
++		}
+ 	}
 +#endif
  
- 	return true;
- }
