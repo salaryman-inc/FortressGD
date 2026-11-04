@@ -16,6 +16,9 @@ fortressgd = "cli.main:main"
 
 [project.optional-dependencies]
 dev = []
+# Optional: AES through OpenSSL (~1000x faster pack decryption/encryption).
+# Without it FortressGD uses its pure-Python AES and needs no dependencies.
+fast = ["cryptography>=3.1"]
 
 [tool.setuptools.packages.find]
 include = ["cli*", "core*", "generator*"]

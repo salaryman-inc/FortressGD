@@ -115,6 +115,12 @@ cd /path/to/your/godot/project
 fortressgd --version
 ```
 
+FortressGD has no required dependencies. For large projects, install the optional `fast` extra: it adds the `cryptography` package so pack encryption and decryption (in `verify`, `export` signing, and the nameless-bytecode check) run through OpenSSL, roughly 700× faster than the built-in pure-Python AES. Both produce identical bytes.
+
+```bash
+pip install "/path/to/FortressGD[fast]"
+```
+
 ---
 
 ## Quick start

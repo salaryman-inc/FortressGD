@@ -5,7 +5,7 @@ from __future__ import annotations
 import struct
 import unittest
 
-from core.aes_cfb import aes256_cfb128, aes256_encrypt_block
+from core.aes_cfb import aes256_cfb128, aes256_cfb128_pure, aes256_encrypt_block
 from core.kdf import fgd_kdf_1
 from core.pack import PACK_DIR_ENCRYPTED, PackError, find_gdpc_offset, list_packed_paths
 from core.pack_dialect import (
@@ -103,6 +103,9 @@ class DialectPackTests(unittest.TestCase):
             "39ffed143b28b1c832113c6331e5407b"
         )
         self.assertEqual(aes256_cfb128(cfb_key, iv, cfb_pt, encrypt=True), cfb_ct)
+        # NIST SP 800-38A F.3.13 holds on the pure-Python path as well.
+        self.assertEqual(aes256_cfb128_pure(cfb_key, iv, cfb_pt, encrypt=True), cfb_ct)
+        self.assertEqual(aes256_cfb128_pure(cfb_key, iv, cfb_ct, encrypt=False), cfb_pt)
 
     def test_dialect_lists_paths_stock_fails(self) -> None:
         data = encode_dialect_index(self.paths, magic=self.magic, perm=self.perm)
