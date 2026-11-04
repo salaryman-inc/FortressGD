@@ -41,3 +41,7 @@ Names **built at runtime** cannot be seen: `call("on_" + event)` or `get(prefix 
 func on_jump() -> void:
 	pass
 ```
+
+## Names scenes and autoloads use are kept
+
+Names that scenes and resources refer to are left unmangled automatically: `@export` vars, methods connected in the editor, AnimationPlayer method and property tracks, and autoload names. The mangler keeps every identifier that appears in a `.tscn`, `.tres` or `project.godot` out of the rename map. Binary `.scn` / `.res` files cannot be scanned: export prints a warning for each. Save scenes and resources as text (`.tscn` / `.tres`) when mangling is on.

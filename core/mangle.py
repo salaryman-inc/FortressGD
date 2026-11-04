@@ -26,10 +26,18 @@ UNSAFE_CALLEES = frozenset({"call", "rpc", "set"})
 DECL_KEYWORDS = frozenset({"func", "var", "const", "signal", "enum", "class", "for"})
 SKIP_DIR_NAMES = frozenset({".godot", ".git", "__pycache__"})
 PLUGIN_ADDON = "addons/fortressgd"
+# Text files that refer to script members by name (scenes, resources, autoloads).
+TEXT_RESOURCE_SUFFIXES = (".tscn", ".tres")
+TEXT_RESOURCE_NAMES = ("project.godot",)
+# Binary resources can hold the same references but cannot be scanned as text.
+BINARY_RESOURCE_SUFFIXES = (".scn", ".res")
+# @export_* annotations that group inspector entries and declare no var.
+EXPORT_NON_DECL = frozenset({"@export_group", "@export_subgroup", "@export_category"})
 
 _KEEP_RE = re.compile(r"^##\s*fortressgd:keep\b")
 _IDENT_START = re.compile(r"[A-Za-z_]")
 _IDENT_CONT = re.compile(r"[A-Za-z0-9_]")
+_IDENT_FULL = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 class MangleError(UserError):
@@ -102,11 +110,16 @@ def source_map_json(secret_hash: str, mapping: dict[str, str]) -> str:
     return json.dumps(source_map_payload(secret_hash, mapping), indent=2, sort_keys=True) + "\n"
 
 
-def iter_gdscript_files(root: Path) -> list[Path]:
-    """Game scripts that would be compiled for a pack. Skips the FortressGD addon."""
+def _iter_project_files(root: Path, wanted) -> list[tuple[Path, str]]:
+    """(path, project-relative posix path) for files where wanted(rel) is true.
+
+    Skips SKIP_DIR_NAMES (.godot, .git, __pycache__) at any depth.
+    """
     root = root.resolve()
-    found: list[Path] = []
-    for path in root.rglob("*.gd"):
+    found: list[tuple[Path, str]] = []
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
         try:
             rel_parts = path.resolve().relative_to(root).parts
         except ValueError:
@@ -114,11 +127,49 @@ def iter_gdscript_files(root: Path) -> list[Path]:
         if any(part in SKIP_DIR_NAMES for part in rel_parts):
             continue
         rel = "/".join(rel_parts)
-        if rel == PLUGIN_ADDON or rel.startswith(PLUGIN_ADDON + "/"):
-            continue
-        found.append(path)
+        if wanted(rel):
+            found.append((path, rel))
     found.sort()
     return found
+
+
+def iter_gdscript_files(root: Path) -> list[Path]:
+    """Game scripts that would be compiled for a pack. Skips the FortressGD addon."""
+
+    def wanted(rel: str) -> bool:
+        if not rel.endswith(".gd"):
+            return False
+        return not (rel == PLUGIN_ADDON or rel.startswith(PLUGIN_ADDON + "/"))
+
+    return [path for path, _rel in _iter_project_files(root, wanted)]
+
+
+def collect_resource_reference_names(root: Path) -> set[str]:
+    """Every identifier in the project's text scenes, text resources and project.godot.
+
+    Scenes and resources refer to script members by their original text: @export
+    values (``speed = 250.0``), editor signal connections (``method="_on_pressed"``),
+    AnimationPlayer tracks (``NodePath(".:hp")``), and autoload names. None of these
+    names may be renamed. This over-excludes on purpose: an extra unmangled name is
+    safe, a missed one breaks the game.
+    """
+
+    def wanted(rel: str) -> bool:
+        return rel.endswith(TEXT_RESOURCE_SUFFIXES) or rel.split("/")[-1] in TEXT_RESOURCE_NAMES
+
+    names: set[str] = set()
+    for path, _rel in _iter_project_files(root, wanted):
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        names.update(_IDENT_FULL.findall(text))
+    return names
+
+
+def binary_resource_paths(root: Path) -> list[str]:
+    """Project-relative *.scn / *.res files, which reference scanning cannot read."""
+    return [rel for _path, rel in _iter_project_files(root, lambda rel: rel.endswith(BINARY_RESOURCE_SUFFIXES))]
 
 
 def find_unsafe_calls(source: str, filename: str = "<gdscript>") -> list[UnsafeCall]:
@@ -174,7 +225,9 @@ def collect_user_identifiers(source: str) -> set[str]:
                 name_kept = kept or _line_is_kept(
                     tokens[j].line, keep_same, keep_only, nonempty
                 )
-                if name not in reserved and name not in class_names and not name_kept:
+                # Scenes store @export values under the property's original name.
+                exported = tok.value == "var" and _has_export_annotation(tokens, i)
+                if name not in reserved and name not in class_names and not name_kept and not exported:
                     user.add(name)
                 if tok.value == "func":
                     k = skip(j + 1)
@@ -212,7 +265,6 @@ def collect_foreign_member_names(source: str) -> set[str]:
     return names
 
 
-_IDENT_FULL = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _STRING_PATH_SEP = re.compile(r"[:/.]")
 _QUOTES = ('"""', "'''", '"', "'")
 
@@ -262,11 +314,13 @@ def mangle_scripts(
     *,
     secret_hash: str,
     rename: bool = True,
+    exclude: Iterable[str] = frozenset(),
 ) -> tuple[dict[str, str], dict[str, str]]:
     """Transform GDScript sources. ``files`` maps relative path → source text.
 
     Raises MangleError on unmarked ``call("…")`` / ``rpc("…")`` / ``set("…")``.
     When ``rename`` is false, identifiers are left unchanged (no strip either).
+    ``exclude`` names are never renamed (e.g. collect_resource_reference_names).
     """
     if not rename:
         return dict(files), {}
@@ -282,6 +336,7 @@ def mangle_scripts(
         user |= collect_user_identifiers(source)
     # A name is renamed everywhere or nowhere. Drop every name that something
     # may reference in a way the rewrite cannot follow.
+    user -= set(exclude)
     for source in files.values():
         user -= collect_foreign_member_names(source)
         user -= collect_string_identifier_names(source)
@@ -507,6 +562,38 @@ def _line_is_kept(line: int, keep_same: set[int], keep_only: set[int], nonempty:
         if prev in nonempty:
             return prev in keep_only
         prev -= 1
+    return False
+
+
+def _has_export_annotation(tokens: list[Token], var_index: int) -> bool:
+    """True when the `var` at var_index carries an @export* annotation.
+
+    Walks back over annotations (and their argument lists) on the same line or on
+    the lines right above. @export_group / @export_subgroup / @export_category
+    declare nothing and do not count.
+    """
+    j = _prev_code_index(tokens, var_index)
+    while j >= 0:
+        tok = tokens[j]
+        if tok.kind == "punct" and tok.value == ")":
+            depth = 0
+            while j >= 0:
+                if tokens[j].kind == "punct" and tokens[j].value == ")":
+                    depth += 1
+                elif tokens[j].kind == "punct" and tokens[j].value == "(":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                j -= 1
+            j = _prev_code_index(tokens, j)
+            if j < 0 or tokens[j].kind != "annotation":
+                return False
+            continue
+        if tok.kind != "annotation":
+            return False
+        if tok.value.startswith("@export") and tok.value not in EXPORT_NON_DECL:
+            return True
+        j = _prev_code_index(tokens, j)
     return False
 
 

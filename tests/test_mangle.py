@@ -14,6 +14,7 @@ from core.export import export_preset, write_export_source_map
 from core.kdf import secret_hash
 from core.mangle import (
     MangleError,
+    collect_resource_reference_names,
     collect_user_identifiers,
     mangled_identifier,
     mangle_scripts,
@@ -225,6 +226,49 @@ class MangleTransformTests(unittest.TestCase):
         }
         _out, mapping = mangle_scripts(files, secret_hash=self.HASH, rename=True)
         self.assertNotIn("on_hit", mapping)
+
+    def test_export_annotated_vars_are_never_renamed(self) -> None:
+        src = (
+            "extends Node2D\n"
+            "@export var speed: float = 100.0\n"
+            "@export_range(0, 10)\n"
+            "var level := 1\n"
+            "@export_group(\"G\")\n"
+            "var x = 0\n"
+            "@export_enum(\"A\", \"B\") var choice = 0\n"
+            "@onready\n@export\nvar stacked = 1\n"
+            "var plain = 1\n"
+            "func _on_button_pressed() -> void:\n    speed += 1.0\n"
+        )
+        _out, mapping = mangle_scripts({"main.gd": src}, secret_hash="z", rename=True)
+        for name in ("speed", "level", "choice", "stacked"):
+            self.assertNotIn(name, mapping)
+        # @export_group declares nothing, so the plain var after it is renamed.
+        self.assertIn("x", mapping)
+        self.assertIn("plain", mapping)
+
+    def test_scene_property_and_animation_path_block_rename(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "project.godot").write_text(
+                'config_version=5\n[autoload]\nGameState="*res://game_state.gd"\n', encoding="utf-8"
+            )
+            (root / "levels").mkdir()
+            (root / "levels" / "main.tscn").write_text(
+                '[gd_scene format=3]\n[node name="Hero" type="Node2D"]\nspeed = 250.0\n'
+                '[sub_resource type="Animation" id="a"]\ntracks/0/path = NodePath(".:hp")\n',
+                encoding="utf-8",
+            )
+            (root / ".godot").mkdir()
+            (root / ".godot" / "cache.tres").write_text("ignored_name = 1\n", encoding="utf-8")
+            names = collect_resource_reference_names(root)
+            self.assertTrue({"speed", "hp", "GameState"} <= names)
+            self.assertNotIn("ignored_name", names)
+            src = "extends Node2D\nvar speed = 1\nvar hp = 2\nvar GameState = 3\nvar other = 4\n"
+            _out, mapping = mangle_scripts(
+                {"hero.gd": src}, secret_hash=self.HASH, rename=True, exclude=names
+            )
+            self.assertEqual(set(mapping), {"other"})
 
     def test_reserved_set_keeps_lifecycle(self) -> None:
         names = reserved_names()
@@ -464,7 +508,68 @@ def _gd_func(source: str, name: str) -> str:
     return source[start:end]
 
 
+class MangleSceneReferenceExportTests(unittest.TestCase):
+    _project = MangleExportPathTests._project
+
+    SCRIPT = (
+        "extends Node2D\n\n"
+        "@export var speed: float = 100.0\n\n"
+        "func _on_button_pressed() -> void:\n"
+        "\tspeed += 1.0\n\n"
+        "func helper() -> void:\n"
+        "\tpass\n"
+    )
+
+    def _export(self, root: Path):
+        bindir = root / "bin"
+        log = root / "godot-mangle.json"
+        _write_godot_stub_bin(bindir, log)
+        env = base_env()
+        env["PATH"] = str(bindir) + os.pathsep + env.get("PATH", "")
+        proc = run_fortressgd("export", "--preset", "Linux", cwd=root, env=env)
+        data = json.loads(log.read_text(encoding="utf-8")) if log.is_file() else {}
+        return proc, data
+
+    def test_scene_connection_method_blocks_rename(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp, mangle=True, script=self.SCRIPT)
+            (root / "main.tscn").write_text(
+                '[gd_scene format=3]\n'
+                '[node name="Main" type="Node2D"]\n'
+                '[node name="Button" type="Button" parent="."]\n'
+                '[connection signal="pressed" from="Button" to="." method="_on_button_pressed"]\n',
+                encoding="utf-8",
+            )
+            proc, data = self._export(root)
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            packed_view = data["scripts"]["player.gd"]
+            self.assertIn("func _on_button_pressed", packed_view)
+            self.assertIn("@export var speed", packed_view)
+            self.assertNotIn("func helper", packed_view)
+
+    def test_binary_resource_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp, mangle=True, script=self.SCRIPT)
+            (root / "foo.res").write_bytes(b"RSRC\x00binary")
+            proc, _data = self._export(root)
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertIn("warning: cannot scan binary resource foo.res for mangled names", proc.stderr)
+
+
 class MangleStaticChecks(unittest.TestCase):
+    def test_plugin_keeps_scene_and_export_names(self) -> None:
+        gd = _mangle_gd()
+        self.assertIn('val.begins_with("@export")', _gd_func_body(gd, "_has_export_annotation"))
+        self.assertIn('"@export_group"', gd)
+        self.assertIn("_has_export_annotation(tokens, i)", _gd_func_body(gd, "collect_user_identifiers"))
+        self.assertIn('".tscn"', gd)
+        self.assertIn('".tres"', gd)
+        self.assertIn('"project.godot"', gd)
+        apply = _gd_func_body(gd, "apply_project")
+        self.assertIn("collect_resource_reference_names()", apply)
+        self.assertIn("push_warning", apply)
+        self.assertIn("binary_resource_paths()", apply)
+
     def test_plugin_excludes_string_identifier_names(self) -> None:
         gd = _mangle_gd()
         body = _gd_func_body(gd, "collect_string_identifier_names")

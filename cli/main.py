@@ -230,6 +230,8 @@ def cmd_export(args: argparse.Namespace) -> int:
         secret_file=getattr(args, "secret_file", None),
         environ=os.environ,
     )
+    for warning in result.get("warnings") or []:
+        sys.stderr.write("warning: {0}\n".format(warning))
     sys.stdout.write(
         "ok: exported preset {0} ({1})\n".format(result["preset"], result["platform"])
     )

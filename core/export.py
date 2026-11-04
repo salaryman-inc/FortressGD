@@ -12,6 +12,8 @@ from core.config import load_path
 from core.errors import NEXT_DOCTOR, NEXT_EXPORT, UserError
 from core.kdf import aes_key_hex, secret_hash
 from core.mangle import (
+    binary_resource_paths,
+    collect_resource_reference_names,
     iter_gdscript_files,
     mangle_scripts,
     source_map_json,
@@ -245,7 +247,7 @@ def export_preset(
     secret_file: str | None = None,
     environ: dict[str, str] | None = None,
     godot_bin: str | None = None,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     """
     dialect=false: official Godot --export-release with GODOT_SCRIPT_ENCRYPTION_KEY = FGD-KDF-1.
     dialect=true: FortressGD-patched headless editor --export-pack (DESIGN.md §8.3).
@@ -326,6 +328,7 @@ def export_preset(
     child_env.pop("FORTRESSGD_SECRET", None)
 
     mangle_on = _production_mangle(cfg)
+    warnings: list[str] = []
     script_backups: dict[Path, str] = {}
     identifier_map: dict[str, str] = {}
     if mangle_on:
@@ -335,7 +338,14 @@ def export_preset(
             for p in gd_paths
         }
         mangled_sources, identifier_map = mangle_scripts(
-            sources, secret_hash=secrethash, rename=True
+            sources,
+            secret_hash=secrethash,
+            rename=True,
+            exclude=collect_resource_reference_names(root),
+        )
+        warnings.extend(
+            "cannot scan binary resource {0} for mangled names".format(rel)
+            for rel in binary_resource_paths(root)
         )
         for rel, text in mangled_sources.items():
             path = root / rel
@@ -416,4 +426,5 @@ def export_preset(
         "mangle_scripts": "1" if mangle_on else "0",
         "source_map": map_file,
         "verify": verify_line,
+        "warnings": warnings,
     }

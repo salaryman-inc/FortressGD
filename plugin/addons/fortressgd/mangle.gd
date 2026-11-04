@@ -20,6 +20,13 @@ const KIND_ANNOTATION := "annotation"
 const KIND_NODEPATH := "nodepath"
 
 const UNSAFE := ["call", "rpc", "set"]
+# Text files that refer to script members by name (scenes, resources, autoloads).
+const TEXT_RESOURCE_SUFFIXES := [".tscn", ".tres"]
+const TEXT_RESOURCE_NAMES := ["project.godot"]
+# Binary resources can hold the same references but cannot be scanned as text.
+const BINARY_RESOURCE_SUFFIXES := [".scn", ".res"]
+# @export_* annotations that group inspector entries and declare no var.
+const EXPORT_NON_DECL := ["@export_group", "@export_subgroup", "@export_category"]
 const DECL := ["func", "var", "const", "signal", "enum", "class", "for"]
 
 
@@ -116,9 +123,12 @@ static func apply_project(secrethash: String) -> Dictionary:
 	# A name is renamed everywhere or nowhere. Drop every name that something
 	# may reference in a way the rewrite cannot follow. Mirrors core/mangle.py.
 	var excluded := {}
+	excluded.merge(collect_resource_reference_names())
 	for path in files.keys():
 		excluded.merge(collect_foreign_member_names(str(files[path])))
 		excluded.merge(collect_string_identifier_names(str(files[path])))
+	for res_path in binary_resource_paths():
+		push_warning("FortressGD: cannot scan binary resource %s for mangled names" % res_path)
 	for name in excluded.keys():
 		user.erase(name)
 	var mapping := {}
@@ -215,7 +225,9 @@ static func collect_user_identifiers(source: String, reserved: Dictionary) -> Pa
 			if j2 < tokens.size() and str(tokens[j2]["kind"]) == KIND_IDENT:
 				var name := str(tokens[j2]["value"])
 				var name_kept := kept or _line_is_kept(int(tokens[j2]["line"]), keep_same, keep_only, nonempty)
-				if not reserved.has(name) and not class_names.has(name) and not name_kept:
+				# Scenes store @export values under the property's original name.
+				var exported := str(tok["value"]) == "var" and _has_export_annotation(tokens, i)
+				if not reserved.has(name) and not class_names.has(name) and not name_kept and not exported:
 					user[name] = true
 				if str(tok["value"]) == "func":
 					var k := _skip_ws_comments(tokens, j2 + 1)
@@ -541,6 +553,35 @@ static func _line_is_kept(line: int, keep_same: Dictionary, keep_only: Dictionar
 	return false
 
 
+## True when the `var` at var_index carries an @export* annotation, on the same
+## line or the lines right above. @export_group / _subgroup / _category do not count.
+static func _has_export_annotation(tokens: Array, var_index: int) -> bool:
+	var j := _prev_code_index(tokens, var_index)
+	while j >= 0:
+		var kind := str(tokens[j]["kind"])
+		var val := str(tokens[j]["value"])
+		if kind == KIND_PUNCT and val == ")":
+			var depth := 0
+			while j >= 0:
+				if str(tokens[j]["kind"]) == KIND_PUNCT and str(tokens[j]["value"]) == ")":
+					depth += 1
+				elif str(tokens[j]["kind"]) == KIND_PUNCT and str(tokens[j]["value"]) == "(":
+					depth -= 1
+					if depth == 0:
+						break
+				j -= 1
+			j = _prev_code_index(tokens, j)
+			if j < 0 or str(tokens[j]["kind"]) != KIND_ANNOTATION:
+				return false
+			continue
+		if kind != KIND_ANNOTATION:
+			return false
+		if val.begins_with("@export") and not (val in EXPORT_NON_DECL):
+			return true
+		j = _prev_code_index(tokens, j)
+	return false
+
+
 static func _prev_code_index(tokens: Array, i: int) -> int:
 	var j := i - 1
 	while j >= 0 and str(tokens[j]["kind"]) in [KIND_SPACE, KIND_NEWLINE, KIND_COMMENT]:
@@ -711,6 +752,63 @@ static func refuse_export_artifact(export_path: String) -> PackedStringArray:
 			if err == OK:
 				removed.append(p)
 	return removed
+
+
+## Every identifier in the project's .tscn / .tres files and project.godot. Scenes
+## and resources name @export values, connected methods, animation tracks and
+## autoloads by their original text. Dictionary used as a set. Mirrors core/mangle.py.
+static func collect_resource_reference_names() -> Dictionary:
+	var names := {}
+	var re := RegEx.new()
+	re.compile("[A-Za-z_][A-Za-z0-9_]*")
+	var all_files := PackedStringArray()
+	_walk_all("res://", all_files)
+	for path in all_files:
+		var res_path: String = path
+		var wanted: bool = res_path.get_file() in TEXT_RESOURCE_NAMES
+		for suffix in TEXT_RESOURCE_SUFFIXES:
+			if res_path.ends_with(str(suffix)):
+				wanted = true
+		if not wanted:
+			continue
+		var text: String = FileAccess.get_file_as_string(res_path)
+		for m in re.search_all(text):
+			var found: RegExMatch = m
+			names[found.get_string()] = true
+	return names
+
+
+## res:// paths of *.scn / *.res files, which reference scanning cannot read.
+static func binary_resource_paths() -> PackedStringArray:
+	var out := PackedStringArray()
+	var all_files := PackedStringArray()
+	_walk_all("res://", all_files)
+	for path in all_files:
+		var res_path: String = path
+		for suffix in BINARY_RESOURCE_SUFFIXES:
+			if res_path.ends_with(str(suffix)):
+				out.append(res_path)
+	return out
+
+
+## Every file under dir_path, skipping dot entries (.godot, .git, ...) like _walk.
+static func _walk_all(dir_path: String, out: PackedStringArray) -> void:
+	var d := DirAccess.open(dir_path)
+	if d == null:
+		return
+	d.list_dir_begin()
+	var name := d.get_next()
+	while name != "":
+		if name.begins_with(".") or name == "__pycache__":
+			name = d.get_next()
+			continue
+		var child := join_dir(dir_path, name)
+		if d.current_is_dir():
+			_walk_all(child, out)
+		else:
+			out.append(child)
+		name = d.get_next()
+	d.list_dir_end()
 
 
 static func _walk(dir_path: String, out: PackedStringArray) -> void:
