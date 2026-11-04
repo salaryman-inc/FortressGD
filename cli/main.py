@@ -67,6 +67,11 @@ def build_parser() -> argparse.ArgumentParser:
     secret_sub = secret.add_subparsers(dest="secret_command", required=True)
     gen = secret_sub.add_parser("generate", help="write 32 CSPRNG bytes as 64 hex chars")
     gen.add_argument("--secret-file", default=argparse.SUPPRESS, help=secret_file_help)
+    gen.add_argument(
+        "--force",
+        action="store_true",
+        help="replace an existing secret (packs and templates built with the old one stop working)",
+    )
     st = secret_sub.add_parser("status", help="report present/missing; never print the secret")
     st.add_argument("--secret-file", default=argparse.SUPPRESS, help=secret_file_help)
 
@@ -122,7 +127,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 def cmd_secret_generate(args: argparse.Namespace) -> int:
     path = resolve_secret_path(args.secret_file, Path.cwd())
     hex_secret = generate_secret_hex()
-    written = write_secret_file(path, hex_secret)
+    written = write_secret_file(path, hex_secret, overwrite=args.force)
     try:
         rel = written.resolve().relative_to(Path.cwd().resolve()).as_posix()
     except ValueError:

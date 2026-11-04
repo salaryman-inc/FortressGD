@@ -343,7 +343,7 @@ Every command accepts `--secret-file PATH`. `--platform` is repeatable (`--platf
 |---|---|
 | `init` | Write `.fortressgd.toml` if missing, install `addons/fortressgd`, suggest/append `.gitignore` for `.fortressgd.secret`. |
 | `doctor` | Validate toml, supported Godot tag, plugin files vs CLI package, secret presence. Plugin drift is a warning, not a failure. |
-| `secret generate` | Write 32 CSPRNG bytes as 64 hex chars, mode `0600`. |
+| `secret generate [--force]` | Write 32 CSPRNG bytes as 64 hex chars, mode `0600`. Refuses to replace an existing secret without `--force`; a new secret cannot load packs or use templates built with the old one. |
 | `secret status` | `present` / `missing`; never prints the secret. |
 | `templates build` | Docker-build `template_release` for `(godot, secret_hash, platform)`. |
 | `templates list` | Names of cached templates. |

@@ -16,6 +16,7 @@ from core.secret import (
     secret_status,
     write_secret_file,
 )
+from core.errors import UserError
 
 
 class SecretHelperTests(unittest.TestCase):
@@ -37,6 +38,21 @@ class SecretHelperTests(unittest.TestCase):
             self.assertEqual(len(bytes.fromhex(on_disk)), SECRET_BYTES)
             mode = stat.S_IMODE(path.stat().st_mode)
             self.assertEqual(mode, 0o600)
+
+    def test_write_secret_file_refuses_existing_unless_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / ".fortressgd.secret"
+            first = generate_secret_hex()
+            write_secret_file(path, first)
+            with self.assertRaises(UserError) as ctx:
+                write_secret_file(path, generate_secret_hex())
+            self.assertIn("already exists", str(ctx.exception))
+            self.assertIn("--force", ctx.exception.next_command)
+            self.assertEqual(path.read_text(encoding="ascii").strip(), first)
+            second = generate_secret_hex()
+            write_secret_file(path, second, overwrite=True)
+            self.assertEqual(path.read_text(encoding="ascii").strip(), second)
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
 
     def test_status_present_file_and_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

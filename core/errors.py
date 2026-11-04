@@ -5,6 +5,7 @@ from __future__ import annotations
 NEXT_INIT = "fortressgd init"
 NEXT_DOCTOR = "fortressgd doctor"
 NEXT_SECRET = "fortressgd secret generate"
+NEXT_SECRET_FORCE = "fortressgd secret generate --force"
 NEXT_HELP = "fortressgd --help"
 NEXT_VERIFY = "fortressgd verify PATH.pck"
 NEXT_TEMPLATES = "fortressgd templates build"

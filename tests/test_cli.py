@@ -78,6 +78,35 @@ class CliTests(unittest.TestCase):
             self.assertIn("present", status_out)
             self.assertNotIn(secret, status_out)
 
+    def test_secret_generate_refuses_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_godot_stub(root)
+            first = run_fortressgd("secret", "generate", cwd=root)
+            self.assertEqual(first.returncode, 0, first.stderr)
+            secret_path = root / ".fortressgd.secret"
+            before = secret_path.read_text(encoding="ascii")
+            second = run_fortressgd("secret", "generate", cwd=root)
+            self.assertEqual(second.returncode, 1, second.stdout)
+            self.assertIn("--force", second.stderr)
+            self.assertIn("already exists", second.stderr)
+            self.assertNotIn(before.strip(), second.stdout + second.stderr)
+            self.assertEqual(secret_path.read_text(encoding="ascii"), before)
+
+    def test_secret_generate_force_replaces(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_godot_stub(root)
+            self.assertEqual(run_fortressgd("secret", "generate", cwd=root).returncode, 0)
+            secret_path = root / ".fortressgd.secret"
+            before = secret_path.read_text(encoding="ascii")
+            forced = run_fortressgd("secret", "generate", "--force", cwd=root)
+            self.assertEqual(forced.returncode, 0, forced.stderr)
+            after = secret_path.read_text(encoding="ascii")
+            self.assertNotEqual(after, before)
+            self.assertEqual(len(after.strip()), SECRET_HEX_LEN)
+            self.assertEqual(stat.S_IMODE(secret_path.stat().st_mode), 0o600)
+
     def test_secret_status_missing_and_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

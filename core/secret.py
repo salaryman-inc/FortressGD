@@ -8,7 +8,7 @@ import secrets
 import stat
 from pathlib import Path
 
-from core.errors import NEXT_SECRET, UserError
+from core.errors import NEXT_SECRET, NEXT_SECRET_FORCE, UserError
 from core.paths import default_secret_path
 
 SECRET_BYTES = 32
@@ -36,13 +36,27 @@ def validate_secret_hex(text: str) -> str:
     return value.lower()
 
 
-def write_secret_file(path: Path, hex_secret: str) -> Path:
+def write_secret_file(path: Path, hex_secret: str, *, overwrite: bool = False) -> Path:
+    """
+    Write the secret with mode 0600.
+
+    Refuses to replace an existing file unless ``overwrite`` is true: a new secret
+    cannot load packs or use templates built with the old one.
+    """
     hex_secret = validate_secret_hex(hex_secret)
     path = Path(path)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
-        fd = os.open(str(path), flags, stat.S_IRUSR | stat.S_IWUSR)
+        flags = os.O_WRONLY | os.O_CREAT
+        flags |= os.O_TRUNC if overwrite else os.O_EXCL
+        try:
+            fd = os.open(str(path), flags, stat.S_IRUSR | stat.S_IWUSR)
+        except FileExistsError as exc:
+            raise UserError(
+                "secret file already exists at {0}; replacing it makes existing packs "
+                "and cached templates unusable".format(path),
+                NEXT_SECRET_FORCE,
+            ) from exc
         try:
             os.write(fd, (hex_secret + "\n").encode("ascii"))
         finally:
