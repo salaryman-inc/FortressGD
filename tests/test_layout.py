@@ -90,6 +90,20 @@ class LayoutTests(unittest.TestCase):
         ):
             self.assertIn('"{0}"'.format(pattern), (addon / "filters.json").read_text(encoding="utf-8"))
 
+    def test_plugin_secret_order_matches_cli(self) -> None:
+        export_gd = (ROOT / "plugin" / "addons" / "fortressgd" / "export_plugin.gd").read_text(
+            encoding="utf-8"
+        )
+        start = export_gd.index("func _load_secret_hex")
+        end = export_gd.find("\nfunc ", start + 1)
+        body = export_gd[start : end if end != -1 else len(export_gd)]
+        body = "\n".join(
+            line for line in body.splitlines() if not line.strip().startswith("#")
+        )
+        file_pos = body.index(".fortressgd.secret")
+        env_pos = body.index("FORTRESSGD_SECRET")
+        self.assertLess(file_pos, env_pos, "plugin must read the file before the env var, like the CLI")
+
     def test_getting_started_covers_verify_without_custom_templates(self) -> None:
         path = ROOT / "docs" / "getting-started.md"
         self.assertTrue(path.is_file())

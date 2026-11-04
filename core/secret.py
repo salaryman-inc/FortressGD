@@ -121,6 +121,8 @@ def load_secret_hex(
     Return the 64-hex secret. Never log the return value.
 
     Resolution: --secret-file (or default `.fortressgd.secret`), then FORTRESSGD_SECRET.
+    The editor plugin's `_load_secret_hex` in plugin/addons/fortressgd/export_plugin.gd
+    uses the same order; keep the two aligned.
     """
     env = os.environ if environ is None else environ
     path = resolve_secret_path(secret_file, cwd)

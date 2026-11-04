@@ -105,18 +105,18 @@ func _export_end() -> void:
 
 
 func _load_secret_hex() -> String:
-	var env := OS.get_environment("FORTRESSGD_SECRET").strip_edges()
-	if env != "":
-		return env
+	# Same order as core/secret.py load_secret_hex: the project's
+	# .fortressgd.secret first, then FORTRESSGD_SECRET. Keep the two aligned, or a
+	# CLI export and an editor export of the same project use different secrets.
 	var root := ProjectSettings.globalize_path("res://")
 	if not (root.ends_with("/") or root.ends_with("\\")):
 		root += "/"
 	var path := root + ".fortressgd.secret"
-	if not FileAccess.file_exists(path):
-		return ""
-	var file := FileAccess.open(path, FileAccess.READ)
-	if file == null:
-		return ""
-	var text := file.get_as_text().strip_edges()
-	file.close()
-	return text
+	if FileAccess.file_exists(path):
+		var file := FileAccess.open(path, FileAccess.READ)
+		if file != null:
+			var text := file.get_as_text().strip_edges()
+			file.close()
+			if text != "":
+				return text
+	return OS.get_environment("FORTRESSGD_SECRET").strip_edges()
