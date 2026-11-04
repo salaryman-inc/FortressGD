@@ -36,6 +36,11 @@ func _export_begin(features: PackedStringArray, is_debug: bool, path: String, fl
 	_mangle_secret_hash = ""
 	var result: Dictionary = FGDConfig.load_project_toml()
 	if not result.get("ok", false):
+		# Fail closed on production presets: exporting without the config would skip
+		# mangling and [filters] with no error. Other presets export as before.
+		if features.has(FGDFilters.production_feature_tag()):
+			push_error("FortressGD: %s. Run: %s" % [str(result.get("error", "cannot load .fortressgd.toml")), str(result.get("next_command", "fortressgd doctor"))])
+			_mangle_abort = true
 		return
 	var data: Dictionary = result.get("data", {})
 	var filters: Variant = data.get("filters", {})

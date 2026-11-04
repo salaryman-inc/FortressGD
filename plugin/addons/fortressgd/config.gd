@@ -85,9 +85,13 @@ static func _validate(data: Dictionary) -> String:
 	return ""
 
 
+# Must accept exactly the same subset as parse_toml in core/config.py, with the
+# same error text. A file one parser accepts and the other rejects makes CLI and
+# editor exports diverge.
 static func _parse_toml(text: String) -> Variant:
 	var result := {}
 	var current: Dictionary = result
+	var current_name := ""
 	var lines := text.split("\n")
 	var i := 0
 	while i < lines.size():
@@ -97,15 +101,25 @@ static func _parse_toml(text: String) -> Variant:
 			continue
 		if stripped.begins_with("[") and stripped.ends_with("]") and not stripped.contains("="):
 			var name := stripped.substr(1, stripped.length() - 2).strip_edges()
+			if name == "":
+				return {"_error": "empty table name in %s" % CONFIG_NAME}
+			if result.has(name):
+				return {"_error": "duplicate table [%s] in %s" % [name, CONFIG_NAME]}
 			var section := {}
 			result[name] = section
 			current = section
+			current_name = name
 			i += 1
 			continue
 		if not stripped.contains("="):
 			return {"_error": "invalid line in %s: %s" % [CONFIG_NAME, stripped]}
 		var eq := stripped.find("=")
 		var key := stripped.substr(0, eq).strip_edges()
+		if key == "":
+			return {"_error": "empty key in %s" % CONFIG_NAME}
+		if current.has(key):
+			var qualified := key if current_name == "" else current_name + "." + key
+			return {"_error": "duplicate key %s in %s" % [qualified, CONFIG_NAME]}
 		var rest := stripped.substr(eq + 1).strip_edges()
 		var assembled := rest
 		while not _value_complete(assembled):

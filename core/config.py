@@ -43,11 +43,15 @@ def default_toml_text() -> str:
     return example_toml_path().read_text(encoding="utf-8")
 
 
+# Must accept exactly the same subset as `_parse_toml` in
+# plugin/addons/fortressgd/config.gd, with the same error text. A file one parser
+# accepts and the other rejects makes CLI and editor exports diverge.
 def parse_toml(text: str) -> dict[str, Any]:
     """Parse the FortressGD TOML subset used by `.fortressgd.toml`."""
     lines = text.splitlines()
     result: dict[str, Any] = {}
     current: dict[str, Any] = result
+    current_name = ""
     i = 0
     while i < len(lines):
         stripped = _strip_comment(lines[i]).strip()
@@ -66,6 +70,7 @@ def parse_toml(text: str) -> dict[str, Any]:
             section: dict[str, Any] = {}
             result[name] = section
             current = section
+            current_name = name
             i += 1
             continue
         if "=" not in stripped:
@@ -77,6 +82,13 @@ def parse_toml(text: str) -> dict[str, Any]:
         key = key.strip()
         if not key:
             raise ConfigError("empty key in .fortressgd.toml", NEXT_DOCTOR)
+        if key in current:
+            raise ConfigError(
+                "duplicate key {0} in .fortressgd.toml".format(
+                    current_name + "." + key if current_name else key
+                ),
+                NEXT_DOCTOR,
+            )
         assembled = rest.strip()
         while not _value_complete(assembled):
             i += 1

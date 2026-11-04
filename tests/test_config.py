@@ -45,6 +45,22 @@ class ConfigTests(unittest.TestCase):
                 load_path(path)
             self.assertIn("nope", str(ctx.exception))
 
+    def test_duplicate_key_in_table_is_error(self) -> None:
+        text = 'schema = 1\ngodot = "4.6.2"\n[production]\ndialect = true\nmangle_scripts = true\ndialect = false\n'
+        with self.assertRaises(ConfigError) as ctx:
+            parse_toml(text)
+        self.assertEqual(str(ctx.exception), "duplicate key production.dialect in .fortressgd.toml")
+        self.assertIn("Run: fortressgd doctor", ctx.exception.format())
+
+    def test_duplicate_root_key_is_error(self) -> None:
+        with self.assertRaises(ConfigError) as ctx:
+            parse_toml('schema = 1\ngodot = "4.6.2"\ngodot = "4.7.2"\n')
+        self.assertEqual(str(ctx.exception), "duplicate key godot in .fortressgd.toml")
+
+    def test_same_key_in_different_tables_is_allowed(self) -> None:
+        data = parse_toml("[a]\nx = 1\n[b]\nx = 2\n")
+        self.assertEqual(data, {"a": {"x": 1}, "b": {"x": 2}})
+
     def test_parser_matches_stdlib_tomllib_on_example(self) -> None:
         try:
             import tomllib

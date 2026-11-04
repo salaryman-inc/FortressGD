@@ -104,6 +104,27 @@ class LayoutTests(unittest.TestCase):
         env_pos = body.index("FORTRESSGD_SECRET")
         self.assertLess(file_pos, env_pos, "plugin must read the file before the env var, like the CLI")
 
+    def test_plugin_toml_parser_rejects_duplicates_like_cli(self) -> None:
+        config_gd = (ROOT / "plugin" / "addons" / "fortressgd" / "config.gd").read_text(encoding="utf-8")
+        start = config_gd.index("static func _parse_toml")
+        body = config_gd[start : config_gd.index("\nstatic func ", start + 1)]
+        self.assertIn('"duplicate key %s in %s"', body)
+        self.assertIn("current.has(key)", body)
+        self.assertIn('"duplicate table [%s] in %s"', body)
+        self.assertIn('"empty key in %s"', body)
+        self.assertIn('"empty table name in %s"', body)
+
+    def test_plugin_fails_closed_on_config_error_for_production(self) -> None:
+        export_gd = (ROOT / "plugin" / "addons" / "fortressgd" / "export_plugin.gd").read_text(encoding="utf-8")
+        start = export_gd.index("func _export_begin")
+        body = export_gd[start : export_gd.index("\nfunc ", start + 1)]
+        load_at = body.index("FGDConfig.load_project_toml()")
+        failure = body[load_at : body.index("var data", load_at)]
+        self.assertIn('if not result.get("ok", false):', failure)
+        self.assertIn("features.has(FGDFilters.production_feature_tag())", failure)
+        self.assertIn("push_error", failure)
+        self.assertIn("_mangle_abort = true", failure)
+
     def test_getting_started_covers_verify_without_custom_templates(self) -> None:
         path = ROOT / "docs" / "getting-started.md"
         self.assertTrue(path.is_file())
