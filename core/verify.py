@@ -51,6 +51,7 @@ def verify_artifact(
     path: Path,
     include: Sequence[str] | None = None,
     *,
+    exclude: Sequence[str] | None = None,
     dialect: bool = False,
     secret: bytes | None = None,
     godot_tag: str | None = None,
@@ -104,7 +105,7 @@ def verify_artifact(
         listing = _read_stock_listing(data, secret=secret, godot_tag=godot_tag, source=str(artifact))
         packed = [item.path for item in listing.files]
 
-    leaks = find_leaks(packed, include=include)
+    leaks = find_leaks(packed, include=include, exclude=exclude)
     result = VerifyResult(
         artifact=artifact,
         paths=packed,

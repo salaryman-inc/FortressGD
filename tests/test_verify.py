@@ -73,6 +73,21 @@ class VerifyCliTests(unittest.TestCase):
             proc = run_fortressgd("verify", str(pck), cwd=root)
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
 
+    def test_custom_exclude_from_toml_exits_2(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_godot_stub(root)
+            text = default_toml_text().replace("dialect = true", "dialect = false")
+            text = text.replace('  "*.tmp",\n', '  "*.tmp",\n  "design_docs/*",\n')
+            self.assertIn("design_docs/*", text)
+            (root / ".fortressgd.toml").write_text(text, encoding="utf-8")
+            pck = _write_pck(root, "game.pck", ["main.tscn", "design_docs/notes.txt"])
+            proc = run_fortressgd("verify", str(pck), cwd=root)
+            combined = proc.stdout + proc.stderr
+            self.assertEqual(proc.returncode, 2, combined)
+            self.assertIn("design_docs/notes.txt", combined)
+            self.assertIn("(design_docs/*)", combined)
+
     def test_missing_and_unreadable_exit_1(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

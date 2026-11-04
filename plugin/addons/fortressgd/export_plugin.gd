@@ -9,6 +9,7 @@ const FGDFilters := preload("res://addons/fortressgd/filters.gd")
 const FGDMangle := preload("res://addons/fortressgd/mangle.gd")
 
 var _include: PackedStringArray = PackedStringArray()
+var _exclude: PackedStringArray = PackedStringArray()
 var _mangle_enabled: bool = false
 var _mangle_applied: bool = false
 var _mangle_abort: bool = false
@@ -27,6 +28,7 @@ func _get_name() -> String:
 
 func _export_begin(features: PackedStringArray, is_debug: bool, path: String, flags: int) -> void:
 	_include = PackedStringArray()
+	_exclude = PackedStringArray()
 	_mangle_enabled = false
 	_mangle_applied = false
 	_mangle_abort = false
@@ -49,6 +51,10 @@ func _export_begin(features: PackedStringArray, is_debug: bool, path: String, fl
 		if typeof(inc) == TYPE_ARRAY:
 			for item in inc:
 				_include.append(str(item))
+		var exc: Variant = filters.get("exclude", [])
+		if typeof(exc) == TYPE_ARRAY:
+			for item in exc:
+				_exclude.append(str(item))
 	if not features.has(FGDFilters.production_feature_tag()):
 		return
 	var production: Variant = data.get("production", {})
@@ -82,7 +88,7 @@ func _export_file(path: String, type: String, features: PackedStringArray) -> vo
 		return
 	if not features.has(FGDFilters.production_feature_tag()):
 		return
-	if FGDFilters.should_skip_forced(path, _include):
+	if FGDFilters.should_skip_forced(path, _include, _exclude):
 		skip()
 
 

@@ -11,6 +11,7 @@ from core.filters import (
     glob_match,
     load_filters_file,
     production_feature_tag,
+    effective_exclude_patterns,
     should_force_exclude,
     spec_forced_exclude_patterns,
 )
@@ -77,6 +78,29 @@ class FilterMatchTests(unittest.TestCase):
     def test_include_specific_path_does_not_exempt_others(self) -> None:
         leaks = find_leaks(["keep.gd", "drop.gd"], include=["keep.gd"])
         self.assertEqual([x.path for x in leaks], ["drop.gd"])
+
+
+    def test_custom_exclude_is_a_leak(self) -> None:
+        leaks = find_leaks(["main.tscn", "design_docs/notes.txt"], exclude=["design_docs/*"])
+        self.assertEqual([(l.path, l.pattern) for l in leaks], [("design_docs/notes.txt", "design_docs/*")])
+        self.assertTrue(should_force_exclude("design_docs/notes.txt", exclude=["design_docs/*"]))
+        self.assertEqual(find_leaks(["design_docs/notes.txt"]), [])
+
+    def test_include_overrides_custom_exclude(self) -> None:
+        leaks = find_leaks(
+            ["design_docs/notes.txt", "design_docs/credits.txt"],
+            include=["design_docs/credits.txt"],
+            exclude=["design_docs/*"],
+        )
+        self.assertEqual([l.path for l in leaks], ["design_docs/notes.txt"])
+
+    def test_forced_pattern_reported_before_duplicate_custom_one(self) -> None:
+        leaks = find_leaks(["main.gd"], exclude=["*.gd", "*.gd"])
+        self.assertEqual(leaks[0].pattern, "*.gd")
+        self.assertEqual(effective_exclude_patterns(["*.gd", "x/*", "x/*"]).count("*.gd"), 1)
+        merged = effective_exclude_patterns(["x/*", "x/*"])
+        self.assertEqual(merged.count("x/*"), 1)
+        self.assertEqual(merged[-1], "x/*")
 
 
 if __name__ == "__main__":

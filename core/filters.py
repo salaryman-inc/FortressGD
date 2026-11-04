@@ -80,30 +80,46 @@ class Leak:
     pattern: str
 
 
+def effective_exclude_patterns(exclude: Sequence[str] | None = None) -> list[str]:
+    """Forced §6.3 excludes, then ``[filters].exclude``, duplicates removed, order kept."""
+    out: list[str] = []
+    for pat in list(forced_exclude_patterns()) + [p for p in (exclude or ()) if p]:
+        if pat not in out:
+            out.append(pat)
+    return out
+
+
 def find_leaks(
     paths: Iterable[str],
     include: Sequence[str] | None = None,
+    exclude: Sequence[str] | None = None,
 ) -> list[Leak]:
-    """Packed paths that match a §6.3 exclude and are not allowlisted.
+    """Packed paths that match a §6.3 forced exclude or a ``[filters].exclude``
+    pattern and are not allowlisted.
 
     A path is exempt when it matches any ``[filters].include`` pattern (the
-    same pattern, or a more specific path glob).
+    same pattern, or a more specific path glob). ``Leak.pattern`` is the first
+    exclude pattern that matched.
     """
     include_list = [p for p in (include or ()) if p]
-    forced = forced_exclude_patterns()
+    patterns = effective_exclude_patterns(exclude)
     leaks: list[Leak] = []
     for path in paths:
         if any(glob_match(path, inc) for inc in include_list):
             continue
-        for pat in forced:
+        for pat in patterns:
             if glob_match(path, pat):
                 leaks.append(Leak(path=path, pattern=pat))
                 break
     return leaks
 
 
-def should_force_exclude(path: str, include: Sequence[str] | None = None) -> bool:
-    return bool(find_leaks([path], include=include))
+def should_force_exclude(
+    path: str,
+    include: Sequence[str] | None = None,
+    exclude: Sequence[str] | None = None,
+) -> bool:
+    return bool(find_leaks([path], include=include, exclude=exclude))
 
 
 @lru_cache(maxsize=64)

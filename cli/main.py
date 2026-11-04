@@ -154,22 +154,20 @@ def cmd_secret_status(args: argparse.Namespace) -> int:
     return 0
 
 
-def _include_from_cwd() -> list[str]:
-    toml_path = Path.cwd() / CONFIG_NAME
-    if not toml_path.is_file():
-        return []
-    cfg = load_path(toml_path)
+def _filter_patterns(cfg: dict, key: str) -> list[str]:
+    """`[filters].include` or `[filters].exclude` as a list of strings."""
     filters = cfg.get("filters") or {}
-    include = filters.get("include") or []
-    if not isinstance(include, list):
+    values = filters.get(key) or []
+    if not isinstance(values, list):
         return []
-    return [p for p in include if isinstance(p, str)]
+    return [p for p in values if isinstance(p, str)]
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
     artifact = Path(args.artifact)
-    include = _include_from_cwd()
     cfg = _load_cwd_config()
+    include = _filter_patterns(cfg, "include")
+    exclude = _filter_patterns(cfg, "exclude")
     production = cfg.get("production") or {}
     dialect = bool(production.get("dialect", False))
     nameless_bytecode = bool(production.get("nameless_bytecode", False))
@@ -189,6 +187,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
     result = verify_artifact(
         artifact,
         include=include,
+        exclude=exclude,
         dialect=dialect,
         secret=secret,
         godot_tag=godot_tag,

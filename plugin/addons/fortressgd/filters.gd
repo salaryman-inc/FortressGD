@@ -25,12 +25,17 @@ static func forced_exclude_patterns() -> PackedStringArray:
 	return out
 
 
-static func should_skip_forced(path: String, include_patterns: PackedStringArray) -> bool:
+## Forced §6.3 excludes plus [filters].exclude; [filters].include overrides both.
+## Mirrors core/filters.py find_leaks.
+static func should_skip_forced(path: String, include_patterns: PackedStringArray, exclude_patterns := PackedStringArray()) -> bool:
 	for inc in include_patterns:
 		if inc != "" and glob_match(path, inc):
 			return false
 	for pat in forced_exclude_patterns():
 		if glob_match(path, pat):
+			return true
+	for pat in exclude_patterns:
+		if pat != "" and glob_match(path, pat):
 			return true
 	return false
 

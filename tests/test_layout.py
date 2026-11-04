@@ -125,6 +125,22 @@ class LayoutTests(unittest.TestCase):
         self.assertIn("push_error", failure)
         self.assertIn("_mangle_abort = true", failure)
 
+    def test_plugin_applies_custom_excludes(self) -> None:
+        addon = ROOT / "plugin" / "addons" / "fortressgd"
+        export_gd = (addon / "export_plugin.gd").read_text(encoding="utf-8")
+        self.assertIn('filters.get("exclude", [])', export_gd)
+        self.assertIn("should_skip_forced(path, _include, _exclude)", export_gd)
+        filters_gd = (addon / "filters.gd").read_text(encoding="utf-8")
+        self.assertRegex(
+            filters_gd,
+            r"static func should_skip_forced\(path: String, include_patterns: PackedStringArray, exclude_patterns",
+        )
+        start = filters_gd.index("static func should_skip_forced")
+        body = filters_gd[start : filters_gd.index("\nstatic func ", start + 1)]
+        self.assertIn("for pat in exclude_patterns:", body)
+        # include is checked first, so it overrides both forced and custom excludes
+        self.assertLess(body.index("include_patterns:"), body.index("forced_exclude_patterns()"))
+
     def test_getting_started_covers_verify_without_custom_templates(self) -> None:
         path = ROOT / "docs" / "getting-started.md"
         self.assertTrue(path.is_file())
