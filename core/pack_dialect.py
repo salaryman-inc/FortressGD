@@ -65,8 +65,13 @@ def encrypt_fae_directory(plaintext: bytes, key: bytes, iv: bytes) -> bytes:
     return digest + struct.pack("<Q", len(plaintext)) + iv + cipher
 
 
-def decrypt_fae_directory(blob: bytes, key: bytes) -> bytes:
-    """Inverse of encrypt_fae_directory. Raises PackError on a bad key or truncated blob."""
+def decrypt_fae_blob(blob: bytes, key: bytes) -> bytes:
+    """
+    Inverse of encrypt_fae_directory. Raises PackError on a bad key or truncated blob.
+
+    Encrypted directories and encrypted file bodies use the same layout:
+    md5[16], u64 length, iv[16], ciphertext padded to 16 bytes.
+    """
     if len(key) != FGD_KDF_LEN:
         raise PackError("encrypted pack directory key must be 32 bytes")
     header = 16 + 8 + 16
@@ -89,6 +94,9 @@ def decrypt_fae_directory(blob: bytes, key: bytes) -> bytes:
     if _md5(plaintext) != expected_md5:
         raise PackError("cannot decrypt pack directory (invalid key)")
     return plaintext
+
+
+decrypt_fae_directory = decrypt_fae_blob
 
 
 def _validate_perm(perm: Sequence[int]) -> tuple[int, int, int, int]:
@@ -153,11 +161,13 @@ def encode_dialect_index(
     iv: bytes | None = None,
     contents: dict[str, bytes] | None = None,
     signature: bytes | None = None,
+    file_flags: dict[str, int] | None = None,
 ) -> bytes:
     """
     Build a dialect pack index. Not a Godot packer.
 
     When PACK_DIR_ENCRYPTED is set, `aes_key` must be the FGD-KDF-1 output.
+    `file_flags` sets the per-file index flags; bodies are written as given.
     """
     if magic == STOCK_PACK_MAGIC:
         raise PackError("dialect magic must not equal stock GDPC")
@@ -173,7 +183,9 @@ def encode_dialect_index(
         records.extend(struct.pack("<I", len(raw) + pad))
         records.extend(raw)
         records.extend(b"\x00" * pad)
-        _write_index_fields(records, perm, cursor, len(body), b"\x00" * 16, 0)
+        _write_index_fields(
+            records, perm, cursor, len(body), b"\x00" * 16, (file_flags or {}).get(path, 0)
+        )
         cursor += len(body)
     file_data = b"".join(bodies)
 

@@ -9,9 +9,10 @@ from typing import Sequence
 
 from core.errors import NEXT_DOCTOR, NEXT_SECRET, NEXT_VERIFY, VerifyError
 from core.filters import Leak, find_leaks
-from core.gdc import has_debug_name_tables
+from core.gdc import CompressedGdscError, has_debug_name_tables
 from core.pack import (
     PACK_DIR_ENCRYPTED,
+    PACK_FILE_ENCRYPTED,
     PackError,
     PackListing,
     find_gdpc_offset,
@@ -21,6 +22,7 @@ from core.pack import (
 from core.pack_dialect import (
     STOCK_INDEX_PERM,
     STOCK_PACK_MAGIC,
+    decrypt_fae_blob,
     dialect_key_for_secret,
     dialect_params_for_secret,
     read_dialect_listing,
@@ -117,7 +119,8 @@ def verify_artifact(
         return result
 
     if nameless_bytecode:
-        named = _named_gdc_paths(data, listing)
+        body_key = dialect_key_for_secret(secret, godot_tag) if secret is not None and godot_tag else None
+        named = _named_gdc_paths(data, listing, body_key)
         if named:
             lines = ["debug name tables in packed .gdc (nameless_bytecode) in {0}".format(artifact.name)]
             for gdc_path in named:
@@ -187,15 +190,53 @@ def _read_stock_listing(
     )
 
 
-def _named_gdc_paths(data: bytes, listing: PackListing) -> list[str]:
+def _named_gdc_paths(data: bytes, listing: PackListing, aes_key: bytes | None) -> list[str]:
+    """
+    Packed .gdc files that still carry stock identifier or line tables.
+
+    Encrypted bodies (PACK_FILE_ENCRYPTED, written by Godot's export with the
+    script encryption key) are decrypted first. Only .gdc bodies are decrypted:
+    AES here is pure Python, and the bytecode is what this check is about.
+    """
     named: list[str] = []
     for item in listing.files:
+        is_gdc = item.path.lower().endswith(".gdc")
         blob = listing.blob(data, item)
-        look = item.path.lower().endswith(".gdc") or blob.startswith(b"GDSC")
+        if item.flags & PACK_FILE_ENCRYPTED:
+            if not is_gdc:
+                continue
+            if aes_key is None:
+                raise VerifyError(
+                    "cannot inspect encrypted .gdc for nameless_bytecode without the project "
+                    "secret (.fortressgd.secret or FORTRESSGD_SECRET)",
+                    NEXT_SECRET,
+                )
+            try:
+                blob = decrypt_fae_blob(blob, aes_key)
+            except PackError as exc:
+                raise VerifyError(
+                    "cannot decrypt {0} for nameless_bytecode: {1}".format(item.path, exc),
+                    NEXT_DOCTOR,
+                ) from exc
+        look = is_gdc or blob.startswith(b"GDSC")
         if not look and b"GDSC" not in blob:
             continue
-        if has_debug_name_tables(blob):
-            named.append(item.path)
+        try:
+            if has_debug_name_tables(blob):
+                named.append(item.path)
+        except CompressedGdscError as exc:
+            raise VerifyError(
+                "packed .gdc uses Compressed binary tokens ({0}); nameless_bytecode verify needs "
+                "Python 3.14+ or the preset's GDScript Export Mode set to Binary tokens".format(
+                    item.path
+                ),
+                NEXT_DOCTOR,
+            ) from exc
+        except ValueError as exc:
+            raise VerifyError(
+                "cannot decode {0} for nameless_bytecode: {1}".format(item.path, exc),
+                NEXT_DOCTOR,
+            ) from exc
     return named
 
 

@@ -17,12 +17,24 @@ from core.gdc import (
     encode_identifier_token,
     parse_gdsc_engine_order,
 )
-from core.pack import PACK_DIR_ENCRYPTED
-from core.pack_dialect import dialect_key_for_secret, dialect_params_for_secret, encode_dialect_index
+from core.pack import PACK_DIR_ENCRYPTED, PACK_FILE_ENCRYPTED
+from core.pack_dialect import (
+    dialect_key_for_secret,
+    dialect_params_for_secret,
+    encode_dialect_index,
+    encrypt_fae_directory,
+)
 from core.pack_sign import apply_signature, public_key_for_secret, sign_index, verify_index
 from core.secret import generate_secret_hex, read_secret_file, secret_bytes_from_hex
 from tests.gdpc_fixture import embed_exe, make_gdpc
 from tests.support import run_fortressgd, write_godot_stub
+
+try:
+    from compression import zstd as _zstd  # type: ignore[import-not-found]  # noqa: F401
+
+    _HAVE_ZSTD = True
+except ImportError:
+    _HAVE_ZSTD = False
 
 
 def _write_pck(directory: Path, name: str, paths: list[str], *, version: int = 3) -> Path:
@@ -307,6 +319,98 @@ class VerifyCliTests(unittest.TestCase):
             self.assertIn("main.gdc", named_out)
             self.assertEqual(on_nameless.returncode, 0, nameless_out)
             self.assertIn("ok:", nameless_out)
+
+    def _nameless_encrypted_pack(self, root: Path, body: bytes, *, key: bytes | None) -> Path:
+        """dialect = false, nameless on; main.gdc body encrypted with the derived key."""
+        pck = root / "game.pck"
+        enc = encrypt_fae_directory(body, key, bytes(range(16, 32))) if key else body
+        pck.write_bytes(
+            make_gdpc(
+                ["main.tscn", "main.gdc"],
+                contents={"main.gdc": enc},
+                file_flags={"main.gdc": PACK_FILE_ENCRYPTED},
+            )
+        )
+        return pck
+
+    def _nameless_project(self, root: Path) -> bytes:
+        secret = self._derived_key_project(root)
+        self._enable_flags(root, nameless=True, dialect=False)
+        return secret
+
+    def test_nameless_encrypted_named_gdc_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            secret = self._nameless_project(root)
+            key = dialect_key_for_secret(secret, "4.6.2")
+            named = encode_gdsc(["health", "speed"], nameless=False, token_line_count=1)
+            pck = self._nameless_encrypted_pack(root, named, key=key)
+            self.assertNotIn(b"GDSC", pck.read_bytes())
+            proc = run_fortressgd("verify", str(pck), cwd=root)
+            combined = proc.stdout + proc.stderr
+            self.assertEqual(proc.returncode, 2, combined)
+            self.assertIn("main.gdc", combined)
+            self.assertIn("debug name tables", combined)
+
+    def test_nameless_encrypted_nameless_gdc_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            secret = self._nameless_project(root)
+            key = dialect_key_for_secret(secret, "4.6.2")
+            pck = self._nameless_encrypted_pack(root, encode_gdsc(["health"], nameless=True), key=key)
+            proc = run_fortressgd("verify", str(pck), cwd=root)
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_nameless_encrypted_without_secret_exits_2(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            secret = self._nameless_project(root)
+            key = dialect_key_for_secret(secret, "4.6.2")
+            pck = self._nameless_encrypted_pack(root, encode_gdsc(["health"], nameless=True), key=key)
+            (root / ".fortressgd.secret").unlink()
+            proc = run_fortressgd("verify", str(pck), cwd=root)
+            combined = proc.stdout + proc.stderr
+            self.assertEqual(proc.returncode, 2, combined)
+            self.assertIn("project secret", combined)
+            self.assertIn("encrypted .gdc", combined)
+
+    def _compressed_gdsc(self, contents: bytes, frame: bytes | None = None) -> bytes:
+        body = frame if frame is not None else b"\x28\xb5\x2f\xfd" + b"\x00" * 8
+        return GDSC_MAGIC + struct.pack("<II", TOKENIZER_VERSION, len(contents)) + body
+
+    @unittest.skipIf(_HAVE_ZSTD, "zstd available; compressed .gdc decodes instead")
+    def test_nameless_compressed_gdc_message(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_godot_stub(root)
+            self.assertEqual(run_fortressgd("init", cwd=root).returncode, 0)
+            self._enable_flags(root, nameless=True, dialect=False)
+            blob = self._compressed_gdsc(b"\x00" * 32)
+            pck = root / "game.pck"
+            pck.write_bytes(make_gdpc(["main.tscn", "main.gdc"], contents={"main.gdc": blob}))
+            proc = run_fortressgd("verify", str(pck), cwd=root)
+            combined = proc.stdout + proc.stderr
+            self.assertEqual(proc.returncode, 2, combined)
+            self.assertIn("Binary tokens", combined)
+            self.assertIn("Python 3.14", combined)
+            self.assertIn("main.gdc", combined)
+
+    @unittest.skipUnless(_HAVE_ZSTD, "needs compression.zstd (Python 3.14+)")
+    def test_nameless_compressed_gdc_decodes(self) -> None:
+        from compression import zstd  # type: ignore[import-not-found]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_godot_stub(root)
+            self.assertEqual(run_fortressgd("init", cwd=root).returncode, 0)
+            self._enable_flags(root, nameless=True, dialect=False)
+            for name, nameless, expected in (("named", False, 2), ("nameless", True, 0)):
+                contents = encode_gdsc(["health"], nameless=nameless, token_line_count=1)[12:]
+                blob = self._compressed_gdsc(contents, zstd.compress(contents))
+                pck = root / (name + ".pck")
+                pck.write_bytes(make_gdpc(["main.tscn", "main.gdc"], contents={"main.gdc": blob}))
+                proc = run_fortressgd("verify", str(pck), cwd=root)
+                self.assertEqual(proc.returncode, expected, name + ": " + proc.stdout + proc.stderr)
 
     def test_sign_packs_valid_missing_and_wrong(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

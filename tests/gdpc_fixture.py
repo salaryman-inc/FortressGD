@@ -20,13 +20,15 @@ def make_gdpc(
     signature: bytes | None = None,
     aes_key: bytes | None = None,
     iv: bytes | None = None,
+    file_flags: dict[str, int] | None = None,
 ) -> bytes:
     """
     Build a Godot 4 pack (v2 / v3 / v4). Empty bodies unless `contents`.
 
     With `flags & 1` (PACK_DIR_ENCRYPTED) and `aes_key`, the directory is stored as
     upstream does: plaintext u32 file_count, then a FileAccessEncrypted blob of the
-    records. Without `aes_key` only the header flag is set.
+    records. Without `aes_key` only the header flag is set. `file_flags` sets the
+    per-file index flags; bodies are written as given.
     """
     blobs = contents or {}
     bodies = [blobs.get(path, b"") for path in paths]
@@ -49,7 +51,7 @@ def make_gdpc(
         du64(cursor)
         du64(len(body))
         dir_buf.extend(b"\x00" * 16)
-        du32(0)
+        du32((file_flags or {}).get(path, 0))
         cursor += len(body)
     file_data = b"".join(bodies)
     count = struct.pack("<I", len(paths))

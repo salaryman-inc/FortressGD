@@ -154,20 +154,42 @@ def find_gdsc(data: bytes) -> bytes | None:
     return data[idx:]
 
 
+class CompressedGdscError(ValueError):
+    """A compressed GDSC blob and no zstd decoder (Python < 3.14)."""
+
+
+def _zstd_decompress(frame: bytes) -> bytes:
+    try:
+        from compression import zstd  # type: ignore[import-not-found]  # Python 3.14+
+    except ImportError as exc:
+        raise CompressedGdscError("compressed GDSC needs Python 3.14+ (compression.zstd)") from exc
+    return zstd.decompress(frame)
+
+
 def gdsc_debug_name_counts(blob: bytes) -> tuple[int, int] | None:
     """
     (identifier_count, token_line_count) from a GDSC header.
 
-    None if this is not an uncompressed GDSC we can parse.
-    Compressed buffers (decompressed_size != 0) are treated as named
-    (counts returned as (1, 0)) so verify fails closed when nameless is on.
+    None if this is not a GDSC we can parse. A compressed buffer
+    (decompressed_size != 0, "Compressed binary tokens") is one ZSTD frame after
+    the 12-byte header: it is decoded with compression.zstd on Python 3.14+, and
+    raises CompressedGdscError otherwise so verify fails closed with a reason. A
+    frame that does not decode to decompressed_size raises ValueError.
     """
     if len(blob) < 12 or blob[:4] != GDSC_MAGIC:
         return None
     decompressed = struct.unpack_from("<I", blob, 8)[0]
     if decompressed != 0:
-        return (1, 0)
-    contents = blob[12:]
+        try:
+            contents = _zstd_decompress(blob[12:])
+        except CompressedGdscError:
+            raise
+        except Exception as exc:
+            raise ValueError("corrupt compressed GDSC") from exc
+        if len(contents) != decompressed:
+            raise ValueError("compressed GDSC size mismatch")
+    else:
+        contents = blob[12:]
     if len(contents) < 16:
         return None
     ident_count, _const_count, line_count, _token_count = struct.unpack_from(

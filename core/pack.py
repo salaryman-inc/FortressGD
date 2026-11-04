@@ -16,8 +16,9 @@ PACK_FORMAT_V3 = 3
 PACK_FORMAT_V4 = 4
 SUPPORTED_FORMATS = frozenset({PACK_FORMAT_V2, PACK_FORMAT_V3, PACK_FORMAT_V4})
 
-PACK_DIR_ENCRYPTED = 1 << 0
+PACK_DIR_ENCRYPTED = 1 << 0  # pack header flag
 PACK_REL_FILEBASE = 1 << 1
+PACK_FILE_ENCRYPTED = 1 << 0  # per-file index flag (same value, different field)
 PACK_FILE_REMOVAL = 1 << 1
 
 _MAX_FILES = 1_000_000

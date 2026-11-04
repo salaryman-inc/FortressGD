@@ -270,6 +270,8 @@ fortressgd verify build/game.pck
 
 `verify` then fails if packed `.gdc` still has debug name tables, or if the Ed25519 index signature is missing or invalid.
 
+With `nameless_bytecode = true`, set the preset's GDScript Export Mode to **Binary tokens** unless CI runs Python 3.14+: `verify` decodes "Compressed binary tokens" (ZSTD) only with Python 3.14's `compression.zstd`, and otherwise fails with that reason rather than passing unchecked. Encrypted `.gdc` bodies are decrypted with the project secret before the check.
+
 ---
 
 ## Configuration
