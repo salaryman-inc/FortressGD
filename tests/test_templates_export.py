@@ -322,5 +322,20 @@ class TemplatesExportCliTests(unittest.TestCase):
                     self.assertIn("pack signature", bad.stderr)
 
 
+    def test_export_without_export_path_fails_early(self) -> None:
+        for presets in (PRESETS.replace('export_path="build/game.x86_64"\n', ""),
+                        PRESETS.replace('export_path="build/game.x86_64"', 'export_path=""')):
+            with tempfile.TemporaryDirectory() as tmp:
+                root = self._project(tmp)
+                self._set_dialect(root, False)
+                (root / "export_presets.cfg").write_text(presets, encoding="utf-8")
+                proc = self._export_with_stub(root)
+                self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+                self.assertIn('export preset "Linux" has no export path', proc.stderr)
+                self.assertEqual((root / "export_presets.cfg").read_text(encoding="utf-8"), presets)
+                self.assertFalse((root / "godot-env.json").exists(), "stub godot must not run")
+                self.assertEqual(list(root.parent.glob("*.fortressgd.map.json")), [])
+
+
 if __name__ == "__main__":
     unittest.main()

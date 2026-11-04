@@ -303,6 +303,16 @@ def export_preset(
     original = presets_path.read_text(encoding="utf-8")
     presets = parse_export_presets(original)
     preset = find_preset(presets, preset_name)
+    if not str(preset.get("export_path") or "").strip():
+        # Without an output path Godot picks none, the source map would land outside
+        # the project, and there is no artifact to sign or verify. Fail before
+        # anything is touched.
+        raise UserError(
+            'export preset "{0}" has no export path; set Export Path in Project → Export'.format(
+                preset_name
+            ),
+            NEXT_EXPORT,
+        )
     platform = fgd_platform_for_preset(preset)
     pset = patchset_for_tag(godot_ver)
     cache = resolve_cache_dir_from_config(cfg)
