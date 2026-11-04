@@ -4,7 +4,7 @@ Phase 1 of FortressGD is **export hygiene**: keep source, work files, and plugin
 
 You do this with the **official Godot editor**. Custom export templates, Docker, and `fortressgd templates build` are **not required** for this workflow.
 
-## 1. Install into a Godot 4.6.2 / 4.7.x project
+## 1. Install into a Godot 4.6.2 / 4.7.2 project
 
 From a FortressGD checkout:
 

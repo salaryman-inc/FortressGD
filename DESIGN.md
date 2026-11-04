@@ -3,7 +3,7 @@
 Status: draft for implementation  
 License of the product: MIT  
 Audience: implementation agents and maintainers  
-Godot targets (initial): 4.6.2 and 4.7.x stable tags  
+Godot targets (initial): 4.6.2 and 4.7.2 stable tags (`4.7` / `4.7.x` are aliases for 4.7.2)  
 
 This document is the source of truth. If code and this spec disagree, change the code or update this spec in the same change. Do not invent features that are listed under Non-goals or Later.
 

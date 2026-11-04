@@ -16,6 +16,7 @@ from core.patches import patch_dir_for_tag, patch_files, patchset_id, require_se
 from core.leakscan import format_leaks, redact, scan_paths, secret_needles
 from core.paths import default_cache_dir, docker_dir, patches_root
 from core.secret import load_secret_hex, secret_bytes_from_hex
+from core.version import concrete_godot_tag  # noqa: F401  (re-exported)
 from generator.dialect import GENERATOR_VERSION, dialect_material, write_dialect_header
 
 KDF_NAME = "FGD-KDF-1"
@@ -138,13 +139,6 @@ def normalize_platform(platform: str) -> str:
         ),
         NEXT_TEMPLATES,
     )
-
-
-def concrete_godot_tag(version: str) -> str:
-    """Map toml/CLI godot values to a patches/<tag> folder name."""
-    if version in ("4.7.x", "4.7"):
-        return "4.7.2"
-    return version
 
 
 def patchset_for_tag(godot: str, patches_dir: Path | None = None) -> str:

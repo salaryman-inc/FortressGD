@@ -192,6 +192,24 @@ class CliTests(unittest.TestCase):
             self.assertIn("chmod 600", combined)
             self.assertNotIn(secret_path.read_text(encoding="ascii").strip(), combined)
 
+    def test_doctor_rejects_tag_without_patches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_godot_stub(root)
+            self.assertEqual(run_fortressgd("init", cwd=root).returncode, 0)
+            toml = root / ".fortressgd.toml"
+            toml.write_text(
+                toml.read_text(encoding="utf-8").replace('godot = "4.6.2"', 'godot = "4.7.3"'), encoding="utf-8"
+            )
+            doc = run_fortressgd("doctor", cwd=root)
+            self.assertEqual(doc.returncode, 1, doc.stdout)
+            self.assertIn("4.7.3", doc.stderr)
+            self.assertIn("4.6.2, 4.7.2", doc.stderr)
+            toml.write_text(
+                toml.read_text(encoding="utf-8").replace('godot = "4.7.3"', 'godot = "4.7.x"'), encoding="utf-8"
+            )
+            self.assertEqual(run_fortressgd("doctor", cwd=root).returncode, 0)
+
     def test_doctor_warns_if_plugin_differs_from_cli_package(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

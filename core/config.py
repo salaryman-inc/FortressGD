@@ -9,7 +9,7 @@ from typing import Any
 
 from core.errors import NEXT_DOCTOR, ConfigError, UserError
 from core.paths import example_toml_path, plugin_source_dir
-from core.version import SUPPORTED_GODOT
+from core.version import GODOT_TAG_ALIASES, SUPPORTED_GODOT, concrete_godot_tag
 
 # DESIGN.md §6. Kept in sync with plugin/addons/fortressgd/schema.json
 # (tests assert equality).
@@ -196,16 +196,26 @@ def load_path(path: Path) -> dict[str, Any]:
     return validate(parse_toml(text), source=str(path))
 
 
+def _patched_tags() -> list[str]:
+    """Tags with a patches/<tag>/series file (shared folders such as common/ have none)."""
+    from core.paths import patches_root
+
+    root = patches_root()
+    if not root.is_dir():
+        return list(SUPPORTED_GODOT)
+    return sorted(p.name for p in root.iterdir() if (p / "series").is_file())
+
+
 def godot_is_supported(version: str) -> bool:
-    if version == "4.6.2":
-        return True
-    if version == "4.7" or version.startswith("4.7."):
-        return True
-    return False
+    """Supported means a patch series exists for the resolved tag, so `doctor`
+    and `templates build` agree."""
+    return concrete_godot_tag(version) in _patched_tags()
 
 
 def supported_godot_message() -> str:
-    return ", ".join(SUPPORTED_GODOT)
+    aliases = " and ".join(sorted(GODOT_TAG_ALIASES))
+    targets = sorted(set(GODOT_TAG_ALIASES.values()))
+    return "{0} ({1} mean {2})".format(", ".join(_patched_tags()), aliases, ", ".join(targets))
 
 
 def looks_like_secret_blob(text: str) -> bool:

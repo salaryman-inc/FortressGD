@@ -2,6 +2,12 @@
 
 __version__ = "0.1.0"
 
-# Godot tags this CLI claims to support (DESIGN.md §4).
-# 4.7.x means any 4.7.* stable tag.
-SUPPORTED_GODOT = ("4.6.2", "4.7.x")
+# Godot tags this CLI supports: exactly the tags with a patches/<tag>/ folder
+# (DESIGN.md §4). "4.7" and "4.7.x" are aliases for 4.7.2.
+SUPPORTED_GODOT = ("4.6.2", "4.7.2")
+GODOT_TAG_ALIASES = {"4.7": "4.7.2", "4.7.x": "4.7.2"}
+
+
+def concrete_godot_tag(version: str) -> str:
+    """Map toml/CLI godot values to a patches/<tag> folder name."""
+    return GODOT_TAG_ALIASES.get(version, version)

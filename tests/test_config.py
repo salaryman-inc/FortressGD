@@ -61,6 +61,15 @@ class ConfigTests(unittest.TestCase):
         data = parse_toml("[a]\nx = 1\n[b]\nx = 2\n")
         self.assertEqual(data, {"a": {"x": 1}, "b": {"x": 2}})
 
+    def test_godot_is_supported_matches_patch_dirs(self) -> None:
+        from core.config import godot_is_supported, supported_godot_message
+
+        for version in ("4.6.2", "4.7", "4.7.x", "4.7.2"):
+            self.assertTrue(godot_is_supported(version), version)
+        for version in ("4.7.3", "4.6.1", "5.0", "common", "", "../4.6.2"):
+            self.assertFalse(godot_is_supported(version), version)
+        self.assertEqual(supported_godot_message(), "4.6.2, 4.7.2 (4.7 and 4.7.x mean 4.7.2)")
+
     def test_parser_matches_stdlib_tomllib_on_example(self) -> None:
         try:
             import tomllib

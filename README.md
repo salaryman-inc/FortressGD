@@ -6,7 +6,7 @@ Open-source **release toolchain** for Godot 4. Not a fork. Not DRM. Not anti-che
 
 Designers keep the official Godot editor. Custom **export templates** are built in Docker or CI from a pinned Godot tag plus a small patch quilt. Production exports refuse to ship source, and `fortressgd verify` fails CI if they did.
 
-Supported engine tags: **Godot 4.6.2** and **4.7.x** stable. See [`DESIGN.md`](DESIGN.md) §4.
+Supported engine tags: **Godot 4.6.2** and **4.7.2** stable (`4.7` and `4.7.x` in config mean 4.7.2). Other 4.7 patch releases are not supported until they have a patch folder. See [`DESIGN.md`](DESIGN.md) §4.
 
 Start with leak checks on the official editor — no Docker, no custom templates. Add derived-key encryption, pack dialect, and mangling when you are ready to ship a Release PCK.
 
@@ -87,7 +87,7 @@ A debugger can still dump decrypted resources from a running client. That is acc
 ## Requirements
 
 - Python **3.9+**
-- Godot **4.6.2** or **4.7.x** (official editor on `PATH`, or `GODOT` / `FORTRESSGD_GODOT`)
+- Godot **4.6.2** or **4.7.2** (official editor on `PATH`, or `GODOT` / `FORTRESSGD_GODOT`)
 - Docker, for template builds
 - A 32-byte secret, 64 hex chars, **not in git** (`.fortressgd.secret` or `FORTRESSGD_SECRET`)
 
@@ -324,7 +324,7 @@ cache_dir = "~/.cache/fortressgd"
 | Key | Meaning |
 |---|---|
 | `schema` | Config version. Must be `1`. |
-| `godot` | Engine tag: `4.6.2` or `4.7.x`. |
+| `godot` | Engine tag: `4.6.2` or `4.7.2` (`4.7` / `4.7.x` are aliases for 4.7.2). `doctor` rejects tags without a patch folder. |
 | `production.dialect` | Per-secret pack magic + index layout. |
 | `production.mangle_scripts` | Rename identifiers and strip debug statements. |
 | `production.nameless_bytecode` | Omit stock `.gdc` debug name tables. |
