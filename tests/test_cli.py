@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import stat
@@ -155,6 +156,41 @@ class CliTests(unittest.TestCase):
             self.assertIn("error:", combined)
             self.assertIn("Run:", combined)
             self.assertRegex(combined, r"Run:\s*fortressgd\s+\S+")
+
+    def test_doctor_fails_on_weak_or_placeholder_secret(self) -> None:
+        for placeholder in ("00" * 32, "deadbeef" * 8, "0123456789abcdef" * 4, "ab" * 16 + "cd" * 16):
+            with self.subTest(placeholder=placeholder[:8]):
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    write_godot_stub(root)
+                    self.assertEqual(run_fortressgd("init", cwd=root).returncode, 0)
+                    env = base_env()
+                    env[ENV_NAME] = placeholder
+                    doc = run_fortressgd("doctor", cwd=root, env=env)
+                    self.assertEqual(doc.returncode, 1, doc.stdout)
+                    combined = doc.stdout + doc.stderr
+                    self.assertIn("error:", combined)
+                    self.assertIn("docs/secrets.md", combined)
+                    self.assertIn("secret generate --force", combined)
+                    self.assertNotIn(placeholder, combined)
+
+    def test_doctor_fails_on_group_or_world_readable_secret_file(self) -> None:
+        if os.name != "posix":
+            self.skipTest("POSIX permissions only")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_godot_stub(root)
+            self.assertEqual(run_fortressgd("init", cwd=root).returncode, 0)
+            self.assertEqual(run_fortressgd("secret", "generate", cwd=root).returncode, 0)
+            secret_path = root / ".fortressgd.secret"
+            self.assertEqual(run_fortressgd("doctor", cwd=root).returncode, 0)
+            secret_path.chmod(0o644)
+            doc = run_fortressgd("doctor", cwd=root)
+            self.assertEqual(doc.returncode, 1, doc.stdout)
+            combined = doc.stdout + doc.stderr
+            self.assertIn("0644", combined)
+            self.assertIn("chmod 600", combined)
+            self.assertNotIn(secret_path.read_text(encoding="ascii").strip(), combined)
 
     def test_doctor_warns_if_plugin_differs_from_cli_package(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

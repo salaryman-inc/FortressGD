@@ -14,6 +14,7 @@ from core.secret import (
     SECRET_HEX_LEN,
     generate_secret_hex,
     secret_status,
+    secret_weakness,
     write_secret_file,
 )
 from core.errors import UserError
@@ -53,6 +54,12 @@ class SecretHelperTests(unittest.TestCase):
             write_secret_file(path, second, overwrite=True)
             self.assertEqual(path.read_text(encoding="ascii").strip(), second)
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+
+    def test_secret_weakness_flags_placeholders_not_random(self) -> None:
+        for weak in ("00" * 32, "ff" * 32, "deadbeef" * 8, "0123456789abcdef" * 4, "0001" * 16):
+            self.assertIsNotNone(secret_weakness(weak), weak[:8])
+        for _ in range(200):
+            self.assertIsNone(secret_weakness(generate_secret_hex()))
 
     def test_status_present_file_and_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

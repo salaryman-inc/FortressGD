@@ -7,9 +7,9 @@ import shutil
 from pathlib import Path
 
 from core.config import default_toml_text, godot_is_supported, load_path, supported_godot_message
-from core.errors import NEXT_DOCTOR, NEXT_INIT, NEXT_SECRET, UserError
+from core.errors import NEXT_DOCTOR, NEXT_INIT, NEXT_SECRET, NEXT_SECRET_FORCE, UserError
 from core.paths import plugin_source_dir
-from core.secret import secret_status
+from core.secret import load_secret_hex, secret_file_mode_problem, secret_status, secret_weakness
 from core.version import __version__
 
 GITIGNORE_ENTRIES = (".fortressgd.secret",)
@@ -164,6 +164,8 @@ def doctor_project(
             "warning: installed plugin files differ from CLI package version {0}\n"
             "  {1}\nRun: {2}".format(__version__, "; ".join(pdetails), NEXT_INIT)
         )
+    if secret["state"] == "present":
+        _check_secret_hygiene(secret, secret_file=secret_file, environ=environ, cwd=root)
     if secret["state"] == "missing":
         warnings.append(
             "warning: secret missing\nRun: {0}".format(NEXT_SECRET)
@@ -177,6 +179,29 @@ def doctor_project(
         "godot": version,
         "warnings": warnings,
     }
+
+
+def _check_secret_hygiene(
+    secret: dict[str, str],
+    *,
+    secret_file: str | None,
+    environ: dict[str, str] | None,
+    cwd: Path,
+) -> None:
+    """Fail doctor on a world-readable secret file or a weak / placeholder secret."""
+    if secret["source"] == "file":
+        problem = secret_file_mode_problem(Path(secret["path"]))
+        if problem:
+            raise UserError(problem, "chmod 600 {0}".format(secret["path"]))
+    hex_secret = load_secret_hex(secret_file=secret_file, environ=environ, cwd=cwd)
+    weakness = secret_weakness(hex_secret)
+    if weakness:
+        raise UserError(
+            "{0}; generate a new one and follow the rotation runbook in docs/secrets.md".format(
+                weakness
+            ),
+            NEXT_SECRET_FORCE,
+        )
 
 
 def format_doctor_ok(result: dict[str, object]) -> str:

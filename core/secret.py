@@ -134,5 +134,42 @@ def load_secret_hex(
     raise UserError("secret missing", NEXT_SECRET)
 
 
+# A CSPRNG secret of 32 bytes has ~30 distinct byte values on average; the chance
+# of fewer than this many is far below 2**-100. Fewer means a hand-typed or
+# placeholder value.
+MIN_DISTINCT_BYTES = 16
+# A value made of one block of up to this many bytes, repeated, is a placeholder
+# such as 00…, ff…, deadbeef…, or 0123456789abcdef….
+MAX_PLACEHOLDER_PERIOD = 8
+
+
+def secret_weakness(hex_secret: str) -> str | None:
+    """
+    Return why a syntactically valid secret looks weak or like a placeholder,
+    or None. The reason never includes the secret.
+    """
+    raw = secret_bytes_from_hex(hex_secret)
+    for period in range(1, MAX_PLACEHOLDER_PERIOD + 1):
+        block = raw[:period]
+        if block * (len(raw) // period) == raw:
+            return "secret is a repeating {0}-byte pattern (placeholder value)".format(period)
+    distinct = len(set(raw))
+    if distinct < MIN_DISTINCT_BYTES:
+        return "secret has only {0} distinct byte values (not CSPRNG output)".format(distinct)
+    return None
+
+
+def secret_file_mode_problem(path: Path) -> str | None:
+    """Return why a secret file's permissions are too open, or None. POSIX only."""
+    if os.name != "posix":
+        return None
+    mode = stat.S_IMODE(Path(path).stat().st_mode)
+    if mode & (stat.S_IRWXG | stat.S_IRWXO):
+        return "secret file {0} has mode {1:04o}; group or others can access it (want 0600)".format(
+            path, mode
+        )
+    return None
+
+
 def secret_bytes_from_hex(hex_secret: str) -> bytes:
     return bytes.fromhex(validate_secret_hex(hex_secret))

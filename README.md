@@ -144,7 +144,7 @@ fortressgd export --preset Linux
 fortressgd verify path/to/your_game.pck
 ```
 
-Rotating `FORTRESSGD_SECRET` requires rebuilding templates. Old packs will not load. That is intended.
+Rotating `FORTRESSGD_SECRET` requires rebuilding templates. Old packs will not load. That is intended. See the rotation runbook in [`docs/secrets.md`](docs/secrets.md).
 
 ---
 
@@ -321,7 +321,7 @@ cache_dir = "~/.cache/fortressgd"
 
 Production exports also force-exclude GDScript **text** (bytecode only) and `addons/fortressgd/**` unless the same pattern is in `include`.
 
-Secret sources, in order: `--secret-file` (default `.fortressgd.secret`), then `FORTRESSGD_SECRET`. Never print the secret; `secret status` only reports present/missing.
+Secret sources, in order: `--secret-file` (default `.fortressgd.secret`), then `FORTRESSGD_SECRET`. Never print the secret; `secret status` only reports present/missing. For managed stores (KMS, CI secrets) and rotation, see [`docs/secrets.md`](docs/secrets.md).
 
 ---
 
@@ -342,7 +342,7 @@ Every command accepts `--secret-file PATH`. `--platform` is repeatable (`--platf
 | Command | What it does |
 |---|---|
 | `init` | Write `.fortressgd.toml` if missing, install `addons/fortressgd`, suggest/append `.gitignore` for `.fortressgd.secret`. |
-| `doctor` | Validate toml, supported Godot tag, plugin files vs CLI package, secret presence. Plugin drift is a warning, not a failure. |
+| `doctor` | Validate toml, supported Godot tag, plugin files vs CLI package, secret presence and hygiene. Fails on a weak or placeholder secret, or a secret file readable by group or others. A missing secret and plugin drift are warnings, not failures. |
 | `secret generate [--force]` | Write 32 CSPRNG bytes as 64 hex chars, mode `0600`. Refuses to replace an existing secret without `--force`; a new secret cannot load packs or use templates built with the old one. |
 | `secret status` | `present` / `missing`; never prints the secret. |
 | `templates build` | Docker-build `template_release` for `(godot, secret_hash, platform)`. |
@@ -455,6 +455,7 @@ Tests: `python3 tests/run.py`.
 
 - [`docs/getting-started.md`](docs/getting-started.md) — leak checks with the official editor
 - [`docs/ci.md`](docs/ci.md) — template factory, Docker, unpacker fixtures
+- [`docs/secrets.md`](docs/secrets.md) — where to keep the secret, what `doctor` checks, rotation runbook
 - [`docs/agent-rules.md`](docs/agent-rules.md) — Callables vs string `call`/`rpc`, no secrets under `res://`
 - [`DESIGN.md`](DESIGN.md) — normative spec
 - [`THREAT_MODEL.md`](THREAT_MODEL.md) — in-scope vs out-of-scope attacks
