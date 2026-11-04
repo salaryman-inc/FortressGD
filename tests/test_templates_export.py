@@ -334,7 +334,8 @@ class TemplatesExportCliTests(unittest.TestCase):
                 self.assertIn('export preset "Linux" has no export path', proc.stderr)
                 self.assertEqual((root / "export_presets.cfg").read_text(encoding="utf-8"), presets)
                 self.assertFalse((root / "godot-env.json").exists(), "stub godot must not run")
-                self.assertEqual(list(root.parent.glob("*.fortressgd.map.json")), [])
+                # The old behavior wrote <project-dir>.fortressgd.map.json beside the project.
+                self.assertFalse(Path(str(root.resolve()) + ".fortressgd.map.json").exists())
 
 
 if __name__ == "__main__":
