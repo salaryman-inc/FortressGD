@@ -180,6 +180,52 @@ class MangleTransformTests(unittest.TestCase):
         _out, mapping = mangle_scripts({"a.gd": src}, secret_hash=self.HASH, rename=True)
         self.assertIn("scale_x", mapping)
 
+    def test_string_member_references_block_rename(self) -> None:
+        src = (
+            "extends Node\nsignal my_signal\nvar health = 3\nfunc go():\n"
+            '    emit_signal("my_signal")\n'
+            '    connect("my_signal", Callable(self, "go"))\n'
+            '    var h = get("health")\n'
+            '    if has_method("go"): pass\n'
+        )
+        out, mapping = mangle_scripts({"s.gd": src}, secret_hash="z", rename=True)
+        for name in ("my_signal", "go", "health"):
+            self.assertNotIn(name, mapping)
+        # Only the local `h` is renamed.
+        self.assertEqual(set(mapping), {"h"})
+        for literal in ('"my_signal"', '"go"', '"health"', "signal my_signal", "func go", "var health"):
+            self.assertIn(literal, out["s.gd"])
+
+    def test_stringname_and_nodepath_prefixes_block_rename(self) -> None:
+        src = 'extends Node\nvar hp = 1\nfunc go():\n    pass\nfunc f():\n    var c = &"go"\n    var p = ^".:hp"\n'
+        _out, mapping = mangle_scripts({"s.gd": src}, secret_hash=self.HASH, rename=True)
+        self.assertNotIn("go", mapping)
+        self.assertNotIn("hp", mapping)
+
+    def test_property_path_segments_block_rename(self) -> None:
+        src = 'extends Node2D\nvar speed = Vector2.ZERO\nfunc f():\n    create_tween().tween_property(self, "speed:x", 1.0, 0.5)\n'
+        _out, mapping = mangle_scripts({"s.gd": src}, secret_hash=self.HASH, rename=True)
+        self.assertNotIn("speed", mapping)
+
+    def test_keep_call_target_is_not_renamed(self) -> None:
+        src = 'extends Node\nfunc my_attack():\n    pass\nfunc f():\n    ## fortressgd:keep\n    call("my_attack")\n'
+        out, mapping = mangle_scripts({"s.gd": src}, secret_hash=self.HASH, rename=True)
+        self.assertNotIn("my_attack", mapping)
+        self.assertIn("func my_attack", out["s.gd"])
+
+    def test_non_identifier_strings_do_not_block(self) -> None:
+        src = 'extends Node\nvar hello_world = 1\nfunc f():\n    print("hello world")\n    print("a-b", hello_world)\n'
+        _out, mapping = mangle_scripts({"s.gd": src}, secret_hash=self.HASH, rename=True)
+        self.assertIn("hello_world", mapping)
+
+    def test_string_in_other_file_blocks_rename(self) -> None:
+        files = {
+            "a.gd": "extends Node\nfunc on_hit():\n    pass\n",
+            "b.gd": 'extends Node\nfunc wire(n):\n    n.connect("hit", Callable(n, "on_hit"))\n',
+        }
+        _out, mapping = mangle_scripts(files, secret_hash=self.HASH, rename=True)
+        self.assertNotIn("on_hit", mapping)
+
     def test_reserved_set_keeps_lifecycle(self) -> None:
         names = reserved_names()
         self.assertIn("_ready", names)
@@ -419,6 +465,20 @@ def _gd_func(source: str, name: str) -> str:
 
 
 class MangleStaticChecks(unittest.TestCase):
+    def test_plugin_excludes_string_identifier_names(self) -> None:
+        gd = _mangle_gd()
+        body = _gd_func_body(gd, "collect_string_identifier_names")
+        self.assertIn('begins_with("&")', body)
+        self.assertIn('begins_with("^")', body)
+        self.assertIn('.replace(":", "/").replace(".", "/").split("/")', body)
+        self.assertIn("collect_string_identifier_names(", _gd_func_body(gd, "apply_project"))
+
+    def test_agent_rules_mention_string_literal_and_runtime_names(self) -> None:
+        text = (ROOT / "docs" / "agent-rules.md").read_text(encoding="utf-8")
+        self.assertIn("string literals", text)
+        self.assertIn("built at runtime", text)
+        self.assertIn("## fortressgd:keep", text)
+
     def test_plugin_excludes_foreign_member_names(self) -> None:
         gd = _mangle_gd()
         body = _gd_func_body(gd, "collect_foreign_member_names")

@@ -212,6 +212,38 @@ def collect_foreign_member_names(source: str) -> set[str]:
     return names
 
 
+_IDENT_FULL = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_STRING_PATH_SEP = re.compile(r"[:/.]")
+_QUOTES = ('"""', "'''", '"', "'")
+
+
+def collect_string_identifier_names(source: str) -> set[str]:
+    """Identifier-shaped pieces of every string literal in the source.
+
+    Covers string-based reflection such as ``emit_signal("hit")``, ``get("hp")``,
+    ``Callable(self, "go")``, ``&"go"``, ``^".:hp"`` and ``"speed:x"``. Content is
+    split on ``:``, ``/`` and ``.``; each piece that is a whole identifier is kept
+    out of the rename map. Over-exclusion is accepted.
+    """
+    names: set[str] = set()
+    for tok in tokenize(source):
+        if tok.kind != "string":
+            continue
+        text = tok.value
+        if text.startswith("&") or text.startswith("^"):
+            text = text[1:]
+        for quote in _QUOTES:
+            if text.startswith(quote):
+                text = text[len(quote) :]
+                if text.endswith(quote):
+                    text = text[: len(text) - len(quote)]
+                break
+        for piece in _STRING_PATH_SEP.split(text):
+            if _IDENT_FULL.fullmatch(piece):
+                names.add(piece)
+    return names
+
+
 def rewrite_source(source: str, mapping: dict[str, str], *, strip: bool = True) -> str:
     tokens = tokenize(source)
     if strip:
@@ -252,6 +284,7 @@ def mangle_scripts(
     # may reference in a way the rewrite cannot follow.
     for source in files.values():
         user -= collect_foreign_member_names(source)
+        user -= collect_string_identifier_names(source)
 
     mapping: dict[str, str] = {}
     used: set[str] = set(reserved_names())

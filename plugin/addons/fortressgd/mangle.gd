@@ -118,6 +118,7 @@ static func apply_project(secrethash: String) -> Dictionary:
 	var excluded := {}
 	for path in files.keys():
 		excluded.merge(collect_foreign_member_names(str(files[path])))
+		excluded.merge(collect_string_identifier_names(str(files[path])))
 	for name in excluded.keys():
 		user.erase(name)
 	var mapping := {}
@@ -250,6 +251,39 @@ static func collect_foreign_member_names(source: String) -> Dictionary:
 			continue
 		names[str(tok["value"])] = true
 	return names
+
+
+## Identifier-shaped pieces of every string literal (split on `:`, `/`, `.`), so
+## string-based reflection keeps working. Dictionary used as a set. Mirrors core/mangle.py.
+static func collect_string_identifier_names(source: String) -> Dictionary:
+	var names := {}
+	for tok in tokenize(source):
+		var t: Dictionary = tok
+		if str(t["kind"]) != KIND_STRING:
+			continue
+		var text := str(t["value"])
+		if text.begins_with("&") or text.begins_with("^"):
+			text = text.substr(1)
+		for q in ["\"\"\"", "'''", "\"", "'"]:
+			var quote: String = q
+			if text.begins_with(quote):
+				text = text.substr(quote.length())
+				if text.ends_with(quote):
+					text = text.substr(0, text.length() - quote.length())
+				break
+		for piece in text.replace(":", "/").replace(".", "/").split("/"):
+			if _is_identifier(piece):
+				names[piece] = true
+	return names
+
+
+static func _is_identifier(text: String) -> bool:
+	if text == "" or not _is_ident_start(text[0]):
+		return false
+	for c in range(1, text.length()):
+		if not _is_ident_cont(text[c]):
+			return false
+	return true
 
 
 static func rewrite_source(source: String, mapping: Dictionary, strip: bool) -> String:

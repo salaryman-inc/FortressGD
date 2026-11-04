@@ -28,6 +28,16 @@ Unmarked `call("…")` / `rpc("…")` / `set("…")` **fail the export** with fi
 
 Never put the project secret, `aes_key`, API tokens, or other credentials in anything Godot packs (`res://`, scenes, scripts, `export_presets.cfg`). The 32-byte FortressGD secret lives in `.fortressgd.secret` (gitignored) or `FORTRESSGD_SECRET`. Source maps (`*.fortressgd.map.json`) stay next to the export artifact and are not packed.
 
-## No string `set` / `get` for user properties
+## Prefer direct access over string `set` / `get`
 
-Do not write `set("prop", value)` or `get("prop")` for properties you declared. Those strings are not renamed. Assign the property, use a setter method as a Callable, or mark a required string usage with `## fortressgd:keep`.
+Prefer assigning the property, or a setter method as a Callable, over `set("prop", value)` / `get("prop")`. Unmarked `set("…")` still fails the export.
+
+Member names written as **string literals** anywhere in the project's scripts are left unmangled automatically, so `emit_signal("hit")`, `get("hp")`, `has_method("go")`, `Callable(self, "go")`, `&"go"`, `^".:hp"` and `"speed:x"` keep working. The mangler keeps every identifier-shaped piece of a string (split on `:`, `/` and `.`) out of the rename map.
+
+Names **built at runtime** cannot be seen: `call("on_" + event)` or `get(prefix + "_hp")` still break after mangling. Mark the declaration of each such member with `## fortressgd:keep` so it is not renamed:
+
+```gdscript
+## fortressgd:keep
+func on_jump() -> void:
+	pass
+```
