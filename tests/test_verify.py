@@ -126,6 +126,55 @@ class VerifyCliTests(unittest.TestCase):
                 self.assertIn(rel, proc.stderr)
                 self.assertIn("next to the artifact", proc.stderr)
 
+    def test_shader_with_comments_exits_2(self) -> None:
+        commented = b"shader_type canvas_item;\n// tint from the boss fight\nvoid fragment() { COLOR.r = 1.0; }\n"
+        clean = b'shader_type canvas_item;\n#include "res://lib/noise.gdshaderinc"\nvoid fragment() { COLOR.r = 1.0 / 2.0; }\n'
+        block = b"float n(vec2 p) { return 0.0; } /* TODO: better noise */\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ok = root / "ok.pck"
+            ok.write_bytes(make_gdpc(["main.tscn", "fx/tint.gdshader"], contents={"fx/tint.gdshader": clean}))
+            self.assertEqual(run_fortressgd("verify", str(ok), cwd=root).returncode, 0)
+            for name, path, body in (("line", "fx/tint.gdshader", commented), ("block", "lib/noise.gdshaderinc", block)):
+                with self.subTest(name):
+                    pck = root / (name + ".pck")
+                    pck.write_bytes(make_gdpc(["main.tscn", path], contents={path: body}))
+                    proc = run_fortressgd("verify", str(pck), cwd=root)
+                    self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+                    self.assertIn(path, proc.stderr)
+                    self.assertIn("shader-source: comments", proc.stderr)
+
+    def test_shader_comment_check_respects_include(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_godot_stub(root)
+            text = default_toml_text().replace("dialect = true", "dialect = false")
+            text = text.replace("include = []", 'include = ["fx/*.gdshader"]')
+            (root / ".fortressgd.toml").write_text(text, encoding="utf-8")
+            pck = root / "game.pck"
+            pck.write_bytes(make_gdpc(["fx/tint.gdshader"], contents={"fx/tint.gdshader": b"// ok\n"}))
+            self.assertEqual(run_fortressgd("verify", str(pck), cwd=root).returncode, 0)
+
+    def test_encrypted_shader_body_is_inspected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            secret = self._derived_key_project(root)
+            key = dialect_key_for_secret(secret, "4.6.2")
+            body = encrypt_fae_directory(b"// secret technique\nshader_type spatial;\n", key, bytes(16))
+            pck = root / "game.pck"
+            pck.write_bytes(make_gdpc(
+                ["main.tscn", "fx/a.gdshader"], contents={"fx/a.gdshader": body},
+                file_flags={"fx/a.gdshader": PACK_FILE_ENCRYPTED},
+            ))
+            self.assertNotIn(b"secret technique", pck.read_bytes())
+            proc = run_fortressgd("verify", str(pck), cwd=root)
+            self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+            self.assertIn("fx/a.gdshader", proc.stderr)
+            (root / ".fortressgd.secret").unlink()
+            no_key = run_fortressgd("verify", str(pck), cwd=root)
+            self.assertEqual(no_key.returncode, 2, no_key.stdout + no_key.stderr)
+            self.assertIn("project secret", no_key.stderr)
+
     def test_missing_and_unreadable_exit_1(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

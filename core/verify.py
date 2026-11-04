@@ -8,7 +8,15 @@ from pathlib import Path
 from typing import Sequence
 
 from core.errors import NEXT_DOCTOR, NEXT_SECRET, NEXT_VERIFY, VerifyError
-from core.filters import Leak, find_leaks, sidecar_pdb_leaks
+from core.filters import (
+    SHADER_MARKER,
+    Leak,
+    find_leaks,
+    glob_match,
+    is_shader_path,
+    shader_has_comments,
+    sidecar_pdb_leaks,
+)
 from core.gdc import CompressedGdscError, has_debug_name_tables
 from core.pack import (
     PACK_DIR_ENCRYPTED,
@@ -108,6 +116,8 @@ def verify_artifact(
         packed = [item.path for item in listing.files]
 
     leaks = find_leaks(packed, include=include, exclude=exclude) + sidecar_pdb_leaks(artifact)
+    body_key = dialect_key_for_secret(secret, godot_tag) if secret is not None and godot_tag else None
+    leaks += _shader_source_leaks(data, listing, include, body_key)
     result = VerifyResult(
         artifact=artifact,
         paths=packed,
@@ -119,7 +129,6 @@ def verify_artifact(
         return result
 
     if nameless_bytecode:
-        body_key = dialect_key_for_secret(secret, godot_tag) if secret is not None and godot_tag else None
         named = _named_gdc_paths(data, listing, body_key)
         if named:
             lines = ["debug name tables in packed .gdc (nameless_bytecode) in {0}".format(artifact.name)]
@@ -188,6 +197,42 @@ def read_stock_listing(
         aes_key=dialect_key_for_secret(secret, godot_tag),
         source=source,
     )
+
+
+def _packed_body(data: bytes, listing: PackListing, item, aes_key: bytes | None, purpose: str) -> bytes:
+    """A packed file's bytes, decrypted when its PACK_FILE_ENCRYPTED flag is set."""
+    blob = listing.blob(data, item)
+    if not item.flags & PACK_FILE_ENCRYPTED:
+        return blob
+    if aes_key is None:
+        raise VerifyError(
+            "cannot inspect encrypted {0} without the project secret "
+            "(.fortressgd.secret or FORTRESSGD_SECRET)".format(purpose),
+            NEXT_SECRET,
+        )
+    try:
+        return decrypt_fae_blob(blob, aes_key)
+    except PackError as exc:
+        raise VerifyError("cannot decrypt {0}: {1}".format(item.path, exc), NEXT_DOCTOR) from exc
+
+
+def _shader_source_leaks(
+    data: bytes, listing: PackListing, include: Sequence[str] | None, aes_key: bytes | None
+) -> list[Leak]:
+    """Packed shaders that still carry comments. Godot ships shader text verbatim;
+    comments and author notes are the part that leaks intent. [filters].include
+    exempts a path."""
+    include_list = [p for p in (include or ()) if p]
+    leaks: list[Leak] = []
+    for item in listing.files:
+        if not is_shader_path(item.path):
+            continue
+        if any(glob_match(item.path, pattern) for pattern in include_list):
+            continue
+        body = _packed_body(data, listing, item, aes_key, "shader for the shader-source check")
+        if shader_has_comments(body.decode("utf-8", errors="replace")):
+            leaks.append(Leak(path=item.path, pattern=SHADER_MARKER))
+    return leaks
 
 
 def _named_gdc_paths(data: bytes, listing: PackListing, aes_key: bytes | None) -> list[str]:
@@ -292,7 +337,7 @@ def format_verify_ok(result: VerifyResult) -> str:
 
 
 def format_verify_leaks(result: VerifyResult) -> VerifyError:
-    lines = ["leaked excluded path(s) in {0}".format(result.artifact.name)]
+    lines = ["leaked excluded path(s) or shader source in {0}".format(result.artifact.name)]
     for leak in result.leaks:
         lines.append("  {0} ({1})".format(leak.path, leak.pattern))
     return VerifyError("\n".join(lines), NEXT_DOCTOR)

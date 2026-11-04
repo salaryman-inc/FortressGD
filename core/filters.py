@@ -91,6 +91,36 @@ def effective_exclude_patterns(exclude: Sequence[str] | None = None) -> list[str
 
 
 DOTNET_MARKER = "*.pdb next to the artifact"
+SHADER_SUFFIXES = (".gdshader", ".gdshaderinc")
+SHADER_MARKER = "shader-source: comments"
+
+
+def shader_has_comments(text: str) -> bool:
+    """True if Godot shader text has a // or /* comment outside quoted text.
+
+    The shader language has no string literals, but ``#include "res://x.gdshaderinc"``
+    contains ``//`` inside quotes, so quoted spans are skipped.
+    """
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == '"':
+            end = text.find('"', i + 1)
+            newline = text.find("\n", i + 1)
+            if end == -1 or (newline != -1 and newline < end):
+                i = newline if newline != -1 else n
+                continue
+            i = end + 1
+            continue
+        if ch == "/" and i + 1 < n and text[i + 1] in "/*":
+            return True
+        i += 1
+    return False
+
+
+def is_shader_path(path: str) -> bool:
+    return normalize_pack_path(path).lower().endswith(SHADER_SUFFIXES)
 
 
 def sidecar_pdb_leaks(artifact) -> list[Leak]:

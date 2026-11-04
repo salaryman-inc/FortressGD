@@ -17,6 +17,7 @@ Start with leak checks on the official editor — no Docker, no custom templates
 **Export hygiene**
 
 - Production presets skip GDScript **text**, C# source files, .NET `.pdb` symbols, DCC work files, plugin internals, and source maps unless you allowlist a path
+- **Shaders:** Godot ships `.gdshader` / `.gdshaderinc` as plain text. `verify` fails if a packed shader still contains `//` or `/* */` comments; strip them before release, or list the path in `[filters].include` to accept it. FortressGD does not minify shaders yet
 - **C# caveat:** a .NET game still ships its compiled assembly, which decompiles to near-original C#. FortressGD does not obfuscate it; `doctor` and `export` warn on .NET projects (see [`THREAT_MODEL.md`](THREAT_MODEL.md))
 - Official-editor workflow: add the `fortressgd_production` feature tag and export as usual
 - `fortressgd verify` lists packed paths and fails CI if excluded files leaked
@@ -365,7 +366,7 @@ Every command accepts `--secret-file PATH`. `--platform` is repeatable (`--platf
 | `templates build` | Docker-build `template_release` for `(godot, secret_hash, platform)`. |
 | `templates list` | Names of cached templates. |
 | `export` | Production export with derived AES key (and dialect/mangle/sign when enabled), then `verify` when `verify_on_export` is true. |
-| `verify` | List packed paths; fail on leaked excludes, leftover debug tables, or bad signatures. |
+| `verify` | List packed paths; fail on leaked excludes, shipped `.pdb` files, shaders that still contain comments, leftover debug tables, or bad signatures. |
 
 Exit codes: `0` ok, `1` config/user error, `2` verify/policy failure, `3` tool or engine build failure. Errors print `error: …` and `Run: <next command>`.
 
