@@ -13,6 +13,7 @@ from typing import Any
 from core.errors import NEXT_TEMPLATES, ToolError, UserError
 from core.kdf import secret_hash
 from core.patches import patch_dir_for_tag, patch_files, patchset_id, require_series
+from core.leakscan import format_leaks, redact, scan_paths, secret_needles
 from core.paths import default_cache_dir, docker_dir, patches_root
 from core.secret import load_secret_hex, secret_bytes_from_hex
 from generator.dialect import GENERATOR_VERSION, dialect_material, write_dialect_header
@@ -226,6 +227,7 @@ def build_templates(
     pset = patchset_id(files)
 
     _salt, _masks, _shards, did = dialect_material(secret, tag)
+    needles = secret_needles(secret, tag)
 
     dest_root = templates_cache_dir(cache_dir)
     dest_root.mkdir(parents=True, exist_ok=True)
@@ -281,7 +283,7 @@ def build_templates(
                 text=True,
             )
             if run.returncode != 0:
-                detail = (run.stderr or run.stdout or "").strip()
+                detail = redact((run.stderr or run.stdout or "").strip(), needles)
                 raise ToolError(
                     "template build failed for {0}: {1}".format(platform, detail),
                     templates_build_command(tag, platform),
@@ -304,6 +306,13 @@ def build_templates(
             if not src_bin.is_file():
                 raise ToolError(
                     "template build did not emit {0}".format(name),
+                    templates_build_command(tag, platform),
+                )
+            leaks = scan_paths([src_bin, src_man], needles)
+            if leaks:
+                raise ToolError(
+                    "refusing to cache template output that contains secret material:\n"
+                    + format_leaks(leaks),
                     templates_build_command(tag, platform),
                 )
             shutil.copy2(src_bin, dest_bin)

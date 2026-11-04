@@ -73,6 +73,26 @@ class DockerStaticTests(unittest.TestCase):
         self.assertIn("secret_hash", action)
         self.assertIn("patchset", action)
 
+    def test_action_masks_first_and_scans_outputs_last(self) -> None:
+        action = (ROOT / "actions" / "build-templates" / "action.yml").read_text(encoding="utf-8")
+        steps = action.split("\n    - name: ")[1:]
+        self.assertTrue(steps[0].startswith("Mask"), steps[0][:40])
+        self.assertIn("::add-mask::", steps[0])
+        self.assertIn("secret_needles", steps[0])
+        build = next(s for s in steps if s.startswith("Build templates"))
+        self.assertIn('tee "$RUNNER_TEMP/fortressgd-templates-build.log"', build)
+        last = steps[-1]
+        self.assertTrue(last.startswith("Scan outputs"), last[:40])
+        self.assertIn("if: always()", last)
+        self.assertIn("python3 -m core.leakscan", last)
+        self.assertIn("--delete", last)
+        self.assertIn(".cache/fortressgd/templates", last)
+        self.assertIn("fortressgd-templates-build.log", last)
+        # The secret comes in as an input and only reaches steps through env, never inline.
+        for step in steps:
+            run = step.split("run: |", 1)[-1]
+            self.assertNotIn("inputs.secret", run)
+
     def test_shipped_entrypoint_skip_scons_applies_series_and_manifest(self) -> None:
         """Drive docker/entrypoint.sh (the shipped template-build entry) far enough
         to clone/apply/install header and emit §7 name + manifest. Skip-scons avoids

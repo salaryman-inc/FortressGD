@@ -14,6 +14,21 @@ Cache key: `fgd-templates-{godot}-{patchset}-{secret_hash}-{platform}` (the Acti
 
 The secret is an Actions secret passed at **run** time. It is not a Docker build-arg and must not land in image layers.
 
+### Keeping the secret out of logs and caches
+
+On a public repository, Actions logs are world-readable and `actions/cache` entries are readable by any workflow in the repo. One leaked log line gives away the secret, and with it every protected build.
+
+- Pass the secret only from an encrypted **Actions secret** (`${{ secrets.FORTRESSGD_SECRET }}`). Never from a repository or organization variable (`vars.*`), an `env:` value written in the workflow file, or a matrix value: those appear in the run metadata.
+- The Action's first step registers `::add-mask::` for the secret, the derived AES key, and the pack-signing seed (hex, both cases), so an accidental print is redacted. Masking is defense in depth, not the control. `secret_hash` is not masked: it is a public identifier that appears in template filenames and in the cache key.
+- The build step's output is captured with `tee`. A final `always()` step runs `python3 -m core.leakscan` over the template cache directory, the build log, and any extra `scan_paths` you pass (for example a source-map directory). It looks for the secret, the derived AES key, and the signing seed as raw bytes, hex, and UTF-16 hex. On a hit it deletes the file, prints only the file name, the kind of material, and the offset, and fails the job. A failed job does not save the `actions/cache` entry.
+- `fortressgd templates build` runs the same scan on each template and manifest before it writes them to the cache, so a local Docker build has the same guard. It also redacts secret material from a failed container's output before printing it.
+
+You can run the scan on anything yourself:
+
+```bash
+FORTRESSGD_SECRET="$SECRET" python3 -m core.leakscan --godot 4.6.2 build/ ~/.cache/fortressgd/templates
+```
+
 ## Docker templates
 
 `docker/Dockerfile.templates` is digest-pinned. `docker/entrypoint.sh` shallow-clones the Godot tag, `git apply --check` then `git apply` of `patches/<tag>/series` (including `0002-pack-hooks.patch`), copies `dialect.gen.h`, and runs `scons target=template_release production=yes debug_symbols=no`. When `FGD_DIALECT=1`, scons gets `CCFLAGS=-DFORTRESSGD_DIALECT` so pack read/write use `FGD_PACK_MAGIC` and `FGD_INDEX_PERM`.

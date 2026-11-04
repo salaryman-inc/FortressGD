@@ -9,8 +9,12 @@ inputs:
     required: true
     default: "linux"
   secret:
-    description: "32-byte project secret as 64 hex chars (from Actions secrets)"
+    description: "32-byte project secret as 64 hex chars. Must be an encrypted Actions secret (secrets.*), never a variable or matrix value."
     required: true
+  scan_paths:
+    description: "Extra comma-separated paths (e.g. a source-map directory) to scan for secret material before the job ends"
+    required: false
+    default: ""
 outputs:
   cache_key:
     description: "Cache key prefix fgd-templates-{godot}-{patchset}-{secret_hash}"
@@ -21,6 +25,32 @@ outputs:
 runs:
   using: "composite"
   steps:
+    # Must stay first: nothing may print before the masks are registered.
+    # Masking is defense in depth. The control is the scan step at the end.
+    - name: Mask the secret and derived keys
+      shell: bash
+      env:
+        FORTRESSGD_SECRET: ${{ inputs.secret }}
+        GODOT_VERSION: ${{ inputs.godot_version }}
+      run: |
+        set -euo pipefail
+        ROOT="${{ github.action_path }}/../.."
+        python3 - "$ROOT" "$GODOT_VERSION" <<'PY'
+        import os, sys
+        sys.path.insert(0, sys.argv[1])
+        from core.leakscan import secret_needles
+        from core.secret import secret_bytes_from_hex, validate_secret_hex
+        from core.templates import concrete_godot_tag
+        secret = secret_bytes_from_hex(validate_secret_hex(os.environ["FORTRESSGD_SECRET"]))
+        for _label, needle in secret_needles(secret, concrete_godot_tag(sys.argv[2])):
+            try:
+                text = needle.decode("ascii")
+            except UnicodeDecodeError:
+                continue
+            if text.isalnum():
+                print("::add-mask::" + text)
+        PY
+
     - name: Compute cache metadata
       id: meta
       shell: bash
@@ -71,4 +101,24 @@ runs:
         for p in "${PLATS[@]}"; do
           ARGS+=(--platform "$p")
         done
-        python3 cli/fortressgd templates build --godot "${{ inputs.godot_version }}" "${ARGS[@]}"
+        python3 cli/fortressgd templates build --godot "${{ inputs.godot_version }}" "${ARGS[@]}" 2>&1 \
+          | tee "$RUNNER_TEMP/fortressgd-templates-build.log"
+
+    # Runs even when the build failed, before actions/cache saves in its post step
+    # (which it skips on a failed job). Deletes any file holding secret material.
+    - name: Scan outputs for secret material
+      if: always()
+      shell: bash
+      env:
+        FORTRESSGD_SECRET: ${{ inputs.secret }}
+        GODOT_VERSION: ${{ inputs.godot_version }}
+        SCAN_PATHS: ${{ inputs.scan_paths }}
+      working-directory: ${{ github.action_path }}/../..
+      run: |
+        set -euo pipefail
+        PATHS=("$HOME/.cache/fortressgd/templates" "$RUNNER_TEMP/fortressgd-templates-build.log")
+        if [ -n "$SCAN_PATHS" ]; then
+          IFS=',' read -r -a EXTRA <<< "$SCAN_PATHS"
+          PATHS+=("${EXTRA[@]}")
+        fi
+        python3 -m core.leakscan --godot "$GODOT_VERSION" --delete "${PATHS[@]}"
