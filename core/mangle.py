@@ -531,6 +531,11 @@ def _collect_enum(
 
 
 def _strip_tokens(tokens: list[Token]) -> list[Token]:
+    """Drop comments; replace assert / print_debug / breakpoint statements with ``pass``.
+
+    ``pass`` is valid wherever a statement is, so a block whose only statement was
+    stripped still parses.
+    """
     out: list[Token] = []
     i = 0
     n = len(tokens)
@@ -545,12 +550,14 @@ def _strip_tokens(tokens: list[Token]) -> list[Token]:
             j = _skip_ws_comments(tokens, i + 1)
             if not dotted and j < n and tokens[j].kind == "punct" and tokens[j].value == "(":
                 k = _consume_paren_group(tokens, j)
+                out.append(Token("ident", "pass", tok.line, tok.col))
                 i = _skip_trailing_semi(tokens, k)
                 continue
         if tok.kind == "ident" and tok.value == "breakpoint":
             prev = _prev_code(tokens, i)
             dotted = prev is not None and prev.kind == "punct" and prev.value == "."
             if not dotted:
+                out.append(Token("ident", "pass", tok.line, tok.col))
                 i = _skip_trailing_semi(tokens, i + 1)
                 continue
         out.append(tok)

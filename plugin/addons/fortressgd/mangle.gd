@@ -548,6 +548,8 @@ static func _collect_enum(tokens: Array, keyword_index: int, after_kw: int, user
 	return maxi(keyword_index + 1, i)
 
 
+# Drop comments; replace assert / print_debug / breakpoint statements with `pass`
+# so a block whose only statement was stripped still parses. Mirrors core/mangle.py.
 static func _strip_tokens(tokens: Array) -> Array:
 	var out: Array = []
 	var i := 0
@@ -564,12 +566,14 @@ static func _strip_tokens(tokens: Array) -> Array:
 			var j := _skip_ws_comments(tokens, i + 1)
 			if not dotted and j < tokens.size() and str(tokens[j]["kind"]) == KIND_PUNCT and str(tokens[j]["value"]) == "(":
 				var k := _consume_paren_group(tokens, j)
+				out.append(_tok(KIND_IDENT, "pass", int(tok["line"]), int(tok["col"])))
 				i = _skip_trailing_semi(tokens, k)
 				continue
 		if kind == KIND_IDENT and val == "breakpoint":
 			var prev2: Variant = _prev_code(tokens, i)
 			var dotted2 := typeof(prev2) == TYPE_DICTIONARY and str(prev2["kind"]) == KIND_PUNCT and str(prev2["value"]) == "."
 			if not dotted2:
+				out.append(_tok(KIND_IDENT, "pass", int(tok["line"]), int(tok["col"])))
 				i = _skip_trailing_semi(tokens, i + 1)
 				continue
 		out.append(tok)

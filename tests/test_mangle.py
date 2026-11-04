@@ -18,6 +18,7 @@ from core.mangle import (
     mangled_identifier,
     mangle_scripts,
     reserved_names,
+    rewrite_source,
     source_map_json,
     source_map_path,
 )
@@ -99,10 +100,39 @@ def _write_godot_stub_bin(directory: Path, log_path: Path) -> Path:
     return path
 
 
+def _mangle_gd() -> str:
+    return (ROOT / "plugin" / "addons" / "fortressgd" / "mangle.gd").read_text(encoding="utf-8")
+
+
+def _gd_func_body(source: str, name: str) -> str:
+    """Text of `static func <name>` up to the next top-level func."""
+    start = source.index("static func {0}(".format(name))
+    end = source.find("\nstatic func ", start + 1)
+    return source[start : end if end != -1 else len(source)]
+
+
 class MangleTransformTests(unittest.TestCase):
     """Drive the shipped mangling transform used by export (core.mangle.mangle_scripts)."""
 
     HASH = "0123456789abcdef"
+
+    def test_strip_replaces_statement_with_pass(self) -> None:
+        src = "extends Node\n\nfunc _ready():\n    if true:\n        assert(1 == 1)\n    print_debug(\"x\")\n"
+        out, _ = mangle_scripts({"b.gd": src}, secret_hash="abc123", rename=True)
+        self.assertEqual(
+            out["b.gd"], "extends Node\n\nfunc _ready():\n    if true:\n        pass\n    pass\n"
+        )
+
+    def test_strip_one_line_if(self) -> None:
+        self.assertEqual(rewrite_source("if a: assert(b)\n", {}), "if a: pass\n")
+        self.assertEqual(rewrite_source("x = 1; assert(y);\n", {}), "x = 1; pass\n")
+
+    def test_strip_breakpoint_only_function_body(self) -> None:
+        self.assertEqual(rewrite_source("func f():\n\tbreakpoint\n", {}), "func f():\n\tpass\n")
+
+    def test_strip_keeps_dotted_call(self) -> None:
+        src = 'logger.print_debug("x")\nobj.assert(1)\nother.breakpoint\n'
+        self.assertEqual(rewrite_source(src, {}), src)
 
     def test_reserved_set_keeps_lifecycle(self) -> None:
         names = reserved_names()
@@ -343,6 +373,10 @@ def _gd_func(source: str, name: str) -> str:
 
 
 class MangleStaticChecks(unittest.TestCase):
+    def test_plugin_strip_emits_pass(self) -> None:
+        body = _gd_func_body(_mangle_gd(), "_strip_tokens")
+        self.assertEqual(body.count('_tok(KIND_IDENT, "pass"'), 2)
+
     def test_plugin_participates_when_mangle_scripts_true(self) -> None:
         addon = ROOT / "plugin" / "addons" / "fortressgd"
         export_gd = (addon / "export_plugin.gd").read_text(encoding="utf-8")
