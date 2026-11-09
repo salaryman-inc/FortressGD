@@ -73,7 +73,7 @@ export FORTRESSGD_KEYDOT="$PWD/keydot.exe"
 python3 tests/run.py
 ```
 
-When those env vars are set and the binary is present, KeyDot failing to extract the 32-byte key / recover the project from a Phase-2 protected exe is a **pass**. Absence of the binary must not fail the default test run.
+Set `FORTRESSGD_PROTECTED_EXE` to the protected `game.exe`, and `FORTRESSGD_PROTECTED_PCK` to its `game.pck` (it defaults to `game.pck` next to the exe). KeyDot prints a 32-byte "key" whenever its pattern scan lands somewhere, even on unrelated bytes, so the test does not count output as a recovery. It tries every 64-hex value KeyDot prints against the pack's encrypted directory, whose plaintext MD5 shows whether a key is right. The test fails only if one of them decrypts it. It also fails if KeyDot printed nothing or the pack directory is not encrypted, because then the check proves nothing. Absence of the binary must not fail the default test run.
 
 ## Mangler parity (optional, needs Godot)
 

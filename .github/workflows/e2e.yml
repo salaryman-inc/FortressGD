@@ -246,6 +246,7 @@ jobs:
           set -euo pipefail
           export FORTRESSGD_KEYDOT="$RUNNER_TEMP/keydot.exe"
           export FORTRESSGD_PROTECTED_EXE="$GITHUB_WORKSPACE/protected/game.exe"
+          export FORTRESSGD_PROTECTED_PCK="$GITHUB_WORKSPACE/protected/game.pck"
           export FORTRESSGD_KEYDOT_LOG="$RUNNER_TEMP/keydot.log"
           # The test checks the binary against the pinned sha256 before running it.
           python -m unittest -v tests.test_unpackers 2>&1 | tee "$RUNNER_TEMP/unpackers.log"
