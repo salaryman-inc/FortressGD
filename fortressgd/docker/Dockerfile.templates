@@ -4,6 +4,8 @@ FROM ubuntu:24.04@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# MinGW is switched to its POSIX-threads build. Ubuntu selects the win32-threads
+# build by default, and Godot's Windows build (4.6.2 and 4.7.2) refuses it.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         git \
@@ -30,6 +32,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         zip \
         unzip \
     && rm -rf /var/lib/apt/lists/* \
+    && update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix \
+    && update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix \
     && python3 -m pip install --break-system-packages --no-cache-dir scons
 
 COPY entrypoint.sh /usr/local/bin/fortressgd-templates-entrypoint
