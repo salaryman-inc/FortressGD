@@ -9,6 +9,9 @@ from fortressgd.core.errors import NEXT_TEMPLATES, ToolError
 from fortressgd.core.paths import patches_root
 
 SERIES_NAME = "series"
+# Per-tag recipe for the third-party libraries Godot's own CI links into its
+# templates (D3D12, ANGLE, AccessKit, ...). Hashed into the patchset id.
+BUILD_DEPS_NAME = "build-deps.sh"
 
 
 def series_path(tag_dir: Path) -> Path:
@@ -57,6 +60,18 @@ def require_series(tag_dir: Path) -> list[str]:
             NEXT_TEMPLATES,
         )
     return names
+
+
+def patchset_inputs(tag_dir: Path) -> list[Path]:
+    """Files whose bytes define a template build: the series patches, then build-deps.sh.
+
+    The entrypoint computes the same id inside the container; keep the order.
+    """
+    files = patch_files(tag_dir)
+    deps = Path(tag_dir) / BUILD_DEPS_NAME
+    if deps.is_file():
+        files.append(deps)
+    return files
 
 
 def patchset_id(patch_paths: list[Path]) -> str:

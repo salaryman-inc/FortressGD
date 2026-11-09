@@ -3,3 +3,4 @@
 0003-nameless-bytecode.patch
 0004-opcode-map.patch
 0005-pack-signatures.patch
+0006-signed-file-md5.patch

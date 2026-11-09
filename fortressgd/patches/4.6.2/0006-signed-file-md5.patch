@@ -1,0 +1,50 @@
+diff --git a/core/io/file_access_pack.cpp b/core/io/file_access_pack.cpp
+index ca88c22..40a5edd 100644
+--- a/core/io/file_access_pack.cpp
++++ b/core/io/file_access_pack.cpp
+@@ -34,2 +34,5 @@
+ #include "core/io/file_access_patched.h"
++#ifdef FORTRESSGD_SIGN_PACKS
++#include "core/crypto/crypto_core.h"
++#endif
+ #include "core/object/script_language.h"
+@@ -631,2 +634,39 @@ FileAccessPack::FileAccessPack(const String &p_path, const PackedData::PackedFil
+ 
++#ifdef FORTRESSGD_SIGN_PACKS
++	// A -sig template verified the index signature when it opened the pack, so
++	// each file's index MD5 is trusted. Hold the file's bytes to it: otherwise
++	// anyone with the pack key could swap a file's contents and keep a valid
++	// signature. An encrypted body starts with the MD5 of its plaintext, which
++	// FileAccessEncrypted checks against the decrypted bytes below; comparing
++	// those 16 bytes chains the signature to the contents for free. Unencrypted
++	// bodies (a narrowed encryption filter) are hashed here instead.
++	if (FGD_REQUIRE_PACK_SIGNATURE && !pf.bundle) {
++		uint8_t fgd_md5[16];
++		bool fgd_ok = true;
++		if (pf.encrypted) {
++			fgd_ok = f->get_buffer(fgd_md5, 16) == 16;
++		} else {
++			CryptoCore::MD5Context fgd_ctx;
++			fgd_ctx.start();
++			uint8_t fgd_buf[16384];
++			uint64_t fgd_left = pf.size;
++			while (fgd_ok && fgd_left > 0) {
++				const uint64_t fgd_n = MIN(fgd_left, (uint64_t)sizeof(fgd_buf));
++				fgd_ok = f->get_buffer(fgd_buf, fgd_n) == fgd_n;
++				if (fgd_ok) {
++					fgd_ctx.update(fgd_buf, fgd_n);
++				}
++				fgd_left -= fgd_n;
++			}
++			fgd_ok = fgd_ok && fgd_ctx.finish(fgd_md5) == OK;
++		}
++		f->seek(off);
++		if (!fgd_ok || memcmp(fgd_md5, pf.md5, 16) != 0) {
++			// Every read on this file then fails instead of returning tampered data.
++			f = Ref<FileAccess>();
++			ERR_FAIL_MSG(vformat(R"(File "%s" does not match the signed index of pack "%s".)", p_path, pf.pack));
++		}
++	}
++#endif
++
+ 	if (pf.encrypted) {
