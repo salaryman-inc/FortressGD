@@ -1,0 +1,12 @@
+# Files that decide what CI runs, and with what. A pull request from a fork
+# can change any of these and have its own version run, so they need an owner's
+# review before merge. This takes effect once the main branch ruleset requires
+# review from Code Owners.
+
+/.github/                 @SalarymanDev
+/actions/                 @SalarymanDev
+/tests/run.py             @SalarymanDev
+/tests/support.py         @SalarymanDev
+/pyproject.toml           @SalarymanDev
+/MANIFEST.in              @SalarymanDev
+/fortressgd/docker/       @SalarymanDev

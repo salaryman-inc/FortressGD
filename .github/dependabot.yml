@@ -1,0 +1,17 @@
+version: 2
+updates:
+  # Workflows and actions pin every action to a commit SHA. Dependabot moves the
+  # SHA and its version comment together. The composite actions are listed
+  # because "/" only covers .github/workflows.
+  - package-ecosystem: github-actions
+    directories:
+      - "/"
+      - "/.github/actions/godot-editor"
+      - "/actions/build-templates"
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
