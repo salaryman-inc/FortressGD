@@ -476,6 +476,7 @@ def _read_dialect_listing(
         dir_abs=dir_abs,
         dir_end=dir_end,
         files=files,
+        dir_encrypted=bool(pack_flags & PACK_DIR_ENCRYPTED),
     )
 
 

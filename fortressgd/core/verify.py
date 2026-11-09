@@ -118,6 +118,7 @@ def verify_artifact(
     leaks = find_leaks(packed, include=include, exclude=exclude) + sidecar_pdb_leaks(artifact)
     body_key = dialect_key_for_secret(secret, godot_tag) if secret is not None and godot_tag else None
     leaks += _shader_source_leaks(data, listing, include, body_key)
+    leaks += _plaintext_body_leaks(listing, include)
     result = VerifyResult(
         artifact=artifact,
         paths=packed,
@@ -214,6 +215,42 @@ def _packed_body(data: bytes, listing: PackListing, item, aes_key: bytes | None,
         return decrypt_fae_blob(blob, aes_key)
     except PackError as exc:
         raise VerifyError("cannot decrypt {0}: {1}".format(item.path, exc), NEXT_DOCTOR) from exc
+
+
+# Bodies that must be encrypted whenever the directory is: compiled and text scripts.
+_SCRIPT_SUFFIXES = (".gdc", ".gde", ".gd")
+UNENCRYPTED_BODY = "unencrypted body; Encryption Include Filters was empty"
+UNENCRYPTED_SCRIPT = "unencrypted script body"
+
+
+def _plaintext_body_leaks(listing: PackListing, include: Sequence[str] | None) -> list[Leak]:
+    """
+    File bodies left in plaintext inside a pack whose directory is encrypted.
+
+    Godot encrypts a body only when it matches the preset's
+    encryption_include_filters; an empty filter encrypts none. A pack with an
+    encrypted directory but no encrypted body is that mistake, so every body is
+    reported. Otherwise a narrower filter is the project's choice (for example
+    large media left plaintext for load speed), but scripts must still be
+    encrypted. [filters].include exempts a path.
+    """
+    if not listing.dir_encrypted:
+        return []
+    include_list = [p for p in (include or ()) if p]
+    bodies = [item for item in listing.files if item.size > 0]
+    plain = [
+        item
+        for item in bodies
+        if not item.flags & PACK_FILE_ENCRYPTED
+        and not any(glob_match(item.path, pattern) for pattern in include_list)
+    ]
+    if bodies and not any(item.flags & PACK_FILE_ENCRYPTED for item in bodies):
+        return [Leak(path=item.path, pattern=UNENCRYPTED_BODY) for item in plain]
+    return [
+        Leak(path=item.path, pattern=UNENCRYPTED_SCRIPT)
+        for item in plain
+        if item.path.lower().endswith(_SCRIPT_SUFFIXES)
+    ]
 
 
 def _shader_source_leaks(
@@ -337,7 +374,7 @@ def format_verify_ok(result: VerifyResult) -> str:
 
 
 def format_verify_leaks(result: VerifyResult) -> VerifyError:
-    lines = ["leaked excluded path(s) or shader source in {0}".format(result.artifact.name)]
+    lines = ["leaked or unencrypted file(s) in {0}".format(result.artifact.name)]
     for leak in result.leaks:
         lines.append("  {0} ({1})".format(leak.path, leak.pattern))
     return VerifyError("\n".join(lines), NEXT_DOCTOR)

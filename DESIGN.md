@@ -240,6 +240,7 @@ Editor / packer side:
 - CLI computes `aes_key = FGD-KDF-1(secret, salt)` and either:
   - injects it into the export preset at export time in memory, or
   - passes `GODOT_SCRIPT_ENCRYPTION_KEY` / the export CLI equivalent for the duration of one export.
+- The export also sets `encrypt_pck`, `encrypt_directory` and, when the preset's `encryption_include_filters` is empty, `encryption_include_filters="*"` for that run. Godot encrypts a body only when it matches that filter, and an empty filter encrypts none. A non-empty preset filter is kept.
 - Do not persist `aes_key` on disk.
 
 If PR-style “patch key bytes into official template” lands upstream, FortressGD may use official templates **only** for the AES layer. Dialect and derived-key patches still require FortressGD templates.
@@ -437,6 +438,7 @@ Checks:
 3. File list contains no excluded patterns from §6.3.
 4. No packed `*.fortressgd.map.json`.
 5. If `nameless_bytecode`: fail if debug name tables present in `.gdc`.
+5a. If the pack directory is encrypted: fail if no file body is encrypted, or if any script body (`.gdc`, `.gde`, `.gd`) is not. `[filters].include` exempts a path.
 6. Optional: run pinned KeyDot/GDRE binaries from `unpackers.lock.json` in a sandbox when `FORTRESSGD_UNPACKER_TESTS=1`. Failure of those tools to recover the project is a **pass**.
 
 Do not vendor unpacker binaries in the default clone. Document how CI obtains them.

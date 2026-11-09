@@ -77,7 +77,7 @@ fortressgd templates build --godot 4.6.2 --platform linux
 fortressgd export --preset Linux
 ```
 
-That builds `template_release` in Docker (see `docs/ci.md`) and runs one official Godot export with `GODOT_SCRIPT_ENCRYPTION_KEY` set to FGD-KDF-1(secret, salt) for that process only. Missing templates print the exact `fortressgd templates build …` command to run.
+That builds `template_release` in Docker (see `docs/ci.md`) and runs one official Godot export with `GODOT_SCRIPT_ENCRYPTION_KEY` set to FGD-KDF-1(secret, salt) for that process only. If the preset's Encryption Include Filters is empty, `export` sets it to `*` for that run, because Godot otherwise encrypts only the file list and none of the file contents. Missing templates print the exact `fortressgd templates build …` command to run.
 
 Set `[production].dialect = false` to stay on that Phase 2 path.
 

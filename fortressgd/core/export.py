@@ -109,6 +109,22 @@ def fgd_platform_for_preset(preset: dict[str, Any]) -> str:
     )
 
 
+# Godot encrypts a file body only when its path matches the preset's
+# encryption_include_filters (EditorExportPlatform::_encrypt_and_store_data). An
+# empty filter encrypts no body at all, only the directory, which leaves scripts,
+# scenes and resources readable without the key. `fortressgd export` therefore
+# encrypts every body unless the preset names its own filter.
+DEFAULT_ENCRYPTION_INCLUDE = "*"
+
+
+def encryption_include_for_preset(preset: dict[str, Any]) -> str:
+    """The preset's own include filter, or "*" when it has none."""
+    current = str(preset.get("encryption_include_filters") or "")
+    if any(part.strip() for part in current.split(",")):
+        return current
+    return DEFAULT_ENCRYPTION_INCLUDE
+
+
 def _unquote(value: str) -> str:
     if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
         return value[1:-1].replace('\\"', '"')
@@ -350,6 +366,12 @@ def export_preset(
     )
     modified = upsert_ini_key(modified, "preset.{0}".format(index), "encrypt_pck", "true")
     modified = upsert_ini_key(modified, "preset.{0}".format(index), "encrypt_directory", "true")
+    modified = upsert_ini_key(
+        modified,
+        "preset.{0}".format(index),
+        "encryption_include_filters",
+        _quote_ini(encryption_include_for_preset(preset)),
+    )
     if derived_hex in modified or hex_secret in modified:
         raise UserError("refusing to write secret or aes_key into export_presets.cfg", NEXT_EXPORT)
 

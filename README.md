@@ -192,7 +192,7 @@ ok: no production leaks in game.pck (42 packed files)
 Example failure (exit 2):
 
 ```text
-error: leaked excluded path(s) in game.pck
+error: leaked or unencrypted file(s) in game.pck
   res://main.gd (*.gd)
   res://icon.psd (*.psd)
 Run: fortressgd doctor
@@ -227,9 +227,11 @@ fortressgd export --preset Linux      # verifies the artifact when verify_on_exp
 fortressgd verify build/game.pck      # the same check, for CI or a copied artifact
 ```
 
-`export` sets `GODOT_SCRIPT_ENCRYPTION_KEY` to `FGD-KDF-1(secret, salt)` for that process only, points the preset at the cached FortressGD template, and restores `export_presets.cfg` afterwards. Missing templates print the exact `templates build` command to run.
+`export` sets `GODOT_SCRIPT_ENCRYPTION_KEY` to `FGD-KDF-1(secret, salt)` for that process only, points the preset at the cached FortressGD template, turns on PCK and directory encryption, and restores `export_presets.cfg` afterwards.
 
-The exported pack's directory is encrypted with that derived key, so `verify` reads it with the project secret and the `godot` version from `.fortressgd.toml`. Without the secret, `verify` exits 1 and says so.
+Godot encrypts a file's contents only when its path matches the preset's **Encryption Include Filters**, and an empty filter encrypts no contents at all, only the file list. So when that filter is empty, `export` sets it to `*` for its run and every file body is encrypted. A filter you set yourself is kept, for example to leave large media unencrypted for load speed; scripts must still match it. Missing templates print the exact `templates build` command to run.
+
+The exported pack's directory is encrypted with that derived key, so `verify` reads it with the project secret and the `godot` version from `.fortressgd.toml`. Without the secret, `verify` exits 1 and says so. In a pack with an encrypted directory, `verify` exits 2 if no file body is encrypted (the empty-filter mistake) or if any script body is unencrypted; `[filters].include` exempts a path.
 
 ### Full production (dialect + mangling)
 
@@ -366,7 +368,7 @@ Every command accepts `--secret-file PATH`. `--platform` is repeatable (`--platf
 | `templates build` | Docker-build `template_release` for `(godot, secret_hash, platform)`. |
 | `templates list` | Names of cached templates. |
 | `export` | Production export with derived AES key (and dialect/mangle/sign when enabled), then `verify` when `verify_on_export` is true. |
-| `verify` | List packed paths; fail on leaked excludes, shipped `.pdb` files, shaders that still contain comments, leftover debug tables, or bad signatures. |
+| `verify` | List packed paths; fail on leaked excludes, shipped `.pdb` files, shaders that still contain comments, unencrypted bodies in an encrypted pack, leftover debug tables, or bad signatures. |
 
 Exit codes: `0` ok, `1` config/user error, `2` verify/policy failure, `3` tool or engine build failure. Errors print `error: …` and `Run: <next command>`.
 

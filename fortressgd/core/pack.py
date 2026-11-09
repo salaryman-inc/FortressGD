@@ -70,6 +70,9 @@ class PackListing:
     dir_abs: int
     dir_end: int
     files: list[PackedFile]
+    # True when PACK_DIR_ENCRYPTED was set; the stock reader refuses those, so only
+    # the derived-key reader in pack_dialect sets it.
+    dir_encrypted: bool = False
 
     def blob(self, data: bytes, item: PackedFile) -> bytes:
         if item.size <= 0:
