@@ -52,7 +52,7 @@ In scope:
 Out of scope (document, do not “fix”):
 
 - Attaching a debugger and dumping the derived key or decrypted resources from memory.
-- A FortressGD-aware tool. The source is public, so a tool that knows the template layout can read one build's pack key and dialect parameters from the binary without running it, at about the cost of the debugger attack above. That exposes the packs of every build sharing that key (same secret, Godot version and `key_epoch`) until the epoch is bumped or the secret rotated. It does not expose the project secret, the signing seed, other projects' keys, or anything mangling and the release filters removed. Dialect, opcode map and nameless bytecode do not hold against such a tool: nameless bytecode keeps runtime names in its `FGDN` block.
+- A FortressGD-aware tool. The source is public, so a tool that knows the template layout can read one build's pack key and dialect parameters from the binary without running it, at about the cost of the debugger attack above. That exposes the packs of every build sharing that key (same secret, Godot version and `key_epoch`) until the epoch is bumped or the secret rotated. It does not expose the project secret, the signing seed, other projects' keys, or anything mangling and the release filters removed. Dialect, opcode map and nameless bytecode do not hold against such a tool: nameless bytecode keeps runtime names in its `FGDN` block. **Planned for 0.2 (§18):** a FortressGD-aware tool that reads values without executing the build moves into scope; one that executes or emulates the build stays out of scope.
 - Rewriting a packer after reverse-engineering *this* game’s dialect.
 - Asset ripping from GPU/memory.
 - Server-authoritative cheat prevention.
@@ -537,7 +537,7 @@ Manual / nightly:
 - Docker image built from this repo; pin base image digests.
 - `fortressgd doctor` warns if plugin files differ from the CLI package version.
 - Refuse to run `templates build` if `series` is empty or `git apply --check` fails.
-- Treat `fortressgd/generator/` output as untrusted C to embed: headers only, no executable code snippets from the secret.
+- Treat `fortressgd/generator/` output as untrusted C to embed: headers only, no executable code snippets from the secret. §18 replaces this rule for generator v2 (0.2), with the constraints in §18.3.
 
 ---
 
@@ -581,3 +581,128 @@ A stranger can:
 6. Observe that a stock PCK listing tool does not show plaintext scripts, and documented KeyDot/GDRE versions do not fully recover the project.
 
 If that path needs more than the commands above plus installing Docker and the plugin, v1 is not done.
+
+---
+
+## 18. Planned: per-project code (0.2, not implemented)
+
+Status: accepted design, not implemented. Nothing in §1–§17 changes until the work below lands; each part updates the sections it touches in the same change (§15 rule 7). `THREAT_MODEL.md` carries the matching goal under "Planned for 0.2".
+
+### 18.1 Why
+
+Generator v1 writes a data-only header (§8.2). Every template for one Godot tag and platform therefore has the same code and the same layout; only the bytes of the masked key, magic, index permutation, opcode map and public key differ. Diffing two projects' templates shows where those bytes are, and a tool that reads them works on every FortressGD game.
+
+Separately, building a template from source takes 30–60 minutes per platform. Users should not compile Godot.
+
+### 18.2 Goals
+
+1. **Per-build code.** The code that stores and decodes the per-project values differs for every `(secret, tag, key_epoch)`. A static extractor that works on one build fails on a build with a different secret or epoch (§1.3, as amended for 0.2).
+2. **No Godot compile for users.** `fortressgd templates build` compiles only generated files and relinks. Target: under 10 minutes per platform on a standard GitHub-hosted Linux runner, after the build image is pulled.
+3. **One container for everyone.** A published build image per `(FortressGD version, Godot tag, platform)`. The project secret is only an input to the host-side CLI, for example a CI secret in `FORTRESSGD_SECRET`.
+4. **Nothing in §5.2 weakens.** The secret, the salt and the signing seed still never reach a template, a pack, a log or a container.
+
+Non-goals stay as in §1.2 and §15 rule 2: no packer, no VM for Godot code, no anti-debug, no network checks. Generated code is small straight-line routines that decode values. It does not virtualize or transform Godot's own code.
+
+### 18.3 Generator v2
+
+Inputs: as §8.1, plus `key_epoch`. A code seed is derived as `HKDF-SHA256(secret, info="fortressgd.codegen.v2|" + tag + "|epoch=" + N)`. It drives a deterministic stream (HKDF-SHA256 in counter mode, standard library only). Same secret, tag, epoch and generator version give byte-identical output.
+
+Outputs, all build artifacts that are never committed:
+
+- `fortressgd_gen.cpp` (one or more files): generated routines.
+- `fortressgd_gen_api.h` is **not generated**. It is a fixed header in `fortressgd/patches/common/` that declares the only functions patched Godot code may call:
+  - `fgd_derive_key(uint8_t out[32])`
+  - `fgd_pack_magic()`
+  - `fgd_index_perm(uint8_t out[N])`
+  - `fgd_opcode_tables(...)`
+  - `fgd_pack_pubkey(uint8_t out[32])`
+
+  No Godot file includes generated content, so a new project's generated files never invalidate Godot's object files (§18.4).
+
+What changes per build:
+
+1. **Key routine.** The pack key FGD-KDF-1(secret, salt) is split into 3–8 pieces of random sizes. Each piece is stored after a random chain of invertible byte or word operations (XOR, add, rotate, byte permutation, a per-build substitution table). `fgd_derive_key` undoes them in a generated order. The pieces live in separately named arrays across several functions, among decoy arrays of the same sizes, which feed decoy computations into a volatile sink.
+2. **Encoded parameters.** Magic, index permutation, opcode tables and public key are no longer plain arrays. Each one is stored encoded the same way and decoded by its own generated routine. The opcode tables are decoded once at startup into a heap table, so the VM dispatch cost is unchanged.
+3. **Layout.** Function order, array order, sizes of padding and decoys, and the operation chain all come from the code seed.
+
+Constraints that replace §14's "headers only" rule:
+
+- Generated code never contains the secret, the salt, the signing seed or the code seed. It contains what the v1 header already does (the key, masked, and public values), encoded differently.
+- Generated code is produced only by `fortressgd/generator/`, from a fixed grammar of operations. It has no loops driven by data, no system calls and no I/O.
+- The inputs to every routine are `volatile` loads, so the optimizer cannot fold a routine back into the plain value. This applies with link-time optimization too.
+- The Python generator also has an interpreter for its own output. Tests check that interpreter, the compiled C++ (every compiler on `PATH`) and FGD-KDF-1 agree, as §5.2 requires for v1.
+- `templates build` still refuses to cache a template that holds the raw key, the secret or the signing seed.
+
+The security switches stay compile-time flags, not generated values: `-sig` (`FGD_REQUIRE_PACK_SIGNATURE`), dialect on or off, and the opcode map on or off. In data, one flipped byte would turn signature checking off.
+
+### 18.4 Build images and templates
+
+Release CI publishes `ghcr.io/salaryman-inc/fortressgd-build:<fgd-version>-godot<tag>-<platform>`. Each image holds:
+
+- the Godot source at the tag, with the patch series applied,
+- a complete build tree compiled once with placeholder generated files: every Godot object file, plus the scons cache or build directory needed to relink,
+- the toolchain from `Dockerfile.templates` and the tag's `build-deps.sh` results.
+
+`fortressgd templates build`:
+
+1. On the host, generates `fortressgd_gen*.cpp` from the secret. The secret stays in the host process, as in §7.2.
+2. Runs the build image with the generated files mounted read-only. The container compiles those files only, relinks `template_release`, strips it and writes the manifest.
+3. Scans the result as today, then caches it.
+
+The project secret never enters the container. When the CLI itself runs inside a FortressGD container, the compile and link run as a separate unprivileged user that can read neither `.fortressgd.secret` nor the CLI's environment.
+
+**Link-time optimization is the open question.** `production=yes` enables it, which makes the relink redo optimization across the whole program. The first implementation measures warm relink time per platform and picks the first option that meets goal 2:
+
+1. Keep full LTO, if the relink fits.
+2. Switch to ThinLTO with a link cache (clang on Linux, llvm-mingw on Windows), so a relink reoptimizes only what changed.
+3. Turn LTO off for templates, documenting the measured size and speed cost.
+
+The result is recorded here.
+
+Images:
+
+- Built only by a release workflow on protected `v*` tags. It pushes with `GITHUB_TOKEN` (`packages: write` for that job only) and attests provenance with `actions/attest-build-provenance`.
+- Each CLI release pins the digests (`@sha256:`) of its images and refuses any other digest unless the user passes `--image` explicitly.
+- Building the image from source with the same Dockerfile stays supported (`templates build --from-source`), for users who will not run prebuilt toolchains.
+
+Naming and cache: template names and the CI cache key gain the generator version, `-g2`. A template from generator v2 never reuses a v1 cache entry, and the reverse also holds.
+
+### 18.5 Export side
+
+The machine that exports is trusted: it already holds the secret. So the export side does not need per-build code.
+
+- The patched headless editor (§8.3) is built **once** per Godot tag, without generated code, and ships in the build image.
+- At export, the CLI passes the per-project values to it in an environment variable for the length of one export, as it does today with `GODOT_SCRIPT_ENCRYPTION_KEY`. That covers magic, index permutation, opcode tables and the AES key. They are never written to disk, never passed as arguments, and never logged.
+- Pack signing stays in the CLI (`fortressgd/core/pack_sign.py`). The editor never sees the signing seed.
+
+That removes the per-project editor build, which the dialect path needs today.
+
+### 18.6 Compatibility
+
+- Generator v2 derives the same values as v1 (§5.2, §8.2). Only how a template stores and decodes them changes, so packs and the export side's values are unchanged. Values extracted from a v1 build of a project still apply to its v2 builds with the same secret, tag and epoch; bump `key_epoch` when moving a released game to v2.
+- `key_epoch` now changes the code shape as well as the pack key. Bumping it also breaks an extractor tuned to the previous release line.
+- `dialect_id` in the manifest covers the generated sources, so `verify` can tell a v1 template from a v2 one.
+
+### 18.7 Acceptance
+
+In addition to §13 and §17:
+
+- **Cross-build test (e2e).** Build templates for two secrets, A and B, and for A at two epochs.
+  - A reference extractor in `tests/` locates and decodes A's key, given A's generated sources.
+  - It must fail on B, and on A at the other epoch.
+  - The key-handling functions of A and B must share no machine-code sequence longer than a set threshold, measured after strip.
+- **Stock fixtures.** Stock unpacker fixtures still fail on every build.
+- **Equivalence.** The interpreter, the compiled routines and FGD-KDF-1 agree for many seeds, on every compiler.
+- **Speed.** A warm `templates build` per platform meets goal 2 on a GitHub-hosted runner, and the time is recorded in `docs/ci.md`.
+
+These tests show that builds differ. They cannot show that a static extractor for builds in general is impossible. The README and `THREAT_MODEL.md` must say exactly that much and no more.
+
+### 18.8 Order of work
+
+Each step is a separate PR with its own tests:
+
+1. Shared headless editor reading values from the environment (§18.5).
+2. Generator v2, its interpreter, `fortressgd_gen_api.h`, and patches switched to the API (§18.3), still built from source.
+3. Build images with a precompiled tree, plus the relink path and the LTO measurement (§18.4).
+4. Release workflow: tag ruleset, image publishing, provenance, and digest pinning in the CLI.
+5. Cross-build e2e and docs: README, `THREAT_MODEL.md` (removing "planned"), `docs/ci.md`.
