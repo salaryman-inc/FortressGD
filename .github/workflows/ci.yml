@@ -14,6 +14,41 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    # A docs-only pull request (every changed file is under docs/ or ends in
+    # .md) skips the compiler, package and Godot jobs. The Python suites still
+    # run, because they check the Markdown too: layout and content tests, and
+    # the repo-wide secret scan. A workflow-level paths-ignore would skip those
+    # and leave required checks pending forever. Pushes to main run everything.
+    name: Changed files
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - id: diff
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # The pull request checkout is a merge commit; its first parent is the base branch.
+          changed="$(git diff --name-only HEAD^1 HEAD)"
+          printf '%s\n' "$changed"
+          # Any line that is not docs (including an empty diff) counts as code.
+          if printf '%s\n' "$changed" | grep -qvE '^docs/|\.md$'; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=false" >> "$GITHUB_OUTPUT"
+            echo "### Docs-only change: compiler, package and Godot jobs skipped" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   test:
     name: Tests (Python ${{ matrix.python }}${{ matrix.fast && ', cryptography' || '' }})
     runs-on: ubuntu-latest
@@ -28,8 +63,10 @@ jobs:
           - python: "3.13"
             fast: true
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ matrix.python }}
       - name: Install the optional cryptography backend
@@ -47,7 +84,9 @@ jobs:
     timeout-minutes: 20
     container: python:3.9-bookworm
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - run: python --version
       - run: python tests/run.py
 
@@ -58,11 +97,15 @@ jobs:
     # runs the shipped key reassembly, and checks the header holds nothing the
     # project secret or signing seed can be recovered from.
     name: Template key material (g++, clang++, MinGW)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends g++ clang g++-mingw-w64-x86-64
@@ -74,11 +117,15 @@ jobs:
 
   package:
     name: Wheel and sdist install
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
       - run: python -m pip install build
@@ -115,7 +162,7 @@ jobs:
           assert example_toml_path().is_file()
           print("ok: sdist install ships plugin, patches, docker and example config")
           PY
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: dist
           path: dist/
@@ -123,6 +170,8 @@ jobs:
 
   godot:
     name: GDScript mangler under Godot ${{ matrix.godot }}
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -130,8 +179,10 @@ jobs:
       matrix:
         godot: ["4.6.2", "4.7.2"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
       - name: Get the official Godot editor
