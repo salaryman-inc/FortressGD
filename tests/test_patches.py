@@ -23,6 +23,7 @@ class PatchTests(unittest.TestCase):
             self.assertEqual(names[2], "0003-nameless-bytecode.patch")
             self.assertEqual(names[3], "0004-opcode-map.patch")
             self.assertEqual(names[4], "0005-pack-signatures.patch")
+            self.assertEqual(names[5], "0006-signed-file-md5.patch")
             patch = tag_dir / "0001-key-derive.patch"
             text = patch.read_text(encoding="utf-8")
             self.assertTrue(text.startswith("diff --git"), msg=tag)
@@ -135,6 +136,11 @@ class PatchTests(unittest.TestCase):
                     self.assertLess(salt_at, sig_at)
                     self.assertIn("not supported for encrypted sparse bundles", patched)
                 self.assertTrue((work / "core" / "fortressgd_ed25519.cpp").is_file())
+                # 0006: a -sig template holds each opened file to its signed index MD5.
+                pack_cpp = (work / "core" / "io" / "file_access_pack.cpp").read_text(encoding="utf-8")
+                self.assertIn("does not match the signed index", pack_cpp)
+                self.assertIn("memcmp(fgd_md5, pf.md5, 16)", pack_cpp)
+                self.assertIn("f = Ref<FileAccess>();", pack_cpp)
                 log_lines.append(
                     "{0}: git apply --check+apply ok; derive+wipe; dialect magic/perm; nameless; opcode map; sign".format(tag)
                 )
