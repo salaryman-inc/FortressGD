@@ -31,3 +31,25 @@ Protection that must survive a determined attacker comes from that last list, no
 ## Consequence
 
 FortressGD is a release toolchain. Treat “stock tools fail on this build” as success. Treat “nobody can ever extract assets” as out of scope. Do not add features that only address the second sentence.
+
+## Planned for 0.2: per-project code (not implemented)
+
+Everything above describes 0.1, which is what ships today. This section is the goal for 0.2. Do not claim it for a build until `DESIGN.md` §18 is implemented and its acceptance tests pass.
+
+In 0.1 every template for a Godot version and platform has the same code and the same layout. Only the bytes of the masked key, magic, index permutation, opcode map and public key differ. A FortressGD-aware tool written once can therefore read those values out of every FortressGD game. The source being public is enough to write it.
+
+0.2 makes the code that holds and decodes those values different for every project, and for every `key_epoch` of a project. The goal:
+
+> No static tool recovers the pack key, the pack layout or the opcode map from FortressGD builds in general. A tool that reads one build's values without running it does not work on a build with a different secret or epoch. Each build needs its own analysis, by a person or with AI help, or a runtime attack.
+
+Moves into scope in 0.2:
+
+- A FortressGD-aware tool that reads values from a fixed location, a fixed array shape, or a fixed instruction pattern.
+- Reusing an extractor written for one project, or one release line, on another.
+
+Stays out of scope in 0.2:
+
+- Anything that executes or emulates the build: a debugger, hooking the AES routine, emulating the key routine, or dumping decrypted resources from memory. A game has to decrypt its own packs, so a runtime tool that works on every FortressGD game can still be written. 0.2 moves the points such a tool must find, but promises nothing against it.
+- Everything else under "We do not try to stop".
+
+What holds after a key is extracted does not change.
