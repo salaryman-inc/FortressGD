@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import unittest
 
 from tests.support import PKG, ROOT, SAMPLE_PROJECT
@@ -118,6 +119,37 @@ class LayoutTests(unittest.TestCase):
             "*.fortressgd.map.json",
         ):
             self.assertIn('"{0}"'.format(pattern), (addon / "filters.json").read_text(encoding="utf-8"))
+
+    def test_export_plugin_runs_on_both_sides_of_godots_gdscript_plugin(self) -> None:
+        """Godot sorts export plugins by name and stops at the first skip or remap.
+
+        Its GDScript plugin ("GDScript", modules/gdscript/register_types.cpp) remaps
+        every *.gd, so a plugin sorted after it never sees a script.
+        """
+        addon = PKG / "plugin" / "addons" / "fortressgd"
+        export_gd = (addon / "export_plugin.gd").read_text(encoding="utf-8")
+        early = re.search(r'const EARLY_NAME := "([^"]+)"', export_gd).group(1)
+        late = re.search(r'const LATE_NAME := "([^"]+)"', export_gd).group(1)
+        self.assertLess(early, "GDScript")
+        self.assertLess("GDScript", late)
+        self.assertIn("return LATE_NAME if _late else EARLY_NAME", export_gd)
+        plugin_gd = (addon / "plugin.gd").read_text(encoding="utf-8")
+        self.assertIn("FGDExportPlugin.new()", plugin_gd)
+        self.assertIn("FGDExportPlugin.new(true)", plugin_gd)
+        self.assertEqual(plugin_gd.count("add_export_plugin("), 2)
+        self.assertEqual(plugin_gd.count("remove_export_plugin("), 2)
+        # The early instance keeps scripts that only "*.gd" excludes, for bytecode;
+        # the late one drops whatever text is left.
+        self.assertIn("should_skip_before_bytecode(path, _include, _exclude)", export_gd)
+        filters_gd = (addon / "filters.gd").read_text(encoding="utf-8")
+        start = filters_gd.index("static func should_skip_before_bytecode")
+        body = filters_gd[start : filters_gd.index("\nstatic func ", start + 1)]
+        self.assertIn("should_skip_forced(path, include_patterns, exclude_patterns)", body)
+        self.assertIn("pat != TEXT_SCRIPT_PATTERN", body)
+        self.assertIn('const TEXT_SCRIPT_PATTERN := "*.gd"', filters_gd)
+        # Only the early instance mangles, writes the map or refuses the artifact.
+        end = export_gd[export_gd.index("func _export_end") :]
+        self.assertTrue(end.split("\n", 2)[1].strip() == "if _late:", end[:80])
 
     def test_plugin_secret_order_matches_cli(self) -> None:
         export_gd = (PKG / "plugin" / "addons" / "fortressgd" / "export_plugin.gd").read_text(

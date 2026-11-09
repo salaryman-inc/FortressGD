@@ -305,6 +305,8 @@ When production export is on, the export plugin **forces** these excludes unless
 - files named `*.fortressgd.map.json`
 - `*.pdb` (.NET debug symbols); `verify` also fails on a `*.pdb` next to the artifact or under its `data_*` folder
 
+Godot sorts export plugins by name and gives a file to the next plugin only while none has skipped or remapped it. Its GDScript plugin (`GDScript`) remaps every `*.gd` to bytecode, so FortressGD registers two instances. `FortressGD` sorts before it and skips every excluded path, except a script that only the `*.gd` rule matches, which goes on to become bytecode. `GDScript.FortressGD` sorts after it and skips any `*.gd` that is still text (Text export mode, or a script Godot could not tokenize).
+
 Excluding `*.cs` only keeps the source text out. A .NET game still ships its managed assembly, which decompiles to near-original C#; FortressGD does not obfuscate it, and `doctor` / `export` warn about this on .NET projects.
 
 If a C# project cannot run without `.cs` in the PCK on a given Godot version, `fortressgd doctor` must print that as a known limitation and refuse `exclude *.cs` rather than produce a broken game. Document the tested Godot versions where excluding `.cs` is safe.

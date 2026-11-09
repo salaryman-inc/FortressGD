@@ -4,6 +4,7 @@ extends RefCounted
 
 const FILTERS_JSON := "res://addons/fortressgd/filters.json"
 const FEATURE_TAG := "fortressgd_production"
+const TEXT_SCRIPT_PATTERN := "*.gd"
 
 
 static func production_feature_tag() -> String:
@@ -33,6 +34,24 @@ static func should_skip_forced(path: String, include_patterns: PackedStringArray
 			return false
 	for pat in forced_exclude_patterns():
 		if glob_match(path, pat):
+			return true
+	for pat in exclude_patterns:
+		if pat != "" and glob_match(path, pat):
+			return true
+	return false
+
+
+## For the export plugin that runs before Godot's GDScript plugin. Like
+## should_skip_forced, except a script that only the "*.gd" rule excludes is kept,
+## so the GDScript plugin can still pack it as bytecode. The "*.gd" rule is about
+## text, not about the script; the late plugin drops any text that is left.
+static func should_skip_before_bytecode(path: String, include_patterns: PackedStringArray, exclude_patterns := PackedStringArray()) -> bool:
+	if not should_skip_forced(path, include_patterns, exclude_patterns):
+		return false
+	if _normalize(path).get_extension().to_lower() != "gd":
+		return true
+	for pat in forced_exclude_patterns():
+		if pat != TEXT_SCRIPT_PATTERN and glob_match(path, pat):
 			return true
 	for pat in exclude_patterns:
 		if pat != "" and glob_match(path, pat):
