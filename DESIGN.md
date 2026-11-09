@@ -86,6 +86,8 @@ If a change only helps out-of-scope attacks and increases maintenance, reject it
 Path: `fortressgd/plugin/addons/fortressgd/` in this repo; `addons/fortressgd/` once `fortressgd init` copies it into a project.  
 Godot: 4.6+ `EditorPlugin` + `EditorExportPlugin`.
 
+Godot runs the export hook only when `project.godot` lists the plugin under `[editor_plugins] enabled`, and the §6.3 forced excludes live in that hook. So `fortressgd init` adds `res://addons/fortressgd/plugin.cfg` to that list, keeping any other enabled plugins. `fortressgd export` refuses to run while it is missing, and `fortressgd doctor` warns about it.
+
 Responsibilities:
 
 - Read/write `.fortressgd.toml` (project root).
