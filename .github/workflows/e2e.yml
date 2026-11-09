@@ -165,8 +165,9 @@ jobs:
           # Release templates refuse --main-pack (Godot's disable_path_overrides is on
           # by default), so each test pack goes next to a copy of the binary as
           # game.pck, which is where a shipped game looks for it. It runs from that
-          # folder: when no pack loads, Godot falls back to a project.godot in the
-          # working directory, and the project folder has one with the text scripts.
+          # folder so no project.godot is in the working directory. Release templates
+          # refuse that fallback anyway (disable_path_overrides); this keeps the test
+          # from depending on it.
           run_with_pack() {
             dir="$(mktemp -d "$RUNNER_TEMP/sig.XXXXXX")"
             cp build/linux/game.x86_64 "$dir/game.x86_64"
