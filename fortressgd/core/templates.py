@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -22,7 +23,19 @@ from fortressgd.generator.dialect import GENERATOR_VERSION, dialect_material, wr
 KDF_NAME = "FGD-KDF-1"
 SUPPORTED_PLATFORMS = ("linux", "windows")
 DEFAULT_ARCH = "x86_64"
-DOCKER_IMAGE = "fortressgd-templates:v1"
+DOCKER_IMAGE_REPO = "fortressgd-templates"
+# Files baked into the image. The tag is their hash, so an upgraded FortressGD
+# never reuses an image built with an older entrypoint.
+DOCKER_CONTEXT_FILES = ("Dockerfile.templates", "entrypoint.sh")
+
+
+def docker_image() -> str:
+    """fortressgd-templates:<sha256 of the Dockerfile and entrypoint, 12 hex>."""
+    digest = hashlib.sha256()
+    for name in DOCKER_CONTEXT_FILES:
+        data = (docker_dir() / name).read_bytes()
+        digest.update(name.encode("utf-8") + b"\0" + len(data).to_bytes(8, "big") + data)
+    return "{0}:{1}".format(DOCKER_IMAGE_REPO, digest.hexdigest()[:12])
 GODOT_STABLE_SUFFIX = "-stable"
 
 
@@ -192,7 +205,7 @@ def ensure_docker_image() -> None:
             "install Docker, then: fortressgd templates build",
         )
     inspect = subprocess.run(
-        ["docker", "image", "inspect", DOCKER_IMAGE],
+        ["docker", "image", "inspect", docker_image()],
         capture_output=True,
         text=True,
     )
@@ -205,7 +218,7 @@ def ensure_docker_image() -> None:
             "-f",
             str(dockerfile),
             "-t",
-            DOCKER_IMAGE,
+            docker_image(),
             str(docker_dir()),
         ],
         capture_output=True,
@@ -301,7 +314,7 @@ def build_templates(
                     "{0}:/src/dialect.gen.h:ro".format(header),
                     "-v",
                     "{0}:/out".format(out_dir),
-                    DOCKER_IMAGE,
+                    docker_image(),
                 ],
                 capture_output=True,
                 text=True,

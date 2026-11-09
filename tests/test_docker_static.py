@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from fortressgd.core.kdf import secret_hash
@@ -115,6 +116,25 @@ class DockerStaticTests(unittest.TestCase):
             platform="linux", require_signature=True,
         )
         self.assertIs(data["require_signature"], True)
+
+    def test_image_tag_follows_the_files_baked_into_it(self) -> None:
+        # A fixed tag let an upgraded FortressGD reuse an image with an older
+        # entrypoint.sh baked in, and run the old build script.
+        import shutil
+
+        from fortressgd.core import templates
+
+        tag = templates.docker_image()
+        self.assertRegex(tag, r"^fortressgd-templates:[0-9a-f]{12}$")
+        self.assertEqual(tag, templates.docker_image())
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = Path(tmp)
+            for name in templates.DOCKER_CONTEXT_FILES:
+                shutil.copy2(PKG / "docker" / name, ctx / name)
+            with mock.patch.object(templates, "docker_dir", return_value=ctx):
+                self.assertEqual(templates.docker_image(), tag)
+                (ctx / "entrypoint.sh").write_text((ctx / "entrypoint.sh").read_text() + "\n# changed\n")
+                self.assertNotEqual(templates.docker_image(), tag)
 
     def test_shipped_entrypoint_requires_the_public_secret_hash(self) -> None:
         for value in (None, "", "not-hex", "0123456789ABCDEF", "0123456789abcdef00"):
