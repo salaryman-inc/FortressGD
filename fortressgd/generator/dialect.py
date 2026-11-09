@@ -6,9 +6,9 @@ import hashlib
 import struct
 from pathlib import Path
 
-from fortressgd.core.kdf import SALT_LEN, hkdf_sha256
+from fortressgd.core.kdf import SALT_LEN, fgd_kdf_1, hkdf_sha256
 from fortressgd.core.secret import SECRET_BYTES
-from fortressgd.generator.key_shards import derive_masks, encode_secret, mask_pieces, shard_pieces
+from fortressgd.generator.key_shards import derive_masks, encode_key, mask_pieces, shard_pieces
 
 # Bump when header layout or derivation inputs change.
 GENERATOR_VERSION = 2
@@ -118,10 +118,13 @@ def dialect_material(
     godot_tag: str,
     dialect_seed: bytes | None = None,
 ) -> tuple[bytes, bytes, bytes, str]:
-    """salt, masks, shards, dialect_id for (secret, tag, generator version)."""
+    """salt, masks, key shards, dialect_id for (secret, tag, generator version).
+
+    The shards encode the pack AES key FGD-KDF-1(secret, salt), not the secret.
+    """
     salt = derive_dialect_salt(secret, godot_tag, dialect_seed)
     masks = derive_shard_masks(secret, godot_tag)
-    shards = encode_secret(secret, masks)
+    shards = encode_key(fgd_kdf_1(secret, salt), masks)
     magic = derive_pack_magic(secret, godot_tag, dialect_seed)
     perm = derive_index_perm(secret, godot_tag, dialect_seed)
     return salt, masks, shards, dialect_id(salt, masks, shards, magic, perm)
@@ -170,16 +173,14 @@ def render_dialect_header(
     """
     Data-only C header. No executable snippets derived from the secret.
 
-    Contains FGD_DIALECT_SALT[16], FGD_SHARD_MASKS[4][8], FGD_SHARDS[4][8],
-    FGD_PACK_MAGIC, FGD_INDEX_PERM[4], FGD_OPCODE_MAP/UNMAP, FGD_PACK_PUBKEY, and
+    Contains FGD_KEY_MASKS[4][8] and FGD_KEY_SHARDS[4][8] (the masked pack AES
+    key; never the project secret), FGD_PACK_MAGIC, FGD_INDEX_PERM[4], FGD_OPCODE_MAP/UNMAP, FGD_PACK_PUBKEY, and
     FGD_REQUIRE_PACK_SIGNATURE (1 when the template must refuse unsigned packs).
     """
     from fortressgd.core.pack_sign import public_key_for_secret
     from fortressgd.generator.opcode_map import render_opcode_arrays
 
-    salt = derive_dialect_salt(secret, godot_tag, dialect_seed)
-    masks = derive_shard_masks(secret, godot_tag)
-    shards = encode_secret(secret, masks)
+    _salt, masks, shards, _did = dialect_material(secret, godot_tag, dialect_seed)
     magic = derive_pack_magic(secret, godot_tag, dialect_seed)
     perm = derive_index_perm(secret, godot_tag, dialect_seed)
     pubkey = public_key_for_secret(secret, godot_tag, dialect_seed)
@@ -190,15 +191,19 @@ def render_dialect_header(
         "",
         "#include <stdint.h>",
         "",
-        "/* data only — salt, masks, shards, magic, perm, opcode map, pubkey; no executable snippets from the secret */",
-        _c_array("FGD_DIALECT_SALT", salt),
-        # volatile: with plain `static const` arrays the compiler folds
-        # FGD_SHARDS ^ FGD_SHARD_MASKS at build time (GCC -O3, Godot's
-        # production=yes) and stores the reassembled project secret in the
-        # binary. volatile forces a runtime load of every byte, so only the
-        # shards and masks are stored.
-        _c_array_2d("FGD_SHARD_MASKS", mask_pieces(masks), volatile=True),
-        _c_array_2d("FGD_SHARDS", shard_pieces(shards), volatile=True),
+        "/* data only — masked pack key, magic, perm, opcode map, pubkey; never the project secret */",
+        # FGD_KEY_SHARDS ^ FGD_KEY_MASKS is the pack AES key, FGD-KDF-1(secret,
+        # salt), computed here. The project secret, the salt and the signing
+        # seed are never written to the header, so extracting a template's key
+        # opens packs made with that key and nothing else: not the secret, not
+        # the signing seed.
+        #
+        # volatile: with plain `static const` arrays the compiler folds the XOR
+        # at build time (GCC -O3, Godot's production=yes) and stores the
+        # reassembled key in the binary. volatile forces a runtime load of every
+        # byte, so only the shards and masks are stored.
+        _c_array_2d("FGD_KEY_MASKS", mask_pieces(masks), volatile=True),
+        _c_array_2d("FGD_KEY_SHARDS", shard_pieces(shards), volatile=True),
         _c_u32("FGD_PACK_MAGIC", magic),
         _c_perm("FGD_INDEX_PERM", perm),
     ]

@@ -53,9 +53,11 @@ jobs:
 
   compilers:
     # The template build compiles dialect.gen.h with GCC (Linux) and MinGW GCC
-    # (Windows). The optimizer must not fold the secret shards back into the
-    # plain secret; this checks g++, clang++ and MinGW at -O2 and -O3.
-    name: Secret is not constant-folded (g++, clang++, MinGW)
+    # (Windows). The optimizer must not fold the masked pack-key shards back
+    # into the plain key; this checks g++, clang++ and MinGW at -O2 and -O3,
+    # runs the shipped key reassembly, and checks the header holds nothing the
+    # project secret or signing seed can be recovered from.
+    name: Template key material (g++, clang++, MinGW)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -68,7 +70,7 @@ jobs:
         env:
           # The test fails if any of these is missing instead of skipping it.
           FORTRESSGD_REQUIRE_COMPILERS: "g++,clang++,x86_64-w64-mingw32-g++"
-        run: python -m unittest -v tests.test_generator.SecretNotFoldedTests
+        run: python -m unittest -v tests.test_generator.TemplateKeyMaterialTests
 
   package:
     name: Wheel and sdist install
@@ -132,16 +134,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Download the official Godot editor
-        run: |
-          set -euo pipefail
-          base="https://github.com/godotengine/godot/releases/download/${{ matrix.godot }}-stable"
-          zip="Godot_v${{ matrix.godot }}-stable_linux.x86_64.zip"
-          cd "$RUNNER_TEMP"
-          curl -sSLf -O "$base/$zip" -O "$base/SHA512-SUMS.txt"
-          grep " $zip\$" SHA512-SUMS.txt | sha512sum -c -
-          unzip -q "$zip" -d godot
-          echo "GODOT=$RUNNER_TEMP/godot/Godot_v${{ matrix.godot }}-stable_linux.x86_64" >> "$GITHUB_ENV"
+      - name: Get the official Godot editor
+        id: godot
+        uses: ./.github/actions/godot-editor
+        with:
+          version: ${{ matrix.godot }}
+      - run: echo "GODOT=${{ steps.godot.outputs.path }}" >> "$GITHUB_ENV"
       - name: Python and GDScript manglers agree on the golden corpus
         env:
           FORTRESSGD_GODOT_TESTS: "1"

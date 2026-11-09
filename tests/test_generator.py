@@ -40,9 +40,10 @@ class GeneratorTests(unittest.TestCase):
         self.assertEqual(derive_shard_masks(self.secret, "4.6.2"), derive_shard_masks(self.secret, "4.6.2"))
         self.assertEqual(derive_pack_magic(self.secret, "4.6.2"), derive_pack_magic(self.secret, "4.6.2"))
         self.assertEqual(derive_index_perm(self.secret, "4.6.2"), derive_index_perm(self.secret, "4.6.2"))
-        self.assertIn("FGD_DIALECT_SALT[16]", a)
-        self.assertIn("FGD_SHARD_MASKS[4][8]", a)
-        self.assertIn("FGD_SHARDS[4][8]", a)
+        self.assertIn("FGD_KEY_MASKS[4][8]", a)
+        self.assertIn("FGD_KEY_SHARDS[4][8]", a)
+        # The runtime no longer derives the key, so the salt does not ship.
+        self.assertNotIn("FGD_DIALECT_SALT", a)
         self.assertIn("FGD_PACK_MAGIC", a)
         self.assertIn("FGD_INDEX_PERM[4]", a)
         self.assertIn("FGD_OPCODE_MAP[{0}]".format(FGD_OPCODE_COUNT), a)
@@ -64,9 +65,10 @@ class GeneratorTests(unittest.TestCase):
         self.assertIn("static const uint8_t FGD_REQUIRE_PACK_SIGNATURE = 1;", on)
         self.assertNotIn("FGD_REQUIRE_PACK_SIGNATURE = 1;", off)
 
-    def test_header_shards_round_trip_to_secret(self) -> None:
+    def test_header_shards_round_trip_to_the_pack_key_not_the_secret(self) -> None:
         salt, masks, shards, did = dialect_material(self.secret, "4.6.2")
-        self.assertEqual(decode_shards(shards, masks), self.secret)
+        self.assertEqual(decode_shards(shards, masks), fgd_kdf_1(self.secret, salt))
+        self.assertNotEqual(decode_shards(shards, masks), self.secret)
         self.assertEqual(len(did), 16)
         self.assertEqual(GENERATOR_VERSION, 2)
 
@@ -120,25 +122,41 @@ class GeneratorTests(unittest.TestCase):
 
 
 # The reassembly loop exactly as fortressgd_derive_key in the engine patch has it.
-_REASSEMBLY_LINE = "secret[shard * 8 + i] = FGD_SHARDS[shard][i] ^ FGD_SHARD_MASKS[shard][i];"
+_REASSEMBLY_LINE = "r_key[shard * 8 + i] = FGD_KEY_SHARDS[shard][i] ^ FGD_KEY_MASKS[shard][i];"
 _REASSEMBLY_TU = """#include "dialect.gen.h"
 extern void fgd_sink(const uint8_t *p);
 void fgd_reassemble() {
-	uint8_t secret[32];
+	uint8_t r_key[32];
 	for (int shard = 0; shard < 4; shard++) {
 		for (int i = 0; i < 8; i++) {
 			%s
 		}
 	}
-	fgd_sink(secret);
+	fgd_sink(r_key);
 }
 """ % _REASSEMBLY_LINE
 
 
-class SecretNotFoldedTests(unittest.TestCase):
-    """An optimizing compiler must not fold FGD_SHARDS ^ FGD_SHARD_MASKS into the
-    plain secret. Godot's production=yes builds use -O3, where GCC did exactly
-    that with `static const` arrays and the template shipped the secret."""
+def _derive_key_source() -> str:
+    """fortressgd_derive_key() exactly as the engine patch ships it."""
+    text = (PKG / "patches" / "common" / "fortressgd_kdf.cpp").read_text(encoding="utf-8")
+    match = re.search(r"^void fortressgd_derive_key\(uint8_t r_key\[32\]\) \{\n.*?^\}\n", text, re.M | re.S)
+    if match is None:
+        raise AssertionError("fortressgd_derive_key not found in fortressgd_kdf.cpp")
+    return match.group(0)
+
+
+def _header_arrays(header: str) -> list[bytes]:
+    """Every byte array literal in a generated header."""
+    arrays = []
+    for body in re.findall(r"uint8_t \w+(?:\[\d+\])+ = \{(.*?)\};", header, re.S):
+        arrays.append(bytes(int(v, 16) for v in re.findall(r"0x([0-9a-fA-F]{2})", body)))
+    return arrays
+
+
+class TemplateKeyMaterialTests(unittest.TestCase):
+    """What dialect.gen.h compiles into a template: the masked pack key and nothing
+    the project secret or the pack-signing seed can be recovered from."""
 
     def test_engine_patches_use_the_reassembly_loop_under_test(self) -> None:
         sources = [PKG / "patches" / "common" / "fortressgd_kdf.cpp"]
@@ -149,11 +167,31 @@ class SecretNotFoldedTests(unittest.TestCase):
 
     def test_header_declares_shards_and_masks_volatile(self) -> None:
         header = render_dialect_header(bytes(range(SECRET_BYTES)), "4.6.2")
-        for name in ("FGD_SHARD_MASKS", "FGD_SHARDS"):
+        for name in ("FGD_KEY_MASKS", "FGD_KEY_SHARDS"):
             with self.subTest(name=name):
                 self.assertRegex(header, r"static const volatile uint8_t {0}\[4\]\[8\]".format(name))
 
-    def test_compiled_reassembly_does_not_contain_the_secret(self) -> None:
+    def test_header_does_not_encode_the_secret_or_the_signing_seed(self) -> None:
+        from fortressgd.core.pack_sign import signing_seed
+
+        for require_signature in (False, True):
+            with self.subTest(require_signature=require_signature):
+                secret = os.urandom(SECRET_BYTES)
+                header = render_dialect_header(secret, "4.6.2", require_signature=require_signature)
+                arrays = _header_arrays(header)
+                self.assertGreaterEqual(len(arrays), 3)
+                blob = b"".join(arrays)
+                seed = signing_seed(secret, "4.6.2")
+                for name, value in (("secret", secret), ("signing seed", seed)):
+                    for i in range(0, SECRET_BYTES, 8):
+                        self.assertFalse(value[i : i + 8] in blob, "{0} bytes {1}.. in header".format(name, i))
+                    # No two 32-byte arrays XOR to it (the old shard scheme did).
+                    wide = [a for a in arrays if len(a) == SECRET_BYTES]
+                    for a in wide:
+                        for b in wide:
+                            self.assertNotEqual(bytes(x ^ y for x, y in zip(a, b)), value, name)
+
+    def test_compiled_reassembly_does_not_contain_key_material(self) -> None:
         candidates = ("g++", "clang++", "x86_64-w64-mingw32-g++")
         compilers = [c for c in candidates if shutil.which(c)]
         required = [c for c in os.environ.get("FORTRESSGD_REQUIRE_COMPILERS", "").split(",") if c]
@@ -162,6 +200,7 @@ class SecretNotFoldedTests(unittest.TestCase):
         if not compilers:
             self.skipTest("no C++ compiler on PATH")
         secret = os.urandom(SECRET_BYTES)
+        aes_key = fgd_kdf_1(secret, derive_dialect_salt(secret, "4.6.2"))
         with tempfile.TemporaryDirectory() as tmp:
             work = Path(tmp)
             write_dialect_header(work / "dialect.gen.h", secret, "4.6.2")
@@ -175,13 +214,36 @@ class SecretNotFoldedTests(unittest.TestCase):
                             cwd=work, check=True, capture_output=True, timeout=120,
                         )
                         blob = obj.read_bytes()
-                        self.assertFalse(secret in blob, "the reassembled secret was folded into the object")
-                        for i in range(0, SECRET_BYTES, 8):
-                            self.assertFalse(
-                                secret[i : i + 8] in blob,
-                                "secret bytes {0}..{1} were folded into the object".format(i, i + 8),
-                            )
+                        for name, value in (("pack key", aes_key), ("secret", secret)):
+                            for i in range(0, SECRET_BYTES, 8):
+                                self.assertFalse(
+                                    value[i : i + 8] in blob,
+                                    "{0} bytes {1}..{2} were folded into the object".format(name, i, i + 8),
+                                )
 
+    def test_runtime_reassembly_yields_the_key_export_encrypts_with(self) -> None:
+        # Compile and run the shipped fortressgd_derive_key() against a generated
+        # header. Its output must equal FGD-KDF-1(secret, salt), the key
+        # `fortressgd export` hands Godot, or templates cannot open their packs.
+        cxx = shutil.which("g++") or shutil.which("clang++")
+        if not cxx:
+            self.skipTest("no C++ compiler on PATH")
+        secret = os.urandom(SECRET_BYTES)
+        expected = fgd_kdf_1(secret, derive_dialect_salt(secret, "4.6.2"))
+        harness = (
+            "#include <cstdio>\n#include \"dialect.gen.h\"\n"
+            + _derive_key_source()
+            + "int main() {\n\tuint8_t key[32];\n\tfortressgd_derive_key(key);\n"
+            "\tfor (int i = 0; i < 32; i++) printf(\"%02x\", key[i]);\n\treturn 0;\n}\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            write_dialect_header(work / "dialect.gen.h", secret, "4.6.2")
+            (work / "main.cpp").write_text(harness, encoding="utf-8")
+            exe = work / "derive"
+            subprocess.run([cxx, "-O3", "main.cpp", "-o", str(exe)], cwd=work, check=True, capture_output=True, timeout=120)
+            out = subprocess.run([str(exe)], capture_output=True, text=True, check=True, timeout=30).stdout
+        self.assertEqual(out, expected.hex())
 
 if __name__ == "__main__":
     unittest.main()

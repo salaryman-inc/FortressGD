@@ -17,7 +17,7 @@ from fortressgd.core.kdf import (
 from fortressgd.core.secret import SECRET_BYTES
 from fortressgd.core.shards import decode_shards, encode_shards, split_pieces
 from fortressgd.generator.dialect import derive_dialect_salt
-from fortressgd.generator.key_shards import derive_masks, encode_secret
+from fortressgd.generator.key_shards import derive_masks, encode_key
 
 
 def independent_hkdf_sha256(ikm: bytes, salt: bytes, info: bytes, length: int) -> bytes:
@@ -74,7 +74,7 @@ class KdfTests(unittest.TestCase):
         self.assertNotEqual(shards, self.secret)
         self.assertNotEqual(shards, masks)
         self.assertEqual(decode_shards(shards, masks), self.secret)
-        self.assertEqual(encode_secret(self.secret, masks), shards)
+        self.assertEqual(encode_key(self.secret, masks), shards)
         self.assertEqual(len(split_pieces(shards)), 4)
         for piece in split_pieces(shards):
             self.assertEqual(len(piece), 8)

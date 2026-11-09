@@ -62,16 +62,12 @@ jobs:
         working-directory: ${{ env.PROJ }}
         run: fortressgd templates build --godot "${{ matrix.godot }}" --platform linux --platform windows
 
-      - name: Download the official Godot editor
-        run: |
-          set -euo pipefail
-          base="https://github.com/godotengine/godot/releases/download/${{ matrix.godot }}-stable"
-          zip="Godot_v${{ matrix.godot }}-stable_linux.x86_64.zip"
-          cd "$RUNNER_TEMP"
-          curl -sSLf -O "$base/$zip" -O "$base/SHA512-SUMS.txt"
-          grep " $zip\$" SHA512-SUMS.txt | sha512sum -c -
-          unzip -q "$zip" -d godot
-          echo "FORTRESSGD_GODOT=$RUNNER_TEMP/godot/Godot_v${{ matrix.godot }}-stable_linux.x86_64" >> "$GITHUB_ENV"
+      - name: Get the official Godot editor
+        id: godot
+        uses: ./.github/actions/godot-editor
+        with:
+          version: ${{ matrix.godot }}
+      - run: echo "FORTRESSGD_GODOT=${{ steps.godot.outputs.path }}" >> "$GITHUB_ENV"
 
       - name: Export and verify
         working-directory: ${{ env.PROJ }}
@@ -125,7 +121,7 @@ jobs:
         run: |
           set -euo pipefail
           url="$(python -c "import json; print(next(t['download'] for t in json.load(open('testdata/fixtures/unpackers.lock.json'))['tools'] if t['name'] == 'KeyDot'))")"
-          curl -sSLf -o "$RUNNER_TEMP/keydot.exe" "$url"
+          curl -sSLf --retry 6 --retry-all-errors -o "$RUNNER_TEMP/keydot.exe" "$url"
       - name: KeyDot must not recover the key
         shell: bash
         env:
