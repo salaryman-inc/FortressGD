@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
+from fortressgd.core.config import key_epoch
 from fortressgd.core.errors import NEXT_DOCTOR, NEXT_SECRET, NEXT_VERIFY, VerifyError
 from fortressgd.core.filters import (
     SHADER_MARKER,
@@ -68,6 +69,7 @@ def verify_artifact(
     godot_tag: str | None = None,
     nameless_bytecode: bool = False,
     sign_packs: bool = False,
+    key_epoch: int = 0,
 ) -> VerifyResult:
     """
     List packed paths and report §6.3 leaks.
@@ -96,7 +98,7 @@ def verify_artifact(
                 "dialect verify requires the project secret and godot tag",
                 NEXT_VERIFY,
             )
-        magic, perm, aes_key = dialect_params_for_secret(secret, godot_tag)
+        magic, perm, aes_key = dialect_params_for_secret(secret, godot_tag, key_epoch=key_epoch)
         listing = read_dialect_listing(
             data, magic=magic, perm=perm, aes_key=aes_key, source=str(artifact)
         )
@@ -113,12 +115,18 @@ def verify_artifact(
                 NEXT_DOCTOR,
             )
     else:
-        listing = read_stock_listing(data, secret=secret, godot_tag=godot_tag, source=str(artifact))
+        listing = read_stock_listing(
+            data, secret=secret, godot_tag=godot_tag, source=str(artifact), key_epoch=key_epoch
+        )
         packed = [item.path for item in listing.files]
 
     leaks = find_leaks(packed, include=include, exclude=exclude) + sidecar_pdb_leaks(artifact)
     leaks += sidecar_source_map_leaks(artifact)
-    body_key = dialect_key_for_secret(secret, godot_tag) if secret is not None and godot_tag else None
+    body_key = (
+        dialect_key_for_secret(secret, godot_tag, key_epoch=key_epoch)
+        if secret is not None and godot_tag
+        else None
+    )
     leaks += _shader_source_leaks(data, listing, include, body_key)
     leaks += _plaintext_body_leaks(listing, include)
     result = VerifyResult(
@@ -170,6 +178,7 @@ def read_stock_listing(
     secret: bytes | None,
     godot_tag: str | None,
     source: str,
+    key_epoch: int = 0,
 ) -> PackListing:
     """
     Stock GDPC listing. `fortressgd export` with dialect=false always encrypts the
@@ -197,7 +206,7 @@ def read_stock_listing(
         offset,
         magic=STOCK_PACK_MAGIC,
         perm=STOCK_INDEX_PERM,
-        aes_key=dialect_key_for_secret(secret, godot_tag),
+        aes_key=dialect_key_for_secret(secret, godot_tag, key_epoch=key_epoch),
         source=source,
     )
 
@@ -363,6 +372,7 @@ def verify_with_config(artifact: Path, cfg: dict, secret: bytes | None) -> Verif
         godot_tag=godot_tag,
         nameless_bytecode=bool(production.get("nameless_bytecode", False)),
         sign_packs=bool(production.get("sign_packs", False)),
+        key_epoch=key_epoch(cfg),
     )
     if result.leaks:
         raise format_verify_leaks(result)

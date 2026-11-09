@@ -1,6 +1,8 @@
 #!/bin/sh
 # Clone a pinned Godot tag, apply the FortressGD series, copy dialect.gen.h, build templates.
-# Secret arrives at RUN via a mount (FORTRESSGD_SECRET_FILE). Never echo it. Never write it to /out.
+# The project secret never enters this container. The host passes the generated
+# dialect.gen.h (masked pack key and public values only) and FGD_SECRET_HASH, the
+# public 16-hex id used in the template name.
 set -eu
 
 err() {
@@ -13,7 +15,7 @@ GODOT_VERSION="${GODOT_VERSION:-4.6.2-stable}"
 FGD_GODOT="${FGD_GODOT:-4.6.2}"
 FGD_PLATFORM="${FGD_PLATFORM:-linux}"
 FGD_ARCH="${FGD_ARCH:-x86_64}"
-SECRET_FILE="${FORTRESSGD_SECRET_FILE:-/run/secrets/fortressgd}"
+SECRET_HASH="${FGD_SECRET_HASH:-}"
 PATCHES_DIR="${PATCHES_DIR:-/patches}"
 HEADER_SRC="${DIALECT_HEADER:-/src/dialect.gen.h}"
 OUT_DIR="${OUT_DIR:-/out}"
@@ -23,12 +25,16 @@ FGD_DIALECT="${FGD_DIALECT:-1}"
 # 1 when [production].sign_packs is true: dialect.gen.h sets FGD_REQUIRE_PACK_SIGNATURE,
 # the template refuses unsigned packs, and its name gets the -sig suffix.
 FGD_REQUIRE_SIGNATURE="${FGD_REQUIRE_SIGNATURE:-0}"
+# [production].key_epoch: the pack key in dialect.gen.h is for this epoch; non-zero
+# epochs get a -e<N> suffix so each release line has its own cached template.
+FGD_KEY_EPOCH="${FGD_KEY_EPOCH:-0}"
 FGD_CCFLAGS="-DFORTRESSGD_OPCODE_MAP -DFORTRESSGD_NAMELESS -DFORTRESSGD_SIGN_PACKS"
 if [ "$FGD_DIALECT" = "1" ]; then
     FGD_CCFLAGS="$FGD_CCFLAGS -DFORTRESSGD_DIALECT"
 fi
 
-[ -f "$SECRET_FILE" ] || err "secret mount missing at $SECRET_FILE"
+printf '%s\n' "$SECRET_HASH" | grep -Eq '^[0-9a-f]{16}$' || err "FGD_SECRET_HASH must be the 16-hex secret_hash"
+printf '%s\n' "$FGD_KEY_EPOCH" | grep -Eq '^(0|[1-9][0-9]{0,9})$' || err "FGD_KEY_EPOCH must be a non-negative integer"
 [ -d "$PATCHES_DIR" ] || err "patches directory missing at $PATCHES_DIR"
 [ -f "$HEADER_SRC" ] || err "dialect.gen.h missing at $HEADER_SRC"
 mkdir -p "$OUT_DIR"
@@ -42,33 +48,29 @@ for patch in "$@"; do
     [ -f "$PATCHES_DIR/$patch" ] || err "series lists missing patch file: $patch"
 done
 
-# Hashes from mounted inputs (not from the secret as a build-arg).
-META="$(python3 - "$SECRET_FILE" "$PATCHES_DIR" <<'PY'
+# Patchset id from the mounted patches; the host's value is cross-checked below.
+PATCHSET_ID="$(python3 - "$PATCHES_DIR" <<'PY'
 import hashlib, pathlib, sys
-secret_path, patches = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
-raw = secret_path.read_text(encoding="ascii").strip()
-secret = bytes.fromhex(raw)
-secrethash = hashlib.sha256(b"fortressgd-v1|" + secret).hexdigest()[:16]
+patches = pathlib.Path(sys.argv[1])
 names = []
 for line in (patches / "series").read_text(encoding="utf-8").splitlines():
     name = line.split("#", 1)[0].strip()
     if name:
         names.append(name)
 blob = b"".join((patches / n).read_bytes() for n in names)
-patchset = hashlib.sha256(blob).hexdigest()[:12]
-print(secrethash)
-print(patchset)
+print(hashlib.sha256(blob).hexdigest()[:12])
 PY
 )"
-SECRET_HASH="$(printf '%s\n' "$META" | sed -n '1p')"
-PATCHSET_ID="$(printf '%s\n' "$META" | sed -n '2p')"
-[ -n "$SECRET_HASH" ] && [ -n "$PATCHSET_ID" ] || err "failed to compute secret_hash/patchset_id"
+[ -n "$PATCHSET_ID" ] || err "failed to compute patchset_id"
 
 if [ -n "${FGD_PATCHSET:-}" ] && [ "$FGD_PATCHSET" != "$PATCHSET_ID" ]; then
     err "patchset_id mismatch (host $FGD_PATCHSET vs computed $PATCHSET_ID)"
 fi
 
 NAME="godot-${FGD_GODOT}-template_release-${FGD_PLATFORM}-${FGD_ARCH}-fgd${PATCHSET_ID}-${SECRET_HASH}"
+if [ "$FGD_KEY_EPOCH" != "0" ]; then
+    NAME="${NAME}-e${FGD_KEY_EPOCH}"
+fi
 if [ "$FGD_REQUIRE_SIGNATURE" = "1" ]; then
     NAME="${NAME}-sig"
     grep -q "FGD_REQUIRE_PACK_SIGNATURE = 1;" "$HEADER_SRC" || err "FGD_REQUIRE_SIGNATURE=1 but dialect.gen.h does not require signatures"
@@ -95,9 +97,9 @@ apply_series() {
 }
 
 write_manifest() {
-    python3 - "$OUT_DIR/$NAME.manifest.json" "$FGD_GODOT" "$PATCHSET_ID" "$SECRET_HASH" "$FGD_PLATFORM" "$FGD_ARCH" "$DIALECT_ID" "$SKIP_SCONS" "$FGD_REQUIRE_SIGNATURE" <<'PY'
+    python3 - "$OUT_DIR/$NAME.manifest.json" "$FGD_GODOT" "$PATCHSET_ID" "$SECRET_HASH" "$FGD_PLATFORM" "$FGD_ARCH" "$DIALECT_ID" "$SKIP_SCONS" "$FGD_REQUIRE_SIGNATURE" "$FGD_KEY_EPOCH" <<'PY'
 import json, sys
-path, godot, patchset, secrethash, platform, arch, dialect, skip, require_sig = sys.argv[1:10]
+path, godot, patchset, secrethash, platform, arch, dialect, skip, require_sig, key_epoch = sys.argv[1:11]
 data = {
     "godot": godot,
     "patchset_id": patchset,
@@ -107,6 +109,7 @@ data = {
     "platform": platform,
     "arch": arch,
     "require_signature": require_sig == "1",
+    "key_epoch": int(key_epoch),
 }
 if skip == "1":
     data["skip_scons"] = "1"

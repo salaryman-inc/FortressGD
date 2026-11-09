@@ -480,9 +480,11 @@ def _read_dialect_listing(
     )
 
 
-def dialect_key_for_secret(secret: bytes, godot_tag: str, dialect_seed: bytes | None = None) -> bytes:
-    """FGD-KDF-1(secret, salt) — the key FileAccessEncrypted uses for a dialect pack."""
-    salt = derive_dialect_salt(secret, godot_tag, dialect_seed)
+def dialect_key_for_secret(
+    secret: bytes, godot_tag: str, dialect_seed: bytes | None = None, key_epoch: int = 0
+) -> bytes:
+    """FGD-KDF-1(secret, salt) — the pack AES key for this secret, tag and key epoch."""
+    salt = derive_dialect_salt(secret, godot_tag, dialect_seed, key_epoch)
     return fgd_kdf_1(secret, salt)
 
 
@@ -490,8 +492,9 @@ def dialect_params_for_secret(
     secret: bytes,
     godot_tag: str,
     dialect_seed: bytes | None = None,
+    key_epoch: int = 0,
 ) -> tuple[int, tuple[int, int, int, int], bytes]:
     magic = derive_pack_magic(secret, godot_tag, dialect_seed)
     perm = derive_index_perm(secret, godot_tag, dialect_seed)
-    key = dialect_key_for_secret(secret, godot_tag, dialect_seed)
+    key = dialect_key_for_secret(secret, godot_tag, dialect_seed, key_epoch)
     return magic, perm, key

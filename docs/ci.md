@@ -19,11 +19,13 @@ Reference the action from this repository at a release tag, and install the CLI 
 
 The action builds from its own checkout of FortressGD, so it needs Docker (GitHub's Ubuntu runners have it) and Python 3.9+, but not an installed CLI. `fortressgd export` and `verify` in later steps do need the CLI and `FORTRESSGD_SECRET`.
 
-Cache key: `fgd-templates-{godot}-{patchset}-{secret_hash}-{platform}` (the Action restores `~/.cache/fortressgd/templates` under that key).
+Cache key: `fgd-templates-{godot}-{patchset}-{secret_hash}-{platforms}-e{key_epoch}` (the Action restores `~/.cache/fortressgd/templates` under that key).
+
+Set `key_epoch` to the project's `[production].key_epoch` (default `"0"`). The Action builds templates for that pack key, masks it in logs, and scans outputs for it.
 
 Set `sign_packs: "true"` when the project has `[production].sign_packs = true`. The Action then builds the `-sig` template variant, which refuses unsigned or tampered packs, and appends `-sig` to the cache key.
 
-The secret is an Actions secret passed at **run** time. It is not a Docker build-arg and must not land in image layers.
+The secret is an Actions secret that only the host-side `fortressgd` process reads. It never enters the Docker build container: the container gets `dialect.gen.h` (masked pack key, public values) and the public `secret_hash`.
 
 ### Keeping the secret out of logs and caches
 
@@ -58,7 +60,7 @@ If that cross-compile fails in your environment, build on a Windows runner with 
 
 `testdata/fixtures/unpackers.lock.json` pins KeyDot **v1.0.3** (`https://github.com/Titoot/KeyDot`).
 
-Only KeyDot is pinned today. GDRE Tools (gdsdecomp), gdke and GodotPCKExplorer, which DESIGN.md §1 also names, have no regression test yet.
+Only KeyDot is pinned today. The end-to-end workflow also runs the latest GDRE Tools release (below). gdke and GodotPCKExplorer, which DESIGN.md §1 also names, have no regression test yet.
 
 CI obtains the binary from GitHub Releases (do not vendor it):
 
@@ -99,6 +101,10 @@ See [`tests/mangle_corpus/README.md`](../tests/mangle_corpus/README.md) for addi
 1. builds Linux and Windows templates in Docker with a throwaway secret,
 2. exports `testdata/sample_project` with the official editor (derived key and mangling, `dialect = false`) and runs `verify`,
 3. checks `export_presets.cfg` is restored, and runs the exported Linux game headless,
-4. runs the pinned KeyDot against the protected Windows build on a Windows runner.
+4. runs the **latest** GDRE Tools release (gdsdecomp) with `--recover` on the protected Linux pack and fails if any script contents come back. A control run first lists a plain pack, so a GDRE that cannot run on the runner fails the job instead of passing it. The version tested is in the job summary.
+5. turns on `sign_packs`, builds the `-sig` Linux template, exports a signed pack and runs it, then checks the same template refuses the earlier unsigned pack and a copy with a corrupted signature,
+6. runs the pinned KeyDot against the protected Windows build on a Windows runner.
 
-Not covered yet: the dialect path (it needs a patched headless editor build), `sign_packs`, and GDRE Tools, gdke and GodotPCKExplorer.
+GDRE is deliberately unpinned: the point is to notice when a new release learns to read FortressGD builds. KeyDot stays pinned by sha256 in `unpackers.lock.json`.
+
+Not covered yet: the dialect path (it needs a patched headless editor build), key epochs above 0, gdke and GodotPCKExplorer.

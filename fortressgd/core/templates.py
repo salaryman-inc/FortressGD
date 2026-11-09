@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -22,7 +23,19 @@ from fortressgd.generator.dialect import GENERATOR_VERSION, dialect_material, wr
 KDF_NAME = "FGD-KDF-1"
 SUPPORTED_PLATFORMS = ("linux", "windows")
 DEFAULT_ARCH = "x86_64"
-DOCKER_IMAGE = "fortressgd-templates:v1"
+DOCKER_IMAGE_REPO = "fortressgd-templates"
+# Files baked into the image. The tag is their hash, so an upgraded FortressGD
+# never reuses an image built with an older entrypoint.
+DOCKER_CONTEXT_FILES = ("Dockerfile.templates", "entrypoint.sh")
+
+
+def docker_image() -> str:
+    """fortressgd-templates:<sha256 of the Dockerfile and entrypoint, 12 hex>."""
+    digest = hashlib.sha256()
+    for name in DOCKER_CONTEXT_FILES:
+        data = (docker_dir() / name).read_bytes()
+        digest.update(name.encode("utf-8") + b"\0" + len(data).to_bytes(8, "big") + data)
+    return "{0}:{1}".format(DOCKER_IMAGE_REPO, digest.hexdigest()[:12])
 GODOT_STABLE_SUFFIX = "-stable"
 
 
@@ -43,24 +56,35 @@ def template_filename(
     secrethash: str,
     *,
     require_signature: bool = False,
+    key_epoch: int = 0,
 ) -> str:
-    """godot-<ver>-template_release-<platform>-<arch>-fgd<patchset12>-<secrethash16>[-sig]
+    """godot-<ver>-template_release-<platform>-<arch>-fgd<patchset12>-<secrethash16>[-e<N>][-sig]
 
-    The -sig variant refuses packs without a valid index signature (sign_packs).
+    -e<N> marks a template whose pack key comes from [production].key_epoch N
+    (absent for epoch 0). The -sig variant refuses packs without a valid index
+    signature (sign_packs).
     """
-    return "godot-{0}-template_release-{1}-{2}-fgd{3}-{4}{5}".format(
-        godot, platform, arch, patchset, secrethash, SIGNATURE_SUFFIX if require_signature else ""
+    return "godot-{0}-template_release-{1}-{2}-fgd{3}-{4}{5}{6}".format(
+        godot,
+        platform,
+        arch,
+        patchset,
+        secrethash,
+        "-e{0}".format(key_epoch) if key_epoch else "",
+        SIGNATURE_SUFFIX if require_signature else "",
     )
 
 
 def templates_build_command(godot: str, platform: str) -> str:
+    # key_epoch and sign_packs come from .fortressgd.toml, so the plain command
+    # builds the variant the project needs.
     return "fortressgd templates build --godot {0} --platform {1}".format(godot, platform)
 
 
-def missing_template_error(godot: str, secrethash: str, platform: str) -> UserError:
+def missing_template_error(godot: str, secrethash: str, platform: str, key_epoch: int = 0) -> UserError:
     return UserError(
-        "missing templates for godot={0} secret_hash={1} platform={2}".format(
-            godot, secrethash, platform
+        "missing templates for godot={0} secret_hash={1} platform={2}{3}".format(
+            godot, secrethash, platform, " key_epoch={0}".format(key_epoch) if key_epoch else ""
         ),
         templates_build_command(godot, platform),
     )
@@ -75,9 +99,10 @@ def find_cached_template(
     secrethash: str,
     cache_dir: str | Path | None = None,
     require_signature: bool = False,
+    key_epoch: int = 0,
 ) -> Path | None:
     name = template_filename(
-        godot, platform, arch, patchset, secrethash, require_signature=require_signature
+        godot, platform, arch, patchset, secrethash, require_signature=require_signature, key_epoch=key_epoch
     )
     path = templates_cache_dir(cache_dir) / name
     if path.is_file():
@@ -105,6 +130,7 @@ def manifest_dict(
     platform: str,
     arch: str = DEFAULT_ARCH,
     require_signature: bool = False,
+    key_epoch: int = 0,
 ) -> dict[str, Any]:
     return {
         "godot": godot,
@@ -116,6 +142,7 @@ def manifest_dict(
         "arch": arch,
         "generator_version": str(GENERATOR_VERSION),
         "require_signature": bool(require_signature),
+        "key_epoch": int(key_epoch),
     }
 
 
@@ -178,7 +205,7 @@ def ensure_docker_image() -> None:
             "install Docker, then: fortressgd templates build",
         )
     inspect = subprocess.run(
-        ["docker", "image", "inspect", DOCKER_IMAGE],
+        ["docker", "image", "inspect", docker_image()],
         capture_output=True,
         text=True,
     )
@@ -191,7 +218,7 @@ def ensure_docker_image() -> None:
             "-f",
             str(dockerfile),
             "-t",
-            DOCKER_IMAGE,
+            docker_image(),
             str(docker_dir()),
         ],
         capture_output=True,
@@ -214,6 +241,7 @@ def build_templates(
     skip_scons: bool = False,
     dialect: bool = True,
     require_signature: bool = False,
+    key_epoch: int = 0,
 ) -> list[Path]:
     """
     Generate dialect.gen.h, refuse empty/failed series, run Docker template build,
@@ -234,8 +262,8 @@ def build_templates(
     require_series(tag_dir)
     pset = patchset_id(files)
 
-    _salt, _masks, _shards, did = dialect_material(secret, tag)
-    needles = secret_needles(secret, tag)
+    _salt, _masks, _shards, did = dialect_material(secret, tag, key_epoch=key_epoch)
+    needles = secret_needles(secret, tag, key_epoch=key_epoch)
 
     dest_root = templates_cache_dir(cache_dir)
     dest_root.mkdir(parents=True, exist_ok=True)
@@ -243,10 +271,9 @@ def build_templates(
     with tempfile.TemporaryDirectory(prefix="fortressgd-tmpl-") as tmp:
         tmp_path = Path(tmp)
         header = tmp_path / "dialect.gen.h"
-        write_dialect_header(header, secret, tag, require_signature=require_signature)
-        secret_path = tmp_path / "secret"
-        secret_path.write_text(hex_secret + "\n", encoding="ascii")
-        os.chmod(secret_path, 0o600)
+        # The header holds the masked pack key and public values; the project
+        # secret itself is never written here or passed to the container.
+        write_dialect_header(header, secret, tag, require_signature=require_signature, key_epoch=key_epoch)
         out_dir = tmp_path / "out"
         out_dir.mkdir()
 
@@ -272,7 +299,9 @@ def build_templates(
                     "-e",
                     "FGD_PATCHSET={0}".format(pset),
                     "-e",
-                    "FORTRESSGD_SECRET_FILE=/run/secrets/fortressgd",
+                    "FGD_SECRET_HASH={0}".format(secrethash),
+                    "-e",
+                    "FGD_KEY_EPOCH={0}".format(int(key_epoch)),
                     "-e",
                     "FORTRESSGD_SKIP_SCONS={0}".format("1" if skip else "0"),
                     "-e",
@@ -280,14 +309,12 @@ def build_templates(
                     "-e",
                     "FGD_REQUIRE_SIGNATURE={0}".format("1" if require_signature else "0"),
                     "-v",
-                    "{0}:/run/secrets/fortressgd:ro".format(secret_path),
-                    "-v",
                     "{0}:/patches:ro".format(tag_dir),
                     "-v",
                     "{0}:/src/dialect.gen.h:ro".format(header),
                     "-v",
                     "{0}:/out".format(out_dir),
-                    DOCKER_IMAGE,
+                    docker_image(),
                 ],
                 capture_output=True,
                 text=True,
@@ -299,7 +326,8 @@ def build_templates(
                     templates_build_command(tag, platform),
                 )
             name = template_filename(
-                tag, platform, DEFAULT_ARCH, pset, secrethash, require_signature=require_signature
+                tag, platform, DEFAULT_ARCH, pset, secrethash,
+                require_signature=require_signature, key_epoch=key_epoch,
             )
             src_bin = out_dir / name
             src_man = out_dir / (name + ".manifest.json")
@@ -329,12 +357,14 @@ def build_templates(
                 )
             shutil.copy2(src_bin, dest_bin)
             shutil.copy2(src_man, dest_man)
-            _assert_manifest_safe(dest_man, secrethash, require_signature)
+            _assert_manifest_safe(dest_man, secrethash, require_signature, key_epoch)
             produced.append(dest_bin)
         return produced
 
 
-def _assert_manifest_safe(path: Path, secrethash: str, require_signature: bool = False) -> None:
+def _assert_manifest_safe(
+    path: Path, secrethash: str, require_signature: bool = False, key_epoch: int = 0
+) -> None:
     data = json.loads(path.read_text(encoding="utf-8"))
     if data.get("kdf") != KDF_NAME:
         raise ToolError("manifest kdf is not {0}".format(KDF_NAME), NEXT_TEMPLATES)
@@ -344,3 +374,5 @@ def _assert_manifest_safe(path: Path, secrethash: str, require_signature: bool =
         raise ToolError("manifest secret_hash mismatch", NEXT_TEMPLATES)
     if bool(data.get("require_signature", False)) != bool(require_signature):
         raise ToolError("manifest require_signature mismatch", NEXT_TEMPLATES)
+    if int(data.get("key_epoch", 0)) != int(key_epoch):
+        raise ToolError("manifest key_epoch mismatch", NEXT_TEMPLATES)

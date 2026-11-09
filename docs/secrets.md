@@ -40,6 +40,16 @@ In GitHub Actions, store it as an encrypted **Actions secret** and pass it as `$
 
 Keep an offline backup. A lost secret cannot be recovered, and without it you cannot build a template that loads your shipped packs or reproduce a mangling map.
 
+## Key epochs: a new pack key per release line
+
+Rotation (below) replaces everything the secret derives. To limit what one extracted pack key opens without rotating, bump `[production].key_epoch` in `.fortressgd.toml` for a new release line:
+
+1. Set `key_epoch = N` (any integer above the last one you shipped) and commit it.
+2. Rebuild templates (`fortressgd templates build`, or the Action with `key_epoch: "N"`). Their names gain `-eN`.
+3. Export and ship as usual.
+
+Only the pack AES key changes. The secret, `secret_hash`, mangled names, the pack format and the signing key stay the same, so CI secrets need no update and source maps stay comparable. Packs made for one epoch do not load in templates for another: a patch or DLC pack must use the epoch of the game it is loaded into. Keep old epochs' templates if you still build patches for those releases.
+
 ## Rotation runbook
 
 Rotate when the secret may have leaked (it appeared in a log, a commit, a screenshot, an artifact, or a departed team member's machine) or when `doctor` reports it as weak.

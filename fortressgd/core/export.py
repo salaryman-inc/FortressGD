@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from fortressgd.core.config import load_path
+from fortressgd.core.config import key_epoch, load_path
 from fortressgd.core.errors import NEXT_DOCTOR, NEXT_EXPORT, UserError
 from fortressgd.core.kdf import aes_key_hex, secret_hash
 from fortressgd.core.mangle import (
@@ -212,7 +212,9 @@ def write_export_source_map(
     return dest
 
 
-def _sign_exported_pack(pack_file: Path, *, use_dialect: bool, secret: bytes, godot_tag: str) -> None:
+def _sign_exported_pack(
+    pack_file: Path, *, use_dialect: bool, secret: bytes, godot_tag: str, key_epoch: int = 0
+) -> None:
     """Write the Ed25519 index signature into the pack header's reserved area."""
     import struct
 
@@ -223,10 +225,12 @@ def _sign_exported_pack(pack_file: Path, *, use_dialect: bool, secret: bytes, go
 
     packed = pack_file.read_bytes()
     if use_dialect:
-        magic, perm, aes_key = dialect_params_for_secret(secret, godot_tag)
+        magic, perm, aes_key = dialect_params_for_secret(secret, godot_tag, key_epoch=key_epoch)
         listing = read_dialect_listing(packed, magic=magic, perm=perm, aes_key=aes_key, source=str(pack_file))
     else:
-        listing = read_stock_listing(packed, secret=secret, godot_tag=godot_tag, source=str(pack_file))
+        listing = read_stock_listing(
+            packed, secret=secret, godot_tag=godot_tag, source=str(pack_file), key_epoch=key_epoch
+        )
     flags = struct.unpack_from("<I", packed, listing.pck_start + 20)[0]
     if listing.version == PACK_FORMAT_V4 and flags & PACK_DIR_ENCRYPTED and flags & PACK_SPARSE_BUNDLE:
         # Godot 4.7 stores the sparse-bundle salt where the signature goes.
@@ -310,7 +314,8 @@ def export_preset(
     hex_secret = load_secret_hex(secret_file=secret_file, environ=env, cwd=root)
     secret = secret_bytes_from_hex(hex_secret)
     secrethash = secret_hash(secret)
-    salt = derive_dialect_salt(secret, godot_ver)
+    epoch = key_epoch(cfg)
+    salt = derive_dialect_salt(secret, godot_ver, key_epoch=epoch)
     derived_hex = aes_key_hex(secret, salt)
     if derived_hex == hex_secret:
         raise UserError("derived AES key must not equal the project secret", NEXT_EXPORT)
@@ -343,6 +348,7 @@ def export_preset(
         secrethash=secrethash,
         cache_dir=cache,
         require_signature=sign_packs,
+        key_epoch=epoch,
     )
     if template is None:
         unsigned = sign_packs and find_cached_template(
@@ -352,6 +358,7 @@ def export_preset(
             patchset=pset,
             secrethash=secrethash,
             cache_dir=cache,
+            key_epoch=epoch,
         )
         if unsigned:
             raise UserError(
@@ -360,7 +367,7 @@ def export_preset(
                 "or tampered packs".format(Path(unsigned).name),
                 templates_build_command(godot_ver, platform),
             )
-        raise missing_template_error(godot_ver, secrethash, platform)
+        raise missing_template_error(godot_ver, secrethash, platform, epoch)
 
     index = preset["_index"]
     options_section = "preset.{0}.options".format(index)
@@ -470,9 +477,13 @@ def export_preset(
     artifact = Path(out_path or export_path)
     if artifact and not artifact.is_absolute():
         artifact = root / artifact
+    mangle_summary = ""
     if mangle_on:
+        from fortressgd.core.mangle_report import analyze_project, summary_line
+
         written = write_export_source_map(root, artifact, secrethash, identifier_map)
         map_file = str(written)
+        mangle_summary = summary_line(analyze_project(root))
 
     if sign_packs:
         if artifact.suffix.lower() == ".zip":
@@ -484,6 +495,7 @@ def export_preset(
             use_dialect=use_dialect,
             secret=secret,
             godot_tag=godot_ver,
+            key_epoch=epoch,
         )
 
     verify_line = ""
@@ -498,12 +510,14 @@ def export_preset(
         "platform": platform,
         "godot": godot_ver,
         "secret_hash": secrethash,
+        "key_epoch": epoch,
         "template": str(template),
         "export_path": out_path or export_path,
         "dialect": "1" if use_dialect else "0",
         "export_mode": "export-pack" if use_dialect else "export-release",
         "mangle_scripts": "1" if mangle_on else "0",
         "source_map": map_file,
+        "mangle_summary": mangle_summary,
         "verify": verify_line,
         "warnings": warnings,
     }

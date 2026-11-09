@@ -7,7 +7,7 @@ import os
 import sys
 from pathlib import Path
 
-from fortressgd.core.config import load_path
+from fortressgd.core.config import key_epoch, load_path
 from fortressgd.core.errors import NEXT_HELP, NEXT_SECRET, ToolError, UserError, VerifyError
 from fortressgd.core.export import export_preset
 from fortressgd.core.project import (
@@ -103,12 +103,39 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="build the -sig variant that refuses unsigned packs (default: toml production.sign_packs)",
     )
+    build.add_argument(
+        "--key-epoch",
+        type=int,
+        default=None,
+        help="pack key epoch to build for (default: toml production.key_epoch, else 0)",
+    )
     tmpl_sub.add_parser("list", help="list cached templates")
 
     exp = sub.add_parser("export", help="production export with derived AES key")
     exp.add_argument("--preset", required=True, help="export preset name")
     exp.add_argument("--secret-file", default=argparse.SUPPRESS, help=secret_file_help)
+    rep = sub.add_parser(
+        "mangle-report",
+        help="list the script names mangling leaves readable, and why (needs no secret)",
+    )
+    rep.add_argument("--json", action="store_true", help="print the full report as JSON")
+    rep.add_argument("--all", action="store_true", help="list every name, not the first few per reason")
     return parser
+
+
+def cmd_mangle_report(args: argparse.Namespace) -> int:
+    from fortressgd.core.mangle_report import analyze_project, format_report
+    from fortressgd.core.project import require_godot_root
+
+    root = require_godot_root(Path.cwd())
+    cfg = _load_cwd_config()
+    mangle_on = bool(((cfg or {}).get("production") or {}).get("mangle_scripts", False))
+    report = analyze_project(root)
+    if args.json:
+        sys.stdout.write(report.to_json())
+    else:
+        sys.stdout.write(format_report(report, mangle_on=mangle_on, limit=0 if args.all else 8))
+    return 0
 
 
 def cmd_init(_args: argparse.Namespace) -> int:
@@ -202,6 +229,9 @@ def cmd_templates_build(args: argparse.Namespace) -> int:
         if "dialect" in production:
             dialect = bool(production["dialect"])
         require_signature = require_signature or bool(production.get("sign_packs", False))
+    epoch = key_epoch(cfg) if args.key_epoch is None else args.key_epoch
+    if epoch < 0:
+        raise UserError("--key-epoch must be a non-negative integer", NEXT_HELP)
     produced = build_templates(
         godot=godot,
         platforms=platforms,
@@ -212,6 +242,7 @@ def cmd_templates_build(args: argparse.Namespace) -> int:
         patches_dir=patches_dir,
         dialect=dialect,
         require_signature=require_signature,
+        key_epoch=epoch,
     )
     for path in produced:
         sys.stdout.write(path.name + "\n")
@@ -243,6 +274,8 @@ def cmd_export(args: argparse.Namespace) -> int:
     sys.stdout.write(
         "ok: exported preset {0} ({1})\n".format(result["preset"], result["platform"])
     )
+    if result.get("mangle_summary"):
+        sys.stdout.write(result["mangle_summary"] + "\n")
     if result.get("verify"):
         sys.stdout.write(result["verify"] + "\n")
     return 0
@@ -279,6 +312,8 @@ def main(argv: list[str] | None = None) -> int:
                 return cmd_templates_list(args)
         if args.command == "export":
             return cmd_export(args)
+        if args.command == "mangle-report":
+            return cmd_mangle_report(args)
         raise UserError("unknown command", NEXT_HELP)
     except VerifyError as err:
         sys.stderr.write(err.format() + "\n")

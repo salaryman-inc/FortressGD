@@ -25,7 +25,7 @@ Start with leak checks on the official editor — no Docker, no custom templates
 **Derived encryption key**
 
 - PCK AES-256 key is derived from the project secret (`FGD-KDF-1`, HKDF-SHA256) when the template is built, and stored only as masked shards, never as a raw 32-byte blob next to a known error string
-- The project secret itself never ships: no template or pack contains it, so extracting a build's key does not reveal the secret or the signing seed. That key does open every build of the project for the same Godot version until you rotate the secret
+- The project secret itself never ships: no template or pack contains it, so extracting a build's key does not reveal the secret or the signing seed. That key does open every build of the project for the same Godot version and key epoch, until you bump `key_epoch` or rotate the secret
 - Custom `template_release` binaries built in Docker from `fortressgd/patches/<godot-tag>/`
 - CLI injects the derived key for one export process only; it is never written to `export_presets.cfg`
 
@@ -42,6 +42,7 @@ Start with leak checks on the official editor — no Docker, no custom templates
 - Unmarked `call("name")` / `rpc("name")` / `set("prop")` **fail the export** — use Callables
 - Never rewrites scripts under `addons/`; names an addon mentions stay unmangled in your scripts
 - Leaves names alone that it cannot follow: members accessed on other objects, names in string literals, `@export` vars, and names used in scenes, resources and `project.godot`
+- `fortressgd mangle-report` lists every name left readable, the rule that kept it and the file that triggered it (no secret needed); `export` prints a one-line summary
 - Writes the source map (`*.fortressgd.map.json`) to `.fortressgd/maps/` in the project, never inside the pack or next to the artifact: the map reverses all mangling, and build folders get uploaded whole. `fortressgd init` suggests git-ignoring `.fortressgd/`, and `verify` fails if a map sits next to an artifact
 
 **Nameless bytecode** (off by default)
@@ -301,6 +302,7 @@ godot = "4.6.2"
 
 [production]
 dialect = true
+key_epoch = 0
 mangle_scripts = true
 nameless_bytecode = false
 sign_packs = false
@@ -334,6 +336,7 @@ cache_dir = "~/.cache/fortressgd"
 | `production.mangle_scripts` | Rename identifiers and strip debug statements. |
 | `production.nameless_bytecode` | Omit stock `.gdc` debug name tables. |
 | `production.sign_packs` | Ed25519 signature over the pack index. |
+| `production.key_epoch` | Integer, default `0`. Changes only the pack AES key; the pack format, signing key and mangled names stay the same. Bump it for a new release line so a key extracted from one release does not open the next; rebuild templates afterwards (their names gain `-e<N>`). Patch or DLC packs must use the same epoch as the game that loads them. |
 | `production.verify_on_export` | Keep true (the default when absent). `export` then runs the same check as `fortressgd verify` on the artifact, or on the `<name>.pck` next to an executable without an embedded pack, and exits 2 on a leak. `.zip` exports are not supported yet. |
 | `filters.exclude` | Extra exclude globs (forced excludes still apply). |
 | `filters.include` | Allowlist that overrides a forced exclude. |
@@ -356,6 +359,7 @@ fortressgd templates build [--godot X.Y.Z] [--platform windows|linux]
 fortressgd templates list
 fortressgd export --preset NAME
 fortressgd verify PATH.pck|PATH.exe
+fortressgd mangle-report [--json] [--all]
 ```
 
 Every command accepts `--secret-file PATH`. `--platform` is repeatable (`--platform linux --platform windows`).
@@ -369,6 +373,7 @@ Every command accepts `--secret-file PATH`. `--platform` is repeatable (`--platf
 | `templates build` | Docker-build `template_release` for `(godot, secret_hash, platform)`. |
 | `templates list` | Names of cached templates. |
 | `export` | Production export with derived AES key (and dialect/mangle/sign when enabled), then `verify` when `verify_on_export` is true. |
+| `mangle-report` | List the script names mangling leaves readable, grouped by the rule that keeps each one (scene/resource reference, `@export`, `obj.name` access, string literal, addon, `class_name`, `fortressgd:keep`) with the file responsible. Needs no secret. `--json` for the full report, `--all` for every name. |
 | `verify` | List packed paths; fail on leaked excludes, shipped `.pdb` files or source maps next to the artifact, shaders that still contain comments, unencrypted bodies in an encrypted pack, leftover debug tables, or bad signatures. |
 
 Exit codes: `0` ok, `1` config/user error, `2` verify/policy failure, `3` tool or engine build failure. Errors print `error: …` and `Run: <next command>`.
@@ -440,9 +445,9 @@ Build templates once per `(godot version, patchset, secret hash, platform)` and 
     FORTRESSGD_SECRET: ${{ secrets.FORTRESSGD_SECRET }}
 ```
 
-Cache key: `fgd-templates-{godot}-{patchset}-{secret_hash}-{platform}`. The secret is passed at **run** time; it is not a Docker build-arg and must not land in image layers.
+Cache key: `fgd-templates-{godot}-{patchset}-{secret_hash}-{platforms}-e{key_epoch}[-sig]`. Pass `key_epoch` to the Action when the project sets `[production].key_epoch`. The secret never enters the build container: `templates build` writes `dialect.gen.h` (the masked pack key and public values) on the host and passes only that file and the public `secret_hash` to Docker.
 
-The weekly end-to-end workflow (`.github/workflows/e2e.yml`) builds real templates, exports the sample project, and runs a pinned KeyDot version against the protected Windows build; KeyDot failing to recover the key or project is a pass. Locally the same test is opt-in (`FORTRESSGD_UNPACKER_TESTS=1`). GDRE Tools, gdke and GodotPCKExplorer are not pinned or tested yet, so the claim that they fail rests on design reasoning, not on a test run. See [`docs/ci.md`](docs/ci.md).
+The weekly end-to-end workflow (`.github/workflows/e2e.yml`) builds real templates, exports the sample project, and runs a pinned KeyDot version against the protected Windows build; KeyDot failing to recover the key or project is a pass. Locally the same test is opt-in (`FORTRESSGD_UNPACKER_TESTS=1`). The same workflow runs the latest GDRE Tools release with `--recover` on the protected Linux build and fails if any script contents come back, and checks that a `sign_packs` template refuses unsigned and tampered packs. gdke and GodotPCKExplorer are not tested yet, so the claim that they fail rests on design reasoning, not on a test run. See [`docs/ci.md`](docs/ci.md).
 
 ---
 
@@ -477,7 +482,7 @@ Tests: `python3 tests/run.py`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 | | [Official encrypt][official] | [Godot-Secure][godot-secure] | [GDMaim][gdmaim] | [ChaosProtector][chaos] | FortressGD |
 |---|---|---|---|---|---|
-| Stock KeyDot/GDRE | Usually succeed (KeyDot reads Windows and Web builds) | Project claims fail | Pack opens; scripts are obfuscated | Vendor claims fail (Windows x86-64) | Target: fail (KeyDot checked by the e2e workflow; GDRE not tested yet) |
+| Stock KeyDot/GDRE | Usually succeed (KeyDot reads Windows and Web builds) | Project claims fail | Pack opens; scripts are obfuscated | Vendor claims fail (Windows x86-64) | Target: fail (KeyDot and latest GDRE checked by the e2e workflow) |
 | Editor | Official + custom templates | Patched editor | Official (4.5+) | Official | Official |
 | Source leaks | Your problem | Your problem | Your problem (strips comments only) | Not advertised | `verify` fails the build |
 | Script names | Intact | Intact (token IDs optionally scrambled) | Identifiers mangled; file paths intact | Not advertised | Optional mangler |

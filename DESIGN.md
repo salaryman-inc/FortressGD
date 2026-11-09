@@ -52,7 +52,7 @@ In scope:
 Out of scope (document, do not “fix”):
 
 - Attaching a debugger and dumping the derived key or decrypted resources from memory.
-- A FortressGD-aware tool. The source is public, so a tool that knows the template layout can read one build's pack key and dialect parameters from the binary without running it, at about the cost of the debugger attack above. That exposes the packs of every build sharing that key (same secret and Godot version) until the secret is rotated. It does not expose the project secret, the signing seed, other projects' keys, or anything mangling and the release filters removed. Dialect, opcode map and nameless bytecode do not hold against such a tool: nameless bytecode keeps runtime names in its `FGDN` block.
+- A FortressGD-aware tool. The source is public, so a tool that knows the template layout can read one build's pack key and dialect parameters from the binary without running it, at about the cost of the debugger attack above. That exposes the packs of every build sharing that key (same secret, Godot version and `key_epoch`) until the epoch is bumped or the secret rotated. It does not expose the project secret, the signing seed, other projects' keys, or anything mangling and the release filters removed. Dialect, opcode map and nameless bytecode do not hold against such a tool: nameless bytecode keeps runtime names in its `FGDN` block.
 - Rewriting a packer after reverse-engineering *this* game’s dialect.
 - Asset ripping from GPU/memory.
 - Server-authoritative cheat prevention.
@@ -236,6 +236,7 @@ Runtime template:
 - The shard and mask arrays are `static const volatile`. With plain `static const` the optimizer folds the XOR at build time (GCC at `-O3`, which `production=yes` uses; clang at `-O2`) and the template stores the key unmasked. `templates build` refuses to cache a template holding the raw key or the secret.
 - `tests/test_generator.py` holds this: no array or pair of arrays in the header encodes the secret or the signing seed; the reassembly compiled with every C++ compiler on `PATH` keeps the key out of the object; and the shipped `fortressgd_derive_key()`, compiled and run, returns FGD-KDF-1(secret, salt).
 - The masking only stops pattern scanners that look for a raw 32-byte key. A tool that knows this layout reads the key directly (§1.3).
+- **Key epochs.** `[production].key_epoch` (integer, default 0) feeds the FGD-KDF-1 salt: `salt = HKDF(secret, domain(tag, "salt"), ...)` for epoch 0 and `domain(tag, "salt|epoch=N")` otherwise. Only the pack key changes; magic, index permutation, opcode map, signing seed, mangle key and `secret_hash` do not. Templates for a non-zero epoch are named `-e<N>` and record `key_epoch` in their manifest; `export` and `verify` use the epoch from `.fortressgd.toml`. An extracted key then opens one release line, not every future build. Rotating the secret (`docs/secrets.md`) still changes everything.
 - Wipe stack buffers after use.
 - Replace or encrypt known anchor strings used by KeyDot (`Can't open encrypted pack directory.` and similar). Use format strings rebuilt at runtime or store encrypted.
 
@@ -262,6 +263,7 @@ godot = "4.6.2"
 
 [production]
 dialect = true
+key_epoch = 0                # bump per release line for a new pack key (§5.2)
 mangle_scripts = true
 nameless_bytecode = false    # opt-in; see §8.4
 sign_packs = false           # opt-in; needs the -sig template (§8.4)
@@ -312,7 +314,7 @@ If a C# project cannot run without `.cs` in the PCK on a given Godot version, `f
 ### 7.1 Naming
 
 ```
-godot-<ver>-template_release-<platform>-<arch>-fgd<patchset12>-<secrethash16>[-sig]
+godot-<ver>-template_release-<platform>-<arch>-fgd<patchset12>-<secrethash16>[-e<key_epoch>][-sig]
 ```
 
 Example:
@@ -328,7 +330,7 @@ The `-sig` variant is built when `[production].sign_packs = true` and refuses pa
 
 Docker image `Dockerfile.templates`:
 
-- Input: Godot tag, patch dir, `dialect.gen.h`, `FORTRESSGD_SECRET` (build-arg must **not** be stored in image layers; pass at run via secret mount).
+- Input: Godot tag, patch dir, `dialect.gen.h`, and `FGD_SECRET_HASH` (the public 16-hex id for the template name). The project secret never enters the container, as a build-arg, an env var or a mount: the host writes `dialect.gen.h`, which holds only the masked pack key and public values (§5.2).
 - Steps: shallow clone tag → `git apply` series → copy generated headers → `scons target=template_release production=yes debug_symbols=no` per platform → `strip` where applicable → emit artifact + `manifest.json`.
 
 `manifest.json`:
@@ -351,7 +353,7 @@ Do not put the raw secret or `aes_key` in the manifest.
 ### 7.3 Cache
 
 `~/.cache/fortressgd/templates/<filename>`.  
-CI: restore cache key `fgd-templates-{godot}-{patchset}-{secret_hash}-{platform}`, with `-sig` appended for the signature-required variant.
+CI: restore cache key `fgd-templates-{godot}-{patchset}-{secret_hash}-{platforms}-e{key_epoch}`, with `-sig` appended for the signature-required variant.
 
 ---
 
@@ -413,6 +415,8 @@ Behavior:
 - Never rename: Godot lifecycle methods, engine APIs, `class_name` entries that scenes reference unless the scene rewrite table is updated in the same pass.
 - Emit the source map to `<project>/.fortressgd/maps/<export path relative to the project>.fortressgd.map.json` when mangling is on (an export outside the project goes to `_external/<file>-<sha256(path)[:8]>`). Never next to the artifact: the map reverses all mangling and build folders are uploaded whole. `.fortressgd/` gets a `.gdignore`; `init` suggests git-ignoring it; `verify` fails on a map next to the artifact.
 - If `call("name")` / `rpc("name")` / `set("prop")` string usage is detected and not marked with an explicit allow annotation, **fail export** with file:line. Do not silently ship a broken game.
+
+`fortressgd mangle-report` runs the same analysis as export (`fortressgd/core/mangle_report.py`) and lists every declared name that stays readable, with the rule that kept it and the file that triggered it. It needs no secret: which names are renamed does not depend on the mangle key. A test holds the report to the export's rename map. Use it to see what a decompiler still shows and which rules are worth narrowing.
 
 Annotation (optional, v1):
 

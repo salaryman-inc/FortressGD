@@ -91,6 +91,99 @@ jobs:
           printf '%s\n' "$out"
           printf '%s\n' "$out" | grep -q "FortressGD sample project"
 
+      # GDRE Tools (gdsdecomp) is the stock one-click recovery tool. Run its latest
+      # release so a new version that breaks FortressGD shows up here. The control
+      # run on a plain pack proves the tool works on this runner, so its failure on
+      # the protected build means something.
+      - name: GDRE Tools (latest) cannot recover the protected build
+        working-directory: ${{ env.PROJ }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gdre="$RUNNER_TEMP/gdre"
+          mkdir -p "$gdre"
+          curl -sSLf --retry 6 --retry-all-errors -H "Authorization: Bearer $GH_TOKEN" \
+            -o "$gdre/release.json" https://api.github.com/repos/GDRETools/gdsdecomp/releases/latest
+          read -r tag url digest < <(python3 - "$gdre/release.json" <<'PY'
+          import json, sys
+          rel = json.load(open(sys.argv[1]))
+          tag = rel["tag_name"]
+          asset = next(a for a in rel["assets"] if a["name"] == "GDRE_tools-{0}-linux.zip".format(tag))
+          print(tag, asset["browser_download_url"], asset.get("digest") or "none")
+          PY
+          )
+          echo "GDRE Tools $tag"
+          curl -sSLf --retry 6 --retry-all-errors -o "$gdre/gdre.zip" "$url"
+          if [ "$digest" != "none" ]; then
+            echo "${digest#sha256:}  $gdre/gdre.zip" | sha256sum -c -
+          fi
+          unzip -q "$gdre/gdre.zip" -d "$gdre/bin"
+          tool="$gdre/bin/gdre_tools.x86_64"
+          chmod +x "$tool"
+
+          # Control: a plain pack GDRE must list.
+          python3 - "$gdre/control.pck" <<'PY'
+          import sys
+          sys.path.insert(0, "${{ github.workspace }}")
+          from tests.gdpc_fixture import make_gdpc
+          open(sys.argv[1], "wb").write(make_gdpc(["control_marker.txt"], contents={"control_marker.txt": b"control"}))
+          PY
+          control="$(timeout 300 "$tool" --headless --list-files="$gdre/control.pck" 2>&1 || true)"
+          printf '%s\n' "$control" | tail -20
+          printf '%s\n' "$control" | grep -q "control_marker.txt" || { echo "error: GDRE could not read a plain pack; the check below would prove nothing" >&2; exit 1; }
+
+          # The protected build: no key, so nothing may come back.
+          set +e
+          timeout 900 "$tool" --headless --recover="$PWD/build/linux/game.pck" --output="$gdre/recovered" > "$gdre/recover.log" 2>&1
+          code=$?
+          set -e
+          tail -40 "$gdre/recover.log"
+          echo "GDRE exit code: $code"
+          if grep -rqs "FortressGD sample project" "$gdre/recovered"; then
+            echo "error: GDRE $tag recovered script contents from the protected build" >&2
+            exit 1
+          fi
+          echo "### GDRE Tools $tag: no script contents recovered (exit $code)" >> "$GITHUB_STEP_SUMMARY"
+
+      # sign_packs: the -sig template must run a signed pack and refuse an unsigned
+      # pack or one whose signature does not verify.
+      - name: Signed packs (sign_packs) on Linux
+        working-directory: ${{ env.PROJ }}
+        run: |
+          set -euo pipefail
+          cp build/linux/game.pck "$RUNNER_TEMP/unsigned.pck"
+          sed -i 's/^sign_packs = false/sign_packs = true/' .fortressgd.toml
+          grep -q '^sign_packs = true' .fortressgd.toml
+          fortressgd templates build --godot "${{ matrix.godot }}" --platform linux
+          # export signs the pack; verify_on_export then checks the signature.
+          fortressgd export --preset Linux
+          fortressgd verify build/linux/game.pck
+          run_game() { timeout 120 ./build/linux/game.x86_64 --headless --quit-after 30 "$@" 2>&1 || true; }
+          expect_refused() {
+            out="$(run_game --main-pack "$1")"
+            printf '%s\n' "$out"
+            if printf '%s\n' "$out" | grep -q "FortressGD sample project"; then
+              echo "error: the -sig template ran $2" >&2
+              exit 1
+            fi
+            printf '%s\n' "$out" | grep -qi "signature" || { echo "error: no signature error for $2" >&2; exit 1; }
+          }
+          out="$(run_game)"
+          printf '%s\n' "$out"
+          printf '%s\n' "$out" | grep -q "FortressGD sample project"
+          expect_refused "$RUNNER_TEMP/unsigned.pck" "an unsigned pack"
+          # Corrupt the signature (64 bytes from header offset 40).
+          cp build/linux/game.pck "$RUNNER_TEMP/tampered.pck"
+          python3 - "$RUNNER_TEMP/tampered.pck" <<'PY'
+          import sys
+          path = sys.argv[1]
+          data = bytearray(open(path, "rb").read())
+          data[40] ^= 0x01
+          open(path, "wb").write(data)
+          PY
+          expect_refused "$RUNNER_TEMP/tampered.pck" "a pack with a corrupted signature"
+
       - uses: actions/upload-artifact@v4
         with:
           name: protected-windows-${{ matrix.godot }}

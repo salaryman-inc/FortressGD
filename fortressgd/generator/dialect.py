@@ -44,11 +44,20 @@ def derive_dialect_salt(
     secret: bytes,
     godot_tag: str,
     dialect_seed: bytes | None = None,
+    key_epoch: int = 0,
 ) -> bytes:
-    """16-byte FGD_DIALECT_SALT. Same secret + tag + generator version => same salt."""
+    """16-byte salt for FGD-KDF-1. Same secret + tag + generator version + epoch => same salt.
+
+    ``key_epoch`` ([production].key_epoch) changes only this salt, so only the pack
+    AES key: magic, index permutation, opcode map, signing key and mangled names stay
+    the same. Epoch 0 is the original derivation.
+    """
     if len(secret) != SECRET_BYTES:
         raise ValueError("secret must be {0} bytes".format(SECRET_BYTES))
-    return hkdf_sha256(secret, _domain_salt(godot_tag, "salt"), _info(dialect_seed), SALT_LEN)
+    if type(key_epoch) is not int or key_epoch < 0:
+        raise ValueError("key_epoch must be a non-negative integer")
+    purpose = "salt" if key_epoch == 0 else "salt|epoch={0}".format(key_epoch)
+    return hkdf_sha256(secret, _domain_salt(godot_tag, purpose), _info(dialect_seed), SALT_LEN)
 
 
 def derive_shard_masks(secret: bytes, godot_tag: str) -> bytes:
@@ -117,12 +126,13 @@ def dialect_material(
     secret: bytes,
     godot_tag: str,
     dialect_seed: bytes | None = None,
+    key_epoch: int = 0,
 ) -> tuple[bytes, bytes, bytes, str]:
     """salt, masks, key shards, dialect_id for (secret, tag, generator version).
 
     The shards encode the pack AES key FGD-KDF-1(secret, salt), not the secret.
     """
-    salt = derive_dialect_salt(secret, godot_tag, dialect_seed)
+    salt = derive_dialect_salt(secret, godot_tag, dialect_seed, key_epoch)
     masks = derive_shard_masks(secret, godot_tag)
     shards = encode_key(fgd_kdf_1(secret, salt), masks)
     magic = derive_pack_magic(secret, godot_tag, dialect_seed)
@@ -169,6 +179,7 @@ def render_dialect_header(
     dialect_seed: bytes | None = None,
     *,
     require_signature: bool = False,
+    key_epoch: int = 0,
 ) -> str:
     """
     Data-only C header. No executable snippets derived from the secret.
@@ -180,7 +191,7 @@ def render_dialect_header(
     from fortressgd.core.pack_sign import public_key_for_secret
     from fortressgd.generator.opcode_map import render_opcode_arrays
 
-    _salt, masks, shards, _did = dialect_material(secret, godot_tag, dialect_seed)
+    _salt, masks, shards, _did = dialect_material(secret, godot_tag, dialect_seed, key_epoch)
     magic = derive_pack_magic(secret, godot_tag, dialect_seed)
     perm = derive_index_perm(secret, godot_tag, dialect_seed)
     pubkey = public_key_for_secret(secret, godot_tag, dialect_seed)
@@ -227,11 +238,14 @@ def write_dialect_header(
     dialect_seed: bytes | None = None,
     *,
     require_signature: bool = False,
+    key_epoch: int = 0,
 ) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        render_dialect_header(secret, godot_tag, dialect_seed, require_signature=require_signature),
+        render_dialect_header(
+            secret, godot_tag, dialect_seed, require_signature=require_signature, key_epoch=key_epoch
+        ),
         encoding="utf-8",
     )
     return path

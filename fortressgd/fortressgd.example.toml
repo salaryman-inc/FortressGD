@@ -3,6 +3,7 @@ godot = "4.6.2"
 
 [production]
 dialect = true
+key_epoch = 0                # bump per release line for a new pack key; rebuild templates
 mangle_scripts = true
 nameless_bytecode = false    # opt-in
 sign_packs = false           # opt-in; rebuild templates after turning it on
