@@ -53,9 +53,11 @@ jobs:
 
   compilers:
     # The template build compiles dialect.gen.h with GCC (Linux) and MinGW GCC
-    # (Windows). The optimizer must not fold the secret shards back into the
-    # plain secret; this checks g++, clang++ and MinGW at -O2 and -O3.
-    name: Secret is not constant-folded (g++, clang++, MinGW)
+    # (Windows). The optimizer must not fold the masked pack-key shards back
+    # into the plain key; this checks g++, clang++ and MinGW at -O2 and -O3,
+    # runs the shipped key reassembly, and checks the header holds nothing the
+    # project secret or signing seed can be recovered from.
+    name: Template key material (g++, clang++, MinGW)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -68,7 +70,7 @@ jobs:
         env:
           # The test fails if any of these is missing instead of skipping it.
           FORTRESSGD_REQUIRE_COMPILERS: "g++,clang++,x86_64-w64-mingw32-g++"
-        run: python -m unittest -v tests.test_generator.SecretNotFoldedTests
+        run: python -m unittest -v tests.test_generator.TemplateKeyMaterialTests
 
   package:
     name: Wheel and sdist install

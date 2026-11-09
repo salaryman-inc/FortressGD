@@ -92,7 +92,7 @@ See [`tests/mangle_corpus/README.md`](../tests/mangle_corpus/README.md) for addi
 - `python3 tests/run.py` on Python 3.9 (in the official `python:3.9` image, since `setup-python` no longer ships it for current runners), 3.11, 3.13 and 3.14, plus once with `cryptography` installed. This includes `git apply --check` of every patch series against the upstream Godot tag.
 - A wheel and sdist build, installed outside the checkout, that must run `init`, `secret generate` and `doctor` and ship the plugin, patches and Docker files.
 - The GDScript mangler under the official Godot 4.6.2 and 4.7.2 editors against `tests/mangle_corpus/`.
-- The shard reassembly from the engine patch compiled with g++, clang++ and MinGW at `-O2` and `-O3`; the job fails if any secret bytes reach an object file (DESIGN.md §5.2).
+- The shard reassembly from the engine patch compiled with g++, clang++ and MinGW at `-O2` and `-O3`; the job fails if any bytes of the pack key or the secret reach an object file (DESIGN.md §5.2).
 
 `.github/workflows/e2e.yml` compiles Godot, so it runs weekly, on demand, and on pushes to `main` that touch the patches, the Docker build, the generator or the export code. For each supported tag it:
 

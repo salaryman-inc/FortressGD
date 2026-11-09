@@ -47,10 +47,12 @@ In scope:
 - Full project recovery via GDRE Tools / gdsdecomp on stock PCK + stock bytecode.
 - Casual unzip / PCK Explorer listing of original paths and plaintext scripts.
 - Accidental shipping of `.cs`, `.gd` text, `.blend`, `.psd`, FortressGD source maps.
+- Recovering the project secret or the pack-signing seed from anything that ships. Neither is ever compiled into a template or written to a pack: a template holds only its own pack key, as masked shards (§5.2), and public values.
 
 Out of scope (document, do not “fix”):
 
 - Attaching a debugger and dumping the derived key or decrypted resources from memory.
+- A FortressGD-aware tool. The source is public, so a tool that knows the template layout can read one build's pack key and dialect parameters from the binary without running it, at about the cost of the debugger attack above. That exposes the packs of every build sharing that key (same secret and Godot version) until the secret is rotated. It does not expose the project secret, the signing seed, other projects' keys, or anything mangling and the release filters removed. Dialect, opcode map and nameless bytecode do not hold against such a tool: nameless bytecode keeps runtime names in its `FGDN` block.
 - Rewriting a packer after reverse-engineering *this* game’s dialect.
 - Asset ripping from GPU/memory.
 - Server-authoritative cheat prevention.
@@ -229,9 +231,11 @@ aes_key = okm[0..32)
 
 Runtime template:
 
-- Compile `dialect_salt` and an **obfuscated encoding of `secret` shards**, not `aes_key`.
-- Shard scheme v1: secret split into 4×8-byte pieces, XOR’d with compile-time random masks stored separately, reassembled in `fortressgd_derive_key()`.
-- The shard and mask arrays in `dialect.gen.h` are `static const volatile`. With plain `static const` the optimizer folds the XOR at build time (GCC at `-O3`, which `production=yes` uses; clang at `-O2`) and the template stores the reassembled secret. `templates build` then refuses to cache it. `tests/test_generator.py` compiles the loop with every C++ compiler on `PATH` and fails if any secret bytes reach the object file.
+- **Never compile in the project secret**, or anything it can be recovered from. Everything the secret derives that a template needs (pack key, magic, index permutation, opcode map, public key) is computed when `dialect.gen.h` is written. The pack-signing seed is derived from the secret, so a template that held the secret would let anyone who extracts it sign packs.
+- The generator computes `aes_key = FGD-KDF-1(secret, salt)` and compiles it as masked shards: 4×8-byte pieces XOR’d with masks stored separately (`FGD_KEY_SHARDS`, `FGD_KEY_MASKS`). `fortressgd_derive_key()` only reassembles them; the salt does not ship. The key equals the one `fortressgd export` hands Godot, so packs are unchanged.
+- The shard and mask arrays are `static const volatile`. With plain `static const` the optimizer folds the XOR at build time (GCC at `-O3`, which `production=yes` uses; clang at `-O2`) and the template stores the key unmasked. `templates build` refuses to cache a template holding the raw key or the secret.
+- `tests/test_generator.py` holds this: no array or pair of arrays in the header encodes the secret or the signing seed; the reassembly compiled with every C++ compiler on `PATH` keeps the key out of the object; and the shipped `fortressgd_derive_key()`, compiled and run, returns FGD-KDF-1(secret, salt).
+- The masking only stops pattern scanners that look for a raw 32-byte key. A tool that knows this layout reads the key directly (§1.3).
 - Wipe stack buffers after use.
 - Replace or encrypt known anchor strings used by KeyDot (`Can't open encrypted pack directory.` and similar). Use format strings rebuilt at runtime or store encrypted.
 
@@ -363,10 +367,10 @@ CI: restore cache key `fgd-templates-{godot}-{patchset}-{secret_hash}-{platform}
 
 File `dialect.gen.h` (committed nowhere; build artifact):
 
-- `FGD_DIALECT_SALT[16]`
+- `FGD_KEY_SHARDS[4][8]`, `FGD_KEY_MASKS[4][8]`: the pack AES key, masked (§5.2). Never the project secret or the salt.
 - `FGD_PACK_MAGIC` (u32, must not equal stock `0x43504447` / `GDPC` when `dialect = true`)
 - `FGD_INDEX_PERM[N]` describing field order of the pack index record
-- Shard masks for secret encoding
+- `FGD_OPCODE_MAP` / `FGD_OPCODE_UNMAP`, `FGD_PACK_PUBKEY`, `FGD_REQUIRE_PACK_SIGNATURE`
 
 Deterministic: same secret + tag + generator version ⇒ identical header.
 
@@ -388,7 +392,7 @@ Do not reimplement the full Godot packer in Python in v1.
 ### 8.4 Phase 5 (nameless bytecode, opcode map, pack signatures)
 
 - Opcode permutation table for GDScript VM (`opcode_map.py`): data-only `FGD_OPCODE_MAP` / `FGD_OPCODE_UNMAP` in `dialect.gen.h`. Compiler emit and VM dispatch use the table when `FORTRESSGD_OPCODE_MAP` is compiled in.
-- Ed25519 signatures over the pack index when `[production].sign_packs = true`. Public key is data-only (`FGD_PACK_PUBKEY`); the private seed is derived from the project secret and is not persisted.
+- Ed25519 signatures over the pack index when `[production].sign_packs = true`. Public key is data-only (`FGD_PACK_PUBKEY`); the private seed is derived from the project secret, which never ships, so no template or pack yields it.
   - Signed message: `"fortressgd.pack.sig.v1"` + the on-disk directory bytes from the directory offset to the end of the directory. For an encrypted directory that is the plaintext `u32 file_count` plus the FileAccessEncrypted blob (`md5[16]`, `u64 length`, `iv[16]`, ciphertext padded to 16 bytes). The 64-byte signature sits in the reserved header area at offset 40 (V3/V4).
   - The template verifies the signature before it registers any index entry, for plaintext and encrypted directories alike.
   - **How a template learns signatures are required (decision, #11):** `templates build` with `sign_packs = true` passes `FGD_REQUIRE_SIGNATURE=1` into Docker; the generator writes `FGD_REQUIRE_PACK_SIGNATURE = 1` into `dialect.gen.h` (0 otherwise); `manifest.json` records `"require_signature"`; the filename gets `-sig` (§7.1). Such a template refuses a pack whose signature is missing, all-zero, or invalid. `-DFORTRESSGD_SIGN_PACKS` stays compiled into every template, so a template without the requirement still rejects an invalid non-zero signature. `fortressgd export` with `sign_packs = true` fails if only the non-`-sig` template is cached.
@@ -424,7 +428,7 @@ Document in `docs/agent-rules.md` for AI coding agents:
 - No secrets under `res://`.
 - No string `set`/`get` for user properties.
 
-With `nameless_bytecode` on (§8.4), packed bytecode also drops its symbol tables, so decompilers lose names even without mangling.
+With `nameless_bytecode` on (§8.4), packed bytecode drops the stock symbol and line tables, so stock decompilers lose names even without mangling. The names the engine needs move to the `FGDN` block, so a FortressGD-aware decompiler still reads them; only mangling removes names.
 
 ---
 

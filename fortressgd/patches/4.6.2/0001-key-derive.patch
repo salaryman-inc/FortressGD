@@ -1,26 +1,18 @@
 diff --git a/core/fortressgd_kdf.cpp b/core/fortressgd_kdf.cpp
 new file mode 100644
-index 0000000..e55b5f4
+index 0000000..e0d8c39
 --- /dev/null
 +++ b/core/fortressgd_kdf.cpp
-@@ -0,0 +1,154 @@
+@@ -0,0 +1,73 @@
 +/**************************************************************************/
 +/*  fortressgd_kdf.cpp                                                    */
 +/**************************************************************************/
-+/* FortressGD FGD-KDF-1: shard reassembly + HKDF-SHA256 (DESIGN.md §5.2). */
++/* FortressGD pack key: reassembled from masked shards (DESIGN.md §5.2).   */
 +/**************************************************************************/
 +
 +#include "fortressgd_kdf.h"
 +
-+#include "core/crypto/crypto_core.h"
 +#include "dialect.gen.h"
-+
-+#include <cstring>
-+
-+static const uint8_t FGD_KDF_INFO[] = {
-+	'f', 'o', 'r', 't', 'r', 'e', 's', 's', 'g', 'd', '.',
-+	'p', 'c', 'k', '.', 'a', 'e', 's', '.', 'v', '1'
-+};
 +
 +void fortressgd_wipe(void *p, size_t n) {
 +	volatile uint8_t *v = static_cast<volatile uint8_t *>(p);
@@ -29,90 +21,17 @@ index 0000000..e55b5f4
 +	}
 +}
 +
-+static void fortressgd_hmac_sha256(const uint8_t *p_key, size_t p_key_len, const uint8_t *p_data, size_t p_data_len, uint8_t r_out[32]) {
-+	uint8_t key_block[64];
-+	memset(key_block, 0, sizeof(key_block));
-+	if (p_key_len > 64) {
-+		CryptoCore::sha256(p_key, p_key_len, key_block);
-+	} else {
-+		memcpy(key_block, p_key, p_key_len);
-+	}
-+
-+	uint8_t ipad[64];
-+	uint8_t opad[64];
-+	for (int i = 0; i < 64; i++) {
-+		ipad[i] = key_block[i] ^ 0x36;
-+		opad[i] = key_block[i] ^ 0x5c;
-+	}
-+
-+	uint8_t inner[32];
-+	{
-+		CryptoCore::SHA256Context ctx;
-+		ctx.start();
-+		ctx.update(ipad, 64);
-+		ctx.update(p_data, p_data_len);
-+		ctx.finish(inner);
-+	}
-+	{
-+		CryptoCore::SHA256Context ctx;
-+		ctx.start();
-+		ctx.update(opad, 64);
-+		ctx.update(inner, 32);
-+		ctx.finish(r_out);
-+	}
-+
-+	fortressgd_wipe(key_block, sizeof(key_block));
-+	fortressgd_wipe(ipad, sizeof(ipad));
-+	fortressgd_wipe(opad, sizeof(opad));
-+	fortressgd_wipe(inner, sizeof(inner));
-+}
-+
-+static void fortressgd_hkdf_sha256(const uint8_t *p_ikm, size_t p_ikm_len, const uint8_t *p_salt, size_t p_salt_len, const uint8_t *p_info, size_t p_info_len, uint8_t *r_okm, size_t p_okm_len) {
-+	uint8_t prk[32];
-+	fortressgd_hmac_sha256(p_salt, p_salt_len, p_ikm, p_ikm_len, prk);
-+
-+	uint8_t t[32];
-+	size_t t_len = 0;
-+	size_t filled = 0;
-+	uint8_t counter = 1;
-+	while (filled < p_okm_len) {
-+		uint8_t block[32 + 64 + 1];
-+		size_t block_len = 0;
-+		if (t_len) {
-+			memcpy(block, t, t_len);
-+			block_len = t_len;
-+		}
-+		if (p_info_len) {
-+			memcpy(block + block_len, p_info, p_info_len);
-+			block_len += p_info_len;
-+		}
-+		block[block_len] = counter;
-+		block_len += 1;
-+		fortressgd_hmac_sha256(prk, 32, block, block_len, t);
-+		t_len = 32;
-+		size_t take = p_okm_len - filled;
-+		if (take > 32) {
-+			take = 32;
-+		}
-+		memcpy(r_okm + filled, t, take);
-+		filled += take;
-+		counter += 1;
-+		fortressgd_wipe(block, sizeof(block));
-+	}
-+
-+	fortressgd_wipe(prk, sizeof(prk));
-+	fortressgd_wipe(t, sizeof(t));
-+}
-+
++/* FGD_KEY_SHARDS ^ FGD_KEY_MASKS is the pack AES key, FGD-KDF-1(secret, salt),
++ * which fortressgd computes when it writes dialect.gen.h. The project secret is
++ * never compiled in, so nothing in the binary yields the secret or the
++ * pack-signing seed. Both arrays are volatile so the compiler cannot fold the
++ * XOR into a stored copy of the key. */
 +void fortressgd_derive_key(uint8_t r_key[32]) {
-+	uint8_t secret[32];
 +	for (int shard = 0; shard < 4; shard++) {
 +		for (int i = 0; i < 8; i++) {
-+			secret[shard * 8 + i] = FGD_SHARDS[shard][i] ^ FGD_SHARD_MASKS[shard][i];
++			r_key[shard * 8 + i] = FGD_KEY_SHARDS[shard][i] ^ FGD_KEY_MASKS[shard][i];
 +		}
 +	}
-+	fortressgd_hkdf_sha256(secret, 32, FGD_DIALECT_SALT, 16, FGD_KDF_INFO, sizeof(FGD_KDF_INFO), r_key, 32);
-+	fortressgd_wipe(secret, sizeof(secret));
 +}
 +
 +static String fortressgd_decode_msg(const uint8_t *p_enc, size_t p_len) {

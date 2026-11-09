@@ -24,7 +24,8 @@ Start with leak checks on the official editor — no Docker, no custom templates
 
 **Derived encryption key**
 
-- PCK AES-256 key is derived at runtime (`FGD-KDF-1`, HKDF-SHA256) instead of embedding the raw 32-byte blob next to a known error string
+- PCK AES-256 key is derived from the project secret (`FGD-KDF-1`, HKDF-SHA256) when the template is built, and stored only as masked shards, never as a raw 32-byte blob next to a known error string
+- The project secret itself never ships: no template or pack contains it, so extracting a build's key does not reveal the secret or the signing seed. That key does open every build of the project for the same Godot version until you rotate the secret
 - Custom `template_release` binaries built in Docker from `fortressgd/patches/<godot-tag>/`
 - CLI injects the derived key for one export process only; it is never written to `export_presets.cfg`
 
@@ -51,7 +52,7 @@ Start with leak checks on the official editor — no Docker, no custom templates
 **Pack signatures** (off by default)
 
 - Ed25519 signature over the pack index
-- Public key is compiled into the template; the private seed is derived from the project secret and is not persisted
+- Public key is compiled into the template; the private seed is derived from the project secret and is not persisted. The secret never ships, so extracting a template's pack key does not let anyone sign packs
 
 **Toolchain**
 
