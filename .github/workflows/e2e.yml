@@ -201,10 +201,13 @@ jobs:
           PY
           expect_refused "$RUNNER_TEMP/tampered.pck" "a pack with a corrupted signature"
 
+      # upload-artifact refuses paths with "..", which PROJ has. Copy the build out first.
+      - name: Stage the protected Windows build
+        run: cp -r "$PROJ/build/windows" "$RUNNER_TEMP/protected-windows"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: protected-windows-${{ matrix.godot }}
-          path: ${{ env.PROJ }}/build/windows/
+          path: ${{ runner.temp }}/protected-windows/
           if-no-files-found: error
           retention-days: 3
 

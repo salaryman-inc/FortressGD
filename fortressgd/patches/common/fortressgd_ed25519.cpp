@@ -411,7 +411,7 @@ static int fgd_unpackneg(fgd_gf r[4], const uint8_t p[32]) {
 		return -1;
 	}
 	if (fgd_par25519(r[0]) == (p[31] >> 7)) {
-		fgd_Z(r[0], r[2] /* unused as 0-r */, r[0]);
+		// x = 0 - x (TweetNaCl: Z(r[0], gf0, r[0])). r[2] is 1 here, not 0.
 		for (i = 0; i < 16; i++) {
 			r[0][i] = -r[0][i];
 		}
