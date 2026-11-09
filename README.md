@@ -42,6 +42,7 @@ Start with leak checks on the official editor — no Docker, no custom templates
 - Unmarked `call("name")` / `rpc("name")` / `set("prop")` **fail the export** — use Callables
 - Never rewrites scripts under `addons/`; names an addon mentions stay unmangled in your scripts
 - Leaves names alone that it cannot follow: members accessed on other objects, names in string literals, `@export` vars, and names used in scenes, resources and `project.godot`
+- `fortressgd mangle-report` lists every name left readable, the rule that kept it and the file that triggered it (no secret needed); `export` prints a one-line summary
 - Writes the source map (`*.fortressgd.map.json`) to `.fortressgd/maps/` in the project, never inside the pack or next to the artifact: the map reverses all mangling, and build folders get uploaded whole. `fortressgd init` suggests git-ignoring `.fortressgd/`, and `verify` fails if a map sits next to an artifact
 
 **Nameless bytecode** (off by default)
@@ -358,6 +359,7 @@ fortressgd templates build [--godot X.Y.Z] [--platform windows|linux]
 fortressgd templates list
 fortressgd export --preset NAME
 fortressgd verify PATH.pck|PATH.exe
+fortressgd mangle-report [--json] [--all]
 ```
 
 Every command accepts `--secret-file PATH`. `--platform` is repeatable (`--platform linux --platform windows`).
@@ -371,6 +373,7 @@ Every command accepts `--secret-file PATH`. `--platform` is repeatable (`--platf
 | `templates build` | Docker-build `template_release` for `(godot, secret_hash, platform)`. |
 | `templates list` | Names of cached templates. |
 | `export` | Production export with derived AES key (and dialect/mangle/sign when enabled), then `verify` when `verify_on_export` is true. |
+| `mangle-report` | List the script names mangling leaves readable, grouped by the rule that keeps each one (scene/resource reference, `@export`, `obj.name` access, string literal, addon, `class_name`, `fortressgd:keep`) with the file responsible. Needs no secret. `--json` for the full report, `--all` for every name. |
 | `verify` | List packed paths; fail on leaked excludes, shipped `.pdb` files or source maps next to the artifact, shaders that still contain comments, unencrypted bodies in an encrypted pack, leftover debug tables, or bad signatures. |
 
 Exit codes: `0` ok, `1` config/user error, `2` verify/policy failure, `3` tool or engine build failure. Errors print `error: …` and `Run: <next command>`.

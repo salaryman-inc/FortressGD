@@ -416,6 +416,8 @@ Behavior:
 - Emit the source map to `<project>/.fortressgd/maps/<export path relative to the project>.fortressgd.map.json` when mangling is on (an export outside the project goes to `_external/<file>-<sha256(path)[:8]>`). Never next to the artifact: the map reverses all mangling and build folders are uploaded whole. `.fortressgd/` gets a `.gdignore`; `init` suggests git-ignoring it; `verify` fails on a map next to the artifact.
 - If `call("name")` / `rpc("name")` / `set("prop")` string usage is detected and not marked with an explicit allow annotation, **fail export** with file:line. Do not silently ship a broken game.
 
+`fortressgd mangle-report` runs the same analysis as export (`fortressgd/core/mangle_report.py`) and lists every declared name that stays readable, with the rule that kept it and the file that triggered it. It needs no secret: which names are renamed does not depend on the mangle key. A test holds the report to the export's rename map. Use it to see what a decompiler still shows and which rules are worth narrowing.
+
 Annotation (optional, v1):
 
 ```gdscript

@@ -214,6 +214,23 @@ def collect_scan_only_names(sources: Iterable[str]) -> set[str]:
     return names
 
 
+def resource_reference_index(root: Path) -> dict[str, set[str]]:
+    """Identifier → project-relative text scenes/resources/project.godot that contain it."""
+
+    def wanted(rel: str) -> bool:
+        return rel.endswith(TEXT_RESOURCE_SUFFIXES) or rel.split("/")[-1] in TEXT_RESOURCE_NAMES
+
+    index: dict[str, set[str]] = {}
+    for path, rel in _iter_project_files(root, wanted):
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for name in set(_IDENT_FULL.findall(text)):
+            index.setdefault(name, set()).add(rel)
+    return index
+
+
 def collect_resource_reference_names(root: Path) -> set[str]:
     """Every identifier in the project's text scenes, text resources and project.godot.
 
@@ -261,7 +278,13 @@ def find_unsafe_calls(source: str, filename: str = "<gdscript>") -> list[UnsafeC
     return hits
 
 
-def collect_user_identifiers(source: str) -> set[str]:
+def collect_user_identifiers(source: str, skipped: dict[str, set[str]] | None = None) -> set[str]:
+    """Names this script declares that the mangler may rename.
+
+    When ``skipped`` is given, declared names left out are recorded there with
+    the reason (``class_name``, ``@export``, ``fortressgd:keep``); engine and
+    lifecycle names are not recorded.
+    """
     tokens = tokenize(source)
     keep_same, keep_only, nonempty = _keep_maps(tokens)
     reserved = reserved_names()
@@ -283,6 +306,8 @@ def collect_user_identifiers(source: str) -> set[str]:
             j = skip(i + 1)
             if j < n and tokens[j].kind == "ident":
                 class_names.add(tokens[j].value)
+                if skipped is not None:
+                    skipped.setdefault(tokens[j].value, set()).add("class_name")
                 i = j + 1
                 continue
         if tok.value in DECL_KEYWORDS:
@@ -299,6 +324,8 @@ def collect_user_identifiers(source: str) -> set[str]:
                 exported = tok.value == "var" and _has_export_annotation(tokens, i)
                 if name not in reserved and name not in class_names and not name_kept and not exported:
                     user.add(name)
+                elif skipped is not None and name not in reserved and name not in class_names:
+                    skipped.setdefault(name, set()).add("fortressgd:keep" if name_kept else "@export")
                 if tok.value == "func":
                     k = skip(j + 1)
                     if k < n and tokens[k].kind == "punct" and tokens[k].value == "(":

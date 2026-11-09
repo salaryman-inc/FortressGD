@@ -45,3 +45,7 @@ func on_jump() -> void:
 ## Names scenes and autoloads use are kept
 
 Names that scenes and resources refer to are left unmangled automatically: `@export` vars, methods connected in the editor, AnimationPlayer method and property tracks, and autoload names. The mangler keeps every identifier that appears in a `.tscn`, `.tres` or `project.godot` out of the rename map. Binary `.scn` / `.res` files cannot be scanned: export prints a warning for each. Save scenes and resources as text (`.tscn` / `.tres`) when mangling is on.
+
+## See what stays readable
+
+Run `fortressgd mangle-report` (no secret needed) to list the names mangling leaves alone and why. Most come from scenes, `@export` vars, `obj.member` access and names in strings. To get a name renamed, stop referring to it that way: use a Callable instead of a method name in a string, keep internal helpers off `@export`, and reach members through typed references to scripts in the project rather than untyped `obj.member`.

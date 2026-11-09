@@ -477,9 +477,13 @@ def export_preset(
     artifact = Path(out_path or export_path)
     if artifact and not artifact.is_absolute():
         artifact = root / artifact
+    mangle_summary = ""
     if mangle_on:
+        from fortressgd.core.mangle_report import analyze_project, summary_line
+
         written = write_export_source_map(root, artifact, secrethash, identifier_map)
         map_file = str(written)
+        mangle_summary = summary_line(analyze_project(root))
 
     if sign_packs:
         if artifact.suffix.lower() == ".zip":
@@ -513,6 +517,7 @@ def export_preset(
         "export_mode": "export-pack" if use_dialect else "export-release",
         "mangle_scripts": "1" if mangle_on else "0",
         "source_map": map_file,
+        "mangle_summary": mangle_summary,
         "verify": verify_line,
         "warnings": warnings,
     }
