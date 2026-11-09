@@ -469,7 +469,7 @@ actions/build-templates/          CI template factory
 .github/workflows/                CI for this repo
 testdata/                         sample project + unpacker fixtures
 tests/                            test suite
-docs/                             getting-started, CI, secrets, agent rules
+docs/                             getting-started, CI, secrets, agent rules + the docs site
 ```
 
 There is **no** Godot source tree in this repo. A tag without `fortressgd/patches/<tag>/series` is unsupported.
@@ -499,6 +499,8 @@ Third-party columns summarize each project's own documentation as of November 20
 ---
 
 ## Docs
+
+All of these are also published as a website: **https://salaryman-inc.github.io/FortressGD/**
 
 - [`docs/getting-started.md`](docs/getting-started.md) — leak checks with the official editor
 - [`docs/ci.md`](docs/ci.md) — template factory, Docker, unpacker fixtures

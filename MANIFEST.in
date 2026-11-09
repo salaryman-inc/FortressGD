@@ -1,2 +1,2 @@
 include DESIGN.md THREAT_MODEL.md SECURITY.md CONTRIBUTING.md
-recursive-include docs *.md
+include docs/*.md
