@@ -134,19 +134,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Download the official Godot editor
-        run: |
-          set -euo pipefail
-          base="https://github.com/godotengine/godot/releases/download/${{ matrix.godot }}-stable"
-          zip="Godot_v${{ matrix.godot }}-stable_linux.x86_64.zip"
-          cd "$RUNNER_TEMP"
-          # GitHub Releases returns the odd 504; retry with backoff (about a minute).
-          # One URL per curl so a failed download fails here, not at the checksum.
-          curl -sSLf --retry 6 --retry-all-errors -o "$zip" "$base/$zip"
-          curl -sSLf --retry 6 --retry-all-errors -o SHA512-SUMS.txt "$base/SHA512-SUMS.txt"
-          grep " $zip\$" SHA512-SUMS.txt | sha512sum -c -
-          unzip -q "$zip" -d godot
-          echo "GODOT=$RUNNER_TEMP/godot/Godot_v${{ matrix.godot }}-stable_linux.x86_64" >> "$GITHUB_ENV"
+      - name: Get the official Godot editor
+        id: godot
+        uses: ./.github/actions/godot-editor
+        with:
+          version: ${{ matrix.godot }}
+      - run: echo "GODOT=${{ steps.godot.outputs.path }}" >> "$GITHUB_ENV"
       - name: Python and GDScript manglers agree on the golden corpus
         env:
           FORTRESSGD_GODOT_TESTS: "1"

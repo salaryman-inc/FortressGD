@@ -1,0 +1,54 @@
+name: "Official Godot editor"
+description: "Restore or download the official Linux Godot editor for a version, verify its SHA-512, and unpack it."
+inputs:
+  version:
+    description: "Godot version without -stable, e.g. 4.6.2"
+    required: true
+outputs:
+  path:
+    description: "Absolute path of the unpacked editor binary"
+    value: ${{ steps.unpack.outputs.path }}
+runs:
+  using: "composite"
+  steps:
+    # GitHub Releases has outages that return 504 for minutes at a time. Cache
+    # the editor per version so most runs never download it. The cache is saved
+    # only when the job succeeds, and the checksum is checked on every use.
+    - name: Restore the cached Godot editor
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/godot-editor/${{ inputs.version }}
+        key: godot-editor-${{ inputs.version }}-linux-x86_64-v1
+
+    - name: Download the official Godot editor
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        base="https://github.com/godotengine/godot/releases/download/${VERSION}-stable"
+        zip="Godot_v${VERSION}-stable_linux.x86_64.zip"
+        dir="$HOME/.cache/godot-editor/${VERSION}"
+        mkdir -p "$dir"
+        cd "$dir"
+        # Retry with curl's exponential backoff (about 4 minutes in all). One URL
+        # per curl so a failed download fails here, not later at the checksum.
+        curl -sSLf --retry 8 --retry-all-errors -o "$zip" "$base/$zip"
+        curl -sSLf --retry 8 --retry-all-errors -o SHA512-SUMS.txt "$base/SHA512-SUMS.txt"
+
+    - name: Verify and unpack the Godot editor
+      id: unpack
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        zip="Godot_v${VERSION}-stable_linux.x86_64.zip"
+        cd "$HOME/.cache/godot-editor/${VERSION}"
+        grep " $zip\$" SHA512-SUMS.txt | sha512sum -c -
+        unzip -q -o "$zip" -d "$RUNNER_TEMP/godot"
+        bin="$RUNNER_TEMP/godot/Godot_v${VERSION}-stable_linux.x86_64"
+        test -x "$bin"
+        echo "path=$bin" >> "$GITHUB_OUTPUT"
