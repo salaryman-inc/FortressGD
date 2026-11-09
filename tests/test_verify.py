@@ -126,6 +126,23 @@ class VerifyCliTests(unittest.TestCase):
                 self.assertIn(rel, proc.stderr)
                 self.assertIn("next to the artifact", proc.stderr)
 
+    def test_source_map_next_to_artifact_exits_2(self) -> None:
+        # Older FortressGD wrote <artifact>.fortressgd.map.json beside the export;
+        # anyone given the build folder would get the full rename map.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            build = root / "build"
+            build.mkdir()
+            exe = build / "game.x86_64"
+            exe.write_bytes(embed_exe(make_gdpc(["main.tscn"])))
+            clean = run_fortressgd("verify", str(exe), cwd=root)
+            self.assertEqual(clean.returncode, 0, clean.stdout + clean.stderr)
+            (build / "game.x86_64.fortressgd.map.json").write_text('{"identifiers": {}}', encoding="utf-8")
+            proc = run_fortressgd("verify", str(exe), cwd=root)
+            self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+            self.assertIn("game.x86_64.fortressgd.map.json", proc.stderr)
+            self.assertIn("reverses mangling", proc.stderr)
+
     def test_shader_with_comments_exits_2(self) -> None:
         commented = b"shader_type canvas_item;\n// tint from the boss fight\nvoid fragment() { COLOR.r = 1.0; }\n"
         clean = b'shader_type canvas_item;\n#include "res://lib/noise.gdshaderinc"\nvoid fragment() { COLOR.r = 1.0 / 2.0; }\n'

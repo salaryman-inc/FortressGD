@@ -409,9 +409,9 @@ Behavior:
 
 - Process only files that would be packed as GDScript.
 - Strip comments, `assert`, `print_debug`, `breakpoint` (release).
-- Rename user identifiers with a PRNG seeded from `secret_hash`.
+- Rename user identifiers: `"_f" + HMAC-SHA256(mangle_key, "fortressgd-mangle-v2|<name>|<attempt>")[:10]`, with `mangle_key = hex(HMAC-SHA256(secret, "fortressgd.mangle.key.v1"))`. The Python and GDScript manglers must agree; `tests/mangle_corpus` holds them to it. Never key the mangler with `secret_hash`: it is public (logs, cache keys, template names), and v1 did, so anyone with it could hash guessed names and reverse the renaming. The mangle key is secret material: `leakscan` and the Action's log masks cover it.
 - Never rename: Godot lifecycle methods, engine APIs, `class_name` entries that scenes reference unless the scene rewrite table is updated in the same pass.
-- Emit `*.fortressgd.map.json` next to the export (not packed) when mangling is on.
+- Emit the source map to `<project>/.fortressgd/maps/<export path relative to the project>.fortressgd.map.json` when mangling is on (an export outside the project goes to `_external/<file>-<sha256(path)[:8]>`). Never next to the artifact: the map reverses all mangling and build folders are uploaded whole. `.fortressgd/` gets a `.gdignore`; `init` suggests git-ignoring it; `verify` fails on a map next to the artifact.
 - If `call("name")` / `rpc("name")` / `set("prop")` string usage is detected and not marked with an explicit allow annotation, **fail export** with file:line. Do not silently ship a broken game.
 
 Annotation (optional, v1):
@@ -441,7 +441,7 @@ Checks:
 1. Parse pack with **FortressGD** dialect + derived key (must succeed).
 2. Parse pack with **stock** GDPC parser and empty/no key (must fail if dialect or encrypt on).
 3. File list contains no excluded patterns from §6.3.
-4. No packed `*.fortressgd.map.json`.
+4. No packed `*.fortressgd.map.json`, and none next to the artifact.
 5. If `nameless_bytecode`: fail if debug name tables present in `.gdc`.
 5a. If the pack directory is encrypted: fail if no file body is encrypted, or if any script body (`.gdc`, `.gde`, `.gd`) is not. `[filters].include` exempts a path.
 6. Optional: run pinned KeyDot/GDRE binaries from `unpackers.lock.json` in a sandbox when `FORTRESSGD_UNPACKER_TESTS=1`. Failure of those tools to recover the project is a **pass**.

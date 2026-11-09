@@ -1,14 +1,19 @@
 @tool
 extends RefCounted
 ## Identifier mangling + unsafe call/rpc/set scan (DESIGN.md §9).
-## Algorithm matches core/mangle.py (secret_hash PRNG, keep annotation, reserved JSON).
+## Algorithm matches core/mangle.py (HMAC under the mangler key, keep annotation, reserved JSON).
 
 const RESERVED_PATH := "res://addons/fortressgd/mangle_reserved.json"
 const KEEP_PREFIX := "## fortressgd:keep"
-const MANGLE_INFO := "fortressgd-mangle-v1"
+# v2: names are an HMAC under a key derived from the project secret, not a hash
+# of the public secret_hash. Must match core/mangle.py.
+const MANGLE_INFO := "fortressgd-mangle-v2"
+const MANGLE_KEY_INFO := "fortressgd.mangle.key.v1"
 const PLUGIN_ADDON := "addons/fortressgd"
 const ADDONS_DIR := "addons"
 const MAP_SUFFIX := ".fortressgd.map.json"
+# Source maps go here, never next to the artifact. Matches core/mangle.py MAP_DIR.
+const MAP_DIR := ".fortressgd/maps"
 
 const KIND_IDENT := "ident"
 const KIND_STRING := "string"
@@ -46,28 +51,39 @@ static func reserved_names() -> Dictionary:
 	return out
 
 
-static func secret_hash(hex_secret: String) -> String:
+static func _secret_bytes(hex_secret: String) -> PackedByteArray:
 	var clean := hex_secret.strip_edges().to_lower()
 	var raw := PackedByteArray()
 	var i := 0
 	while i + 1 < clean.length():
 		raw.append(clean.substr(i, 2).hex_to_int())
 		i += 2
+	return raw
+
+
+static func secret_hash(hex_secret: String) -> String:
 	var ctx := HashingContext.new()
 	ctx.start(HashingContext.HASH_SHA256)
 	ctx.update("fortressgd-v1|".to_utf8_buffer())
-	ctx.update(raw)
+	ctx.update(_secret_bytes(hex_secret))
 	return ctx.finish().hex_encode().substr(0, 16)
 
 
-static func mangled_identifier(original: String, secrethash: String, used: Dictionary, reserved: Dictionary) -> String:
+## The mangler's key: hex HMAC-SHA256(secret, MANGLE_KEY_INFO). Mirrors
+## core/mangle.py derive_mangle_key. Secret material: never print or store it.
+static func mangle_key(hex_secret: String) -> String:
+	var crypto := Crypto.new()
+	return crypto.hmac_digest(HashingContext.HASH_SHA256, _secret_bytes(hex_secret), MANGLE_KEY_INFO.to_utf8_buffer()).hex_encode()
+
+
+static func mangled_identifier(original: String, key: String, used: Dictionary, reserved: Dictionary) -> String:
+	var crypto := Crypto.new()
+	var key_bytes := key.to_utf8_buffer()
 	var attempt := 0
 	while true:
-		var msg := "%s|%s|%s|%d" % [MANGLE_INFO, secrethash, original, attempt]
-		var ctx := HashingContext.new()
-		ctx.start(HashingContext.HASH_SHA256)
-		ctx.update(msg.to_utf8_buffer())
-		var name := "_f" + ctx.finish().hex_encode().substr(0, 10)
+		var msg := "%s|%s|%d" % [MANGLE_INFO, original, attempt]
+		var digest := crypto.hmac_digest(HashingContext.HASH_SHA256, key_bytes, msg.to_utf8_buffer())
+		var name := "_f" + digest.hex_encode().substr(0, 10)
 		if not reserved.has(name) and not used.has(name):
 			return name
 		attempt += 1
@@ -78,8 +94,27 @@ static func is_keep_comment(value: String) -> bool:
 	return value.strip_edges().begins_with(KEEP_PREFIX)
 
 
-static func source_map_path(export_path: String) -> String:
-	return str(export_path) + MAP_SUFFIX
+## Mirrors core/mangle.py source_map_path: <project>/.fortressgd/maps/ plus the
+## export path's place in the project, or _external/<file>-<hash> outside it.
+static func source_map_path(project_root: String, export_path: String) -> String:
+	var root := project_root.replace("\\", "/").simplify_path()
+	if root.ends_with("/"):
+		root = root.substr(0, root.length() - 1)
+	var target := export_path.replace("\\", "/")
+	if target.begins_with("res://"):
+		target = target.substr(6)
+	if target.is_relative_path():
+		target = root + "/" + target
+	target = target.simplify_path()
+	var name := ""
+	if target.begins_with(root + "/"):
+		name = target.substr(root.length() + 1)
+	else:
+		var ctx := HashingContext.new()
+		ctx.start(HashingContext.HASH_SHA256)
+		ctx.update(target.to_utf8_buffer())
+		name = "_external/%s-%s" % [target.get_file(), ctx.finish().hex_encode().substr(0, 8)]
+	return root + "/" + MAP_DIR + "/" + name + MAP_SUFFIX
 
 
 static func source_map_text(secrethash: String, mapping: Dictionary) -> String:
@@ -134,7 +169,7 @@ static func collect_scan_only_names(sources: Array) -> Dictionary:
 	return names
 
 
-static func apply_project(secrethash: String) -> Dictionary:
+static func apply_project(key: String) -> Dictionary:
 	## Returns { ok, error, backups, mapping }. backups: path -> original text.
 	var files := {}
 	var backups := {}
@@ -151,7 +186,7 @@ static func apply_project(secrethash: String) -> Dictionary:
 	exclude.merge(collect_scan_only_names(addon_sources))
 	for res_path in binary_resource_paths():
 		push_warning("FortressGD: cannot scan binary resource %s for mangled names" % res_path)
-	var result := mangle_sources(files, secrethash, exclude)
+	var result := mangle_sources(files, key, exclude)
 	if not result.get("ok", false):
 		return {"ok": false, "error": str(result.get("error", "mangle failed")), "backups": {}, "mapping": {}}
 	var sources: Dictionary = result["sources"]
@@ -173,7 +208,7 @@ static func apply_project(secrethash: String) -> Dictionary:
 ## Dictionary set of names never to rename. Returns
 ## { ok, error, sources: path -> mangled text, mapping: original -> mangled }.
 ## Mirrors core/mangle.py mangle_scripts; tests/mangle_corpus checks both.
-static func mangle_sources(files: Dictionary, secrethash: String, exclude: Dictionary = {}) -> Dictionary:
+static func mangle_sources(files: Dictionary, key: String, exclude: Dictionary = {}) -> Dictionary:
 	var reserved := reserved_names()
 	var hits: Array = []
 	var paths: Array = files.keys()
@@ -199,7 +234,7 @@ static func mangle_sources(files: Dictionary, secrethash: String, exclude: Dicti
 	var originals: Array = user.keys()
 	originals.sort()
 	for original in originals:
-		var name := mangled_identifier(str(original), secrethash, used, reserved)
+		var name := mangled_identifier(str(original), key, used, reserved)
 		mapping[str(original)] = name
 		used[name] = true
 	var sources := {}
@@ -218,11 +253,17 @@ static func restore(backups: Dictionary) -> void:
 
 
 static func write_map(export_path: String, secrethash: String, mapping: Dictionary) -> String:
-	var dest := source_map_path(export_path)
+	var root := ProjectSettings.globalize_path("res://")
+	var dest := source_map_path(root, export_path)
+	if DirAccess.make_dir_recursive_absolute(dest.get_base_dir()) != OK:
+		return ""
+	# Keep Godot from importing or packing the maps.
+	var gdignore := root.path_join(".fortressgd/.gdignore")
+	if not FileAccess.file_exists(gdignore):
+		var marker := FileAccess.open(gdignore, FileAccess.WRITE)
+		if marker != null:
+			marker.close()
 	var fh := FileAccess.open(dest, FileAccess.WRITE)
-	if fh == null:
-		# May be an absolute OS path outside res://.
-		fh = FileAccess.open(dest, FileAccess.WRITE)
 	if fh == null:
 		return ""
 	fh.store_string(source_map_text(secrethash, mapping))

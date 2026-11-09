@@ -1,13 +1,13 @@
 {
-  "ANGRY": "_f4b38e40dc4",
-  "CALM": "_f5f9bdd11d1",
-  "Inner": "_f6d59b4a368",
-  "MAX_HP": "_fd12cef88d2",
-  "Mood": "_fd6f630a292",
-  "amount": "_fbb86aa8105",
-  "bonus": "_fc1c4613fb5",
-  "depth": "_f9a669090d5",
-  "heal": "_f83b7b5537a",
-  "step": "_fa95ab417ef",
-  "total": "_fb82be7e43a"
+  "ANGRY": "_f5fdd192616",
+  "CALM": "_f4b2dd16626",
+  "Inner": "_f7d838fb5f3",
+  "MAX_HP": "_f748d52d58a",
+  "Mood": "_f019bc780d0",
+  "amount": "_f7dfb7e8c57",
+  "bonus": "_fbdd9d458d7",
+  "depth": "_f76ba5b8bb0",
+  "heal": "_f25372d8704",
+  "step": "_f546ccb5e22",
+  "total": "_ff4c2d5290b"
 }

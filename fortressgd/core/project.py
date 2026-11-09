@@ -12,7 +12,8 @@ from fortressgd.core.paths import plugin_source_dir
 from fortressgd.core.secret import load_secret_hex, secret_file_mode_problem, secret_status, secret_weakness
 from fortressgd.core.version import __version__
 
-GITIGNORE_ENTRIES = (".fortressgd.secret",)
+# .fortressgd/ holds source maps, which reverse mangling: keep them out of git too.
+GITIGNORE_ENTRIES = (".fortressgd.secret", ".fortressgd/")
 CONFIG_NAME = ".fortressgd.toml"
 PROJECT_GODOT = "project.godot"
 

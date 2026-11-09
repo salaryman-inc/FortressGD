@@ -24,7 +24,7 @@ Assume every value in a shipped binary is public. Someone who extracts one build
 
 - get the project secret, so the key stops working for builds made after you rotate it, and does not open builds for another Godot version;
 - sign packs, so a `sign_packs` template still refuses a modified pack;
-- get back what was never shipped: script source text, comments, `assert`/`print_debug` lines, original identifiers renamed by the mangler, or files the release filters excluded.
+- get back what was never shipped: script source text, comments, `assert`/`print_debug` lines, original identifiers renamed by the mangler, or files the release filters excluded. Mangled names are keyed by the project secret, so they cannot be reversed by hashing guessed names. Only the source map reverses them, and it stays in `.fortressgd/maps/`, out of the build folder and out of git.
 
 Protection that must survive a determined attacker comes from that last list, not from the encryption. The pack dialect, the opcode map and nameless bytecode only defeat tools that don't know FortressGD: nameless bytecode moves identifier names into an `FGDN` block the engine reads, so a FortressGD-aware decompiler gets every name back. Only the mangler removes names.
 

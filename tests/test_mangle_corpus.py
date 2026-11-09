@@ -14,10 +14,19 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tests.mangle_corpus.regen import CORPUS, SECRET_HASH, expected, iter_cases, run_python
+from tests.mangle_corpus.regen import (
+    CORPUS,
+    CORPUS_SECRET_HEX,
+    MAP_SAMPLES,
+    expected,
+    iter_cases,
+    python_map_paths,
+    run_python,
+)
 from tests.support import ROOT, run_fortressgd, write_godot_stub
 
 RESULT_PREFIX = "FGD_CORPUS "
+MAPS_PREFIX = "FGD_MAPS "
 
 
 class MangleCorpusTests(unittest.TestCase):
@@ -49,7 +58,7 @@ class MangleCorpusTests(unittest.TestCase):
             shutil.copy2(ROOT / "tests" / "gd" / "run_mangle_corpus.gd", project / "run_mangle_corpus.gd")
             proc = subprocess.run(
                 [godot, "--headless", "--path", str(project), "--script", "res://run_mangle_corpus.gd",
-                 "--", str(CORPUS), SECRET_HASH],
+                 "--", str(CORPUS), CORPUS_SECRET_HEX, *MAP_SAMPLES],
                 capture_output=True, text=True, timeout=300,
             )
             results = {}
@@ -61,6 +70,9 @@ class MangleCorpusTests(unittest.TestCase):
             for case in iter_cases():
                 with self.subTest(case=case.name):
                     self.assertEqual(results[case.name], expected(case))
+            maps = [line for line in proc.stdout.splitlines() if line.startswith(MAPS_PREFIX)]
+            self.assertEqual(len(maps), 1, proc.stdout + proc.stderr)
+            self.assertEqual(json.loads(maps[0][len(MAPS_PREFIX):]), python_map_paths(project))
 
 
 if __name__ == "__main__":

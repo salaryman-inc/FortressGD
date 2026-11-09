@@ -3,16 +3,16 @@ class_name SampleHero
 
 
 func _ready() -> void:
-	var _fafb3a43118 := 10
+	var _f4db401c8b3 := 10
 	pass
 	pass
 	pass
-	_fd3288eb085()
+	_fadfed08384()
 	public_mod_hook()
 
 
 func public_mod_hook() -> void:
 	pass
 
-func _fd3288eb085() -> void:
+func _fadfed08384() -> void:
 	pass
