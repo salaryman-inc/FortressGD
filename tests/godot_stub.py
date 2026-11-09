@@ -21,7 +21,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from fortressgd.core.config import load_path
+from fortressgd.core.config import key_epoch, load_path
 from fortressgd.core.pack import PACK_DIR_ENCRYPTED
 from fortressgd.core.pack_dialect import dialect_key_for_secret, dialect_params_for_secret, encode_dialect_index
 from fortressgd.core.secret import read_secret_file, secret_bytes_from_hex
@@ -43,10 +43,14 @@ def build_pack(root: Path, files: list[str]) -> bytes:
     cfg = load_path(root / ".fortressgd.toml")
     tag = concrete_godot_tag(str(cfg["godot"]))
     secret = secret_bytes_from_hex(read_secret_file(root / ".fortressgd.secret"))
+    epoch = key_epoch(cfg)
+    # Like Godot: encrypt with GODOT_SCRIPT_ENCRYPTION_KEY, which fortressgd export sets.
+    env_key = os.environ.get("GODOT_SCRIPT_ENCRYPTION_KEY", "")
+    key = bytes.fromhex(env_key) if env_key else dialect_key_for_secret(secret, tag, key_epoch=epoch)
     if (cfg.get("production") or {}).get("dialect", False):
-        magic, perm, key = dialect_params_for_secret(secret, tag)
+        magic, perm, _derived = dialect_params_for_secret(secret, tag, key_epoch=epoch)
         return encode_dialect_index(files, magic=magic, perm=perm, flags=PACK_DIR_ENCRYPTED, aes_key=key)
-    return make_gdpc(files, flags=PACK_DIR_ENCRYPTED, aes_key=dialect_key_for_secret(secret, tag))
+    return make_gdpc(files, flags=PACK_DIR_ENCRYPTED, aes_key=key)
 
 
 def write_artifact(argv: list[str]) -> None:

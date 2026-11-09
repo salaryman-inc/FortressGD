@@ -7,7 +7,7 @@ import os
 import sys
 from pathlib import Path
 
-from fortressgd.core.config import load_path
+from fortressgd.core.config import key_epoch, load_path
 from fortressgd.core.errors import NEXT_HELP, NEXT_SECRET, ToolError, UserError, VerifyError
 from fortressgd.core.export import export_preset
 from fortressgd.core.project import (
@@ -102,6 +102,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--require-signature",
         action="store_true",
         help="build the -sig variant that refuses unsigned packs (default: toml production.sign_packs)",
+    )
+    build.add_argument(
+        "--key-epoch",
+        type=int,
+        default=None,
+        help="pack key epoch to build for (default: toml production.key_epoch, else 0)",
     )
     tmpl_sub.add_parser("list", help="list cached templates")
 
@@ -202,6 +208,9 @@ def cmd_templates_build(args: argparse.Namespace) -> int:
         if "dialect" in production:
             dialect = bool(production["dialect"])
         require_signature = require_signature or bool(production.get("sign_packs", False))
+    epoch = key_epoch(cfg) if args.key_epoch is None else args.key_epoch
+    if epoch < 0:
+        raise UserError("--key-epoch must be a non-negative integer", NEXT_HELP)
     produced = build_templates(
         godot=godot,
         platforms=platforms,
@@ -212,6 +221,7 @@ def cmd_templates_build(args: argparse.Namespace) -> int:
         patches_dir=patches_dir,
         dialect=dialect,
         require_signature=require_signature,
+        key_epoch=epoch,
     )
     for path in produced:
         sys.stdout.write(path.name + "\n")

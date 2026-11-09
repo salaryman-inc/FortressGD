@@ -18,6 +18,7 @@ ALLOWED_KEYS: dict[str, frozenset[str]] = {
     "production": frozenset(
         {
             "dialect",
+            "key_epoch",
             "mangle_scripts",
             "nameless_bytecode",
             "sign_packs",
@@ -30,6 +31,14 @@ ALLOWED_KEYS: dict[str, frozenset[str]] = {
 }
 
 CURRENT_SCHEMA = 1
+MAX_KEY_EPOCH = 2**31 - 1
+
+
+def key_epoch(cfg: dict[str, Any] | None) -> int:
+    """[production].key_epoch, 0 when absent. Bump it to give a release line its own pack key."""
+    production = (cfg or {}).get("production") or {}
+    value = production.get("key_epoch", 0)
+    return value if type(value) is int else 0
 
 _HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
 
@@ -145,6 +154,15 @@ def validate(data: dict[str, Any], *, source: str = ".fortressgd.toml") -> dict[
         if not isinstance(production, dict):
             raise ConfigError("{0}: [production] must be a table".format(source), NEXT_DOCTOR)
         for k, v in production.items():
+            if k == "key_epoch":
+                if type(v) is not int or not 0 <= v <= MAX_KEY_EPOCH:
+                    raise ConfigError(
+                        "{0}: production.key_epoch must be an integer from 0 to {1}".format(
+                            source, MAX_KEY_EPOCH
+                        ),
+                        NEXT_DOCTOR,
+                    )
+                continue
             if type(v) is not bool:
                 raise ConfigError(
                     "{0}: production.{1} must be a boolean".format(source, k),

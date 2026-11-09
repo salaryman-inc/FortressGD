@@ -19,7 +19,9 @@ Reference the action from this repository at a release tag, and install the CLI 
 
 The action builds from its own checkout of FortressGD, so it needs Docker (GitHub's Ubuntu runners have it) and Python 3.9+, but not an installed CLI. `fortressgd export` and `verify` in later steps do need the CLI and `FORTRESSGD_SECRET`.
 
-Cache key: `fgd-templates-{godot}-{patchset}-{secret_hash}-{platform}` (the Action restores `~/.cache/fortressgd/templates` under that key).
+Cache key: `fgd-templates-{godot}-{patchset}-{secret_hash}-{platforms}-e{key_epoch}` (the Action restores `~/.cache/fortressgd/templates` under that key).
+
+Set `key_epoch` to the project's `[production].key_epoch` (default `"0"`). The Action builds templates for that pack key, masks it in logs, and scans outputs for it.
 
 Set `sign_packs: "true"` when the project has `[production].sign_packs = true`. The Action then builds the `-sig` template variant, which refuses unsigned or tampered packs, and appends `-sig` to the cache key.
 

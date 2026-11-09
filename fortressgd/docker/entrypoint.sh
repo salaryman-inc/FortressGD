@@ -25,12 +25,16 @@ FGD_DIALECT="${FGD_DIALECT:-1}"
 # 1 when [production].sign_packs is true: dialect.gen.h sets FGD_REQUIRE_PACK_SIGNATURE,
 # the template refuses unsigned packs, and its name gets the -sig suffix.
 FGD_REQUIRE_SIGNATURE="${FGD_REQUIRE_SIGNATURE:-0}"
+# [production].key_epoch: the pack key in dialect.gen.h is for this epoch; non-zero
+# epochs get a -e<N> suffix so each release line has its own cached template.
+FGD_KEY_EPOCH="${FGD_KEY_EPOCH:-0}"
 FGD_CCFLAGS="-DFORTRESSGD_OPCODE_MAP -DFORTRESSGD_NAMELESS -DFORTRESSGD_SIGN_PACKS"
 if [ "$FGD_DIALECT" = "1" ]; then
     FGD_CCFLAGS="$FGD_CCFLAGS -DFORTRESSGD_DIALECT"
 fi
 
 printf '%s\n' "$SECRET_HASH" | grep -Eq '^[0-9a-f]{16}$' || err "FGD_SECRET_HASH must be the 16-hex secret_hash"
+printf '%s\n' "$FGD_KEY_EPOCH" | grep -Eq '^(0|[1-9][0-9]{0,9})$' || err "FGD_KEY_EPOCH must be a non-negative integer"
 [ -d "$PATCHES_DIR" ] || err "patches directory missing at $PATCHES_DIR"
 [ -f "$HEADER_SRC" ] || err "dialect.gen.h missing at $HEADER_SRC"
 mkdir -p "$OUT_DIR"
@@ -64,6 +68,9 @@ if [ -n "${FGD_PATCHSET:-}" ] && [ "$FGD_PATCHSET" != "$PATCHSET_ID" ]; then
 fi
 
 NAME="godot-${FGD_GODOT}-template_release-${FGD_PLATFORM}-${FGD_ARCH}-fgd${PATCHSET_ID}-${SECRET_HASH}"
+if [ "$FGD_KEY_EPOCH" != "0" ]; then
+    NAME="${NAME}-e${FGD_KEY_EPOCH}"
+fi
 if [ "$FGD_REQUIRE_SIGNATURE" = "1" ]; then
     NAME="${NAME}-sig"
     grep -q "FGD_REQUIRE_PACK_SIGNATURE = 1;" "$HEADER_SRC" || err "FGD_REQUIRE_SIGNATURE=1 but dialect.gen.h does not require signatures"
@@ -90,9 +97,9 @@ apply_series() {
 }
 
 write_manifest() {
-    python3 - "$OUT_DIR/$NAME.manifest.json" "$FGD_GODOT" "$PATCHSET_ID" "$SECRET_HASH" "$FGD_PLATFORM" "$FGD_ARCH" "$DIALECT_ID" "$SKIP_SCONS" "$FGD_REQUIRE_SIGNATURE" <<'PY'
+    python3 - "$OUT_DIR/$NAME.manifest.json" "$FGD_GODOT" "$PATCHSET_ID" "$SECRET_HASH" "$FGD_PLATFORM" "$FGD_ARCH" "$DIALECT_ID" "$SKIP_SCONS" "$FGD_REQUIRE_SIGNATURE" "$FGD_KEY_EPOCH" <<'PY'
 import json, sys
-path, godot, patchset, secrethash, platform, arch, dialect, skip, require_sig = sys.argv[1:10]
+path, godot, patchset, secrethash, platform, arch, dialect, skip, require_sig, key_epoch = sys.argv[1:11]
 data = {
     "godot": godot,
     "patchset_id": patchset,
@@ -102,6 +109,7 @@ data = {
     "platform": platform,
     "arch": arch,
     "require_signature": require_sig == "1",
+    "key_epoch": int(key_epoch),
 }
 if skip == "1":
     data["skip_scons"] = "1"

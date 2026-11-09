@@ -52,7 +52,7 @@ In scope:
 Out of scope (document, do not “fix”):
 
 - Attaching a debugger and dumping the derived key or decrypted resources from memory.
-- A FortressGD-aware tool. The source is public, so a tool that knows the template layout can read one build's pack key and dialect parameters from the binary without running it, at about the cost of the debugger attack above. That exposes the packs of every build sharing that key (same secret and Godot version) until the secret is rotated. It does not expose the project secret, the signing seed, other projects' keys, or anything mangling and the release filters removed. Dialect, opcode map and nameless bytecode do not hold against such a tool: nameless bytecode keeps runtime names in its `FGDN` block.
+- A FortressGD-aware tool. The source is public, so a tool that knows the template layout can read one build's pack key and dialect parameters from the binary without running it, at about the cost of the debugger attack above. That exposes the packs of every build sharing that key (same secret, Godot version and `key_epoch`) until the epoch is bumped or the secret rotated. It does not expose the project secret, the signing seed, other projects' keys, or anything mangling and the release filters removed. Dialect, opcode map and nameless bytecode do not hold against such a tool: nameless bytecode keeps runtime names in its `FGDN` block.
 - Rewriting a packer after reverse-engineering *this* game’s dialect.
 - Asset ripping from GPU/memory.
 - Server-authoritative cheat prevention.
@@ -236,6 +236,7 @@ Runtime template:
 - The shard and mask arrays are `static const volatile`. With plain `static const` the optimizer folds the XOR at build time (GCC at `-O3`, which `production=yes` uses; clang at `-O2`) and the template stores the key unmasked. `templates build` refuses to cache a template holding the raw key or the secret.
 - `tests/test_generator.py` holds this: no array or pair of arrays in the header encodes the secret or the signing seed; the reassembly compiled with every C++ compiler on `PATH` keeps the key out of the object; and the shipped `fortressgd_derive_key()`, compiled and run, returns FGD-KDF-1(secret, salt).
 - The masking only stops pattern scanners that look for a raw 32-byte key. A tool that knows this layout reads the key directly (§1.3).
+- **Key epochs.** `[production].key_epoch` (integer, default 0) feeds the FGD-KDF-1 salt: `salt = HKDF(secret, domain(tag, "salt"), ...)` for epoch 0 and `domain(tag, "salt|epoch=N")` otherwise. Only the pack key changes; magic, index permutation, opcode map, signing seed, mangle key and `secret_hash` do not. Templates for a non-zero epoch are named `-e<N>` and record `key_epoch` in their manifest; `export` and `verify` use the epoch from `.fortressgd.toml`. An extracted key then opens one release line, not every future build. Rotating the secret (`docs/secrets.md`) still changes everything.
 - Wipe stack buffers after use.
 - Replace or encrypt known anchor strings used by KeyDot (`Can't open encrypted pack directory.` and similar). Use format strings rebuilt at runtime or store encrypted.
 
@@ -262,6 +263,7 @@ godot = "4.6.2"
 
 [production]
 dialect = true
+key_epoch = 0                # bump per release line for a new pack key (§5.2)
 mangle_scripts = true
 nameless_bytecode = false    # opt-in; see §8.4
 sign_packs = false           # opt-in; needs the -sig template (§8.4)
@@ -312,7 +314,7 @@ If a C# project cannot run without `.cs` in the PCK on a given Godot version, `f
 ### 7.1 Naming
 
 ```
-godot-<ver>-template_release-<platform>-<arch>-fgd<patchset12>-<secrethash16>[-sig]
+godot-<ver>-template_release-<platform>-<arch>-fgd<patchset12>-<secrethash16>[-e<key_epoch>][-sig]
 ```
 
 Example:
@@ -351,7 +353,7 @@ Do not put the raw secret or `aes_key` in the manifest.
 ### 7.3 Cache
 
 `~/.cache/fortressgd/templates/<filename>`.  
-CI: restore cache key `fgd-templates-{godot}-{patchset}-{secret_hash}-{platform}`, with `-sig` appended for the signature-required variant.
+CI: restore cache key `fgd-templates-{godot}-{patchset}-{secret_hash}-{platforms}-e{key_epoch}`, with `-sig` appended for the signature-required variant.
 
 ---
 

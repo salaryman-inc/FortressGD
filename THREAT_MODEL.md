@@ -20,7 +20,7 @@ See `DESIGN.md` §1.3 for the normative text. This page is the short form for RE
 
 ## What holds after a build's key is extracted
 
-Assume every value in a shipped binary is public. Someone who extracts one build's pack key, by debugger or by a FortressGD-aware tool, can decrypt that build's packs. The key depends only on the project secret and the Godot version, so it also opens every other build of the project for the same Godot version, on any platform, until you rotate the secret. They still cannot:
+Assume every value in a shipped binary is public. Someone who extracts one build's pack key, by debugger or by a FortressGD-aware tool, can decrypt that build's packs. The key depends only on the project secret, the Godot version and `[production].key_epoch`, so it also opens every other build of the project with the same three, on any platform, until you bump the epoch or rotate the secret. They still cannot:
 
 - get the project secret, so the key stops working for builds made after you rotate it, and does not open builds for another Godot version;
 - sign packs, so a `sign_packs` template still refuses a modified pack;

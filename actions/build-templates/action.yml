@@ -15,6 +15,10 @@ inputs:
     description: "true to build the -sig template variant that refuses unsigned packs (match production.sign_packs)"
     required: false
     default: "false"
+  key_epoch:
+    description: "Pack key epoch to build for (match production.key_epoch). 0 is the default key."
+    required: false
+    default: "0"
   scan_paths:
     description: "Extra comma-separated paths (e.g. a source-map directory) to scan for secret material before the job ends"
     required: false
@@ -36,8 +40,10 @@ runs:
       env:
         FORTRESSGD_SECRET: ${{ inputs.secret }}
         GODOT_VERSION: ${{ inputs.godot_version }}
+        KEY_EPOCH: ${{ inputs.key_epoch }}
       run: |
         set -euo pipefail
+        printf '%s\n' "$KEY_EPOCH" | grep -Eq '^(0|[1-9][0-9]{0,9})$' || { echo "error: key_epoch must be a non-negative integer" >&2; exit 1; }
         ROOT="${{ github.action_path }}/../.."
         python3 - "$ROOT" "$GODOT_VERSION" <<'PY'
         import os, sys
@@ -46,7 +52,8 @@ runs:
         from fortressgd.core.secret import secret_bytes_from_hex, validate_secret_hex
         from fortressgd.core.templates import concrete_godot_tag
         secret = secret_bytes_from_hex(validate_secret_hex(os.environ["FORTRESSGD_SECRET"]))
-        for _label, needle in secret_needles(secret, concrete_godot_tag(sys.argv[2])):
+        epoch = int(os.environ["KEY_EPOCH"])
+        for _label, needle in secret_needles(secret, concrete_godot_tag(sys.argv[2]), key_epoch=epoch):
             try:
                 text = needle.decode("ascii")
             except UnicodeDecodeError:
@@ -91,12 +98,13 @@ runs:
       uses: actions/cache@v4
       with:
         path: ~/.cache/fortressgd/templates
-        key: fgd-templates-${{ steps.meta.outputs.godot }}-${{ steps.meta.outputs.patchset }}-${{ steps.meta.outputs.secret_hash }}-${{ inputs.platforms }}${{ inputs.sign_packs == 'true' && '-sig' || '' }}
+        key: fgd-templates-${{ steps.meta.outputs.godot }}-${{ steps.meta.outputs.patchset }}-${{ steps.meta.outputs.secret_hash }}-${{ inputs.platforms }}-e${{ inputs.key_epoch }}${{ inputs.sign_packs == 'true' && '-sig' || '' }}
 
     - name: Build templates
       shell: bash
       env:
         FORTRESSGD_SECRET: ${{ inputs.secret }}
+        KEY_EPOCH: ${{ inputs.key_epoch }}
       working-directory: ${{ github.action_path }}/../..
       run: |
         set -euo pipefail
@@ -108,6 +116,7 @@ runs:
         if [ "${{ inputs.sign_packs }}" = "true" ]; then
           ARGS+=(--require-signature)
         fi
+        ARGS+=(--key-epoch "$KEY_EPOCH")
         python3 bin/fortressgd templates build --godot "${{ inputs.godot_version }}" "${ARGS[@]}" 2>&1 \
           | tee "$RUNNER_TEMP/fortressgd-templates-build.log"
 
@@ -119,6 +128,7 @@ runs:
       env:
         FORTRESSGD_SECRET: ${{ inputs.secret }}
         GODOT_VERSION: ${{ inputs.godot_version }}
+        KEY_EPOCH: ${{ inputs.key_epoch }}
         SCAN_PATHS: ${{ inputs.scan_paths }}
       working-directory: ${{ github.action_path }}/../..
       run: |
@@ -128,4 +138,4 @@ runs:
           IFS=',' read -r -a EXTRA <<< "$SCAN_PATHS"
           PATHS+=("${EXTRA[@]}")
         fi
-        python3 -m fortressgd.core.leakscan --godot "$GODOT_VERSION" --delete "${PATHS[@]}"
+        python3 -m fortressgd.core.leakscan --godot "$GODOT_VERSION" --key-epoch "$KEY_EPOCH" --delete "${PATHS[@]}"

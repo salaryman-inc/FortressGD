@@ -36,7 +36,7 @@ def _encodings(label: str, raw: bytes) -> list[tuple[str, bytes]]:
     ]
 
 
-def secret_needles(secret: bytes, godot_tag: str | None = None) -> list[tuple[str, bytes]]:
+def secret_needles(secret: bytes, godot_tag: str | None = None, key_epoch: int = 0) -> list[tuple[str, bytes]]:
     """
     Byte strings whose presence in an output means the secret or a derived key leaked.
 
@@ -52,7 +52,7 @@ def secret_needles(secret: bytes, godot_tag: str | None = None) -> list[tuple[st
         from fortressgd.core.pack_dialect import dialect_key_for_secret
         from fortressgd.core.pack_sign import signing_seed
 
-        needles += _encodings("derived AES key", dialect_key_for_secret(secret, godot_tag))
+        needles += _encodings("derived AES key", dialect_key_for_secret(secret, godot_tag, key_epoch=key_epoch))
         needles += _encodings("pack-signing seed", signing_seed(secret, godot_tag))
     return needles
 
@@ -119,6 +119,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("paths", nargs="+", help="files or directories to scan")
     parser.add_argument("--godot", default=None, help="Godot version, to also scan for derived keys")
     parser.add_argument("--secret-file", default=None)
+    parser.add_argument(
+        "--key-epoch", type=int, default=0, help="[production].key_epoch the derived AES key was built for"
+    )
     parser.add_argument("--delete", action="store_true", help="remove files that contain secret material")
     args = parser.parse_args(argv)
     try:
@@ -129,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
         sys.stderr.write(err.format() + "\n")
         return 1
     tag = concrete_godot_tag(args.godot) if args.godot else None
-    leaks = scan_paths([Path(p) for p in args.paths], secret_needles(secret, tag))
+    leaks = scan_paths([Path(p) for p in args.paths], secret_needles(secret, tag, key_epoch=args.key_epoch))
     if not leaks:
         sys.stdout.write("ok: no secret material in {0} path(s)\n".format(len(args.paths)))
         return 0
