@@ -22,6 +22,8 @@ Optional extras the default suite skips:
 | `FORTRESSGD_DOCKER_TESTS=1` | Docker | A build of the template image |
 | `FORTRESSGD_UNPACKER_TESTS=1` | KeyDot and a protected `.exe` (see [`docs/ci.md`](docs/ci.md)) | The KeyDot regression test |
 
+`tests/test_generator.py` compiles the secret-shard reassembly with each C++ compiler it finds (`g++`, `clang++`, `x86_64-w64-mingw32-g++`) and fails if the optimizer folds the secret into the object; set `FORTRESSGD_REQUIRE_COMPILERS=g++,clang++` to fail instead of skipping a missing one.
+
 `pip install cryptography` exercises the OpenSSL AES path; without it the pure-Python AES runs. CI runs both.
 
 ## Layout

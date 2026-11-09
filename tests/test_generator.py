@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import os
+import re
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -21,6 +25,7 @@ from fortressgd.generator.dialect import (
     write_dialect_header,
 )
 from fortressgd.generator.opcode_map import FGD_OPCODE_COUNT, opcode_map, opcode_unmap
+from tests.support import PKG
 
 
 class GeneratorTests(unittest.TestCase):
@@ -111,6 +116,71 @@ class GeneratorTests(unittest.TestCase):
             self.assertEqual(inv[dst], src)
         tag_b = opcode_map(self.secret, "4.7.2")
         self.assertEqual(set(tag_b.values()), set(range(n)))
+
+
+
+# The reassembly loop exactly as fortressgd_derive_key in the engine patch has it.
+_REASSEMBLY_LINE = "secret[shard * 8 + i] = FGD_SHARDS[shard][i] ^ FGD_SHARD_MASKS[shard][i];"
+_REASSEMBLY_TU = """#include "dialect.gen.h"
+extern void fgd_sink(const uint8_t *p);
+void fgd_reassemble() {
+	uint8_t secret[32];
+	for (int shard = 0; shard < 4; shard++) {
+		for (int i = 0; i < 8; i++) {
+			%s
+		}
+	}
+	fgd_sink(secret);
+}
+""" % _REASSEMBLY_LINE
+
+
+class SecretNotFoldedTests(unittest.TestCase):
+    """An optimizing compiler must not fold FGD_SHARDS ^ FGD_SHARD_MASKS into the
+    plain secret. Godot's production=yes builds use -O3, where GCC did exactly
+    that with `static const` arrays and the template shipped the secret."""
+
+    def test_engine_patches_use_the_reassembly_loop_under_test(self) -> None:
+        sources = [PKG / "patches" / "common" / "fortressgd_kdf.cpp"]
+        sources += sorted((PKG / "patches").glob("*/0001-key-derive.patch"))
+        for source in sources:
+            with self.subTest(source=source.name):
+                self.assertIn(_REASSEMBLY_LINE, source.read_text(encoding="utf-8"))
+
+    def test_header_declares_shards_and_masks_volatile(self) -> None:
+        header = render_dialect_header(bytes(range(SECRET_BYTES)), "4.6.2")
+        for name in ("FGD_SHARD_MASKS", "FGD_SHARDS"):
+            with self.subTest(name=name):
+                self.assertRegex(header, r"static const volatile uint8_t {0}\[4\]\[8\]".format(name))
+
+    def test_compiled_reassembly_does_not_contain_the_secret(self) -> None:
+        candidates = ("g++", "clang++", "x86_64-w64-mingw32-g++")
+        compilers = [c for c in candidates if shutil.which(c)]
+        required = [c for c in os.environ.get("FORTRESSGD_REQUIRE_COMPILERS", "").split(",") if c]
+        missing = [c for c in required if c not in compilers]
+        self.assertEqual(missing, [], "FORTRESSGD_REQUIRE_COMPILERS names compilers that are not on PATH")
+        if not compilers:
+            self.skipTest("no C++ compiler on PATH")
+        secret = os.urandom(SECRET_BYTES)
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            write_dialect_header(work / "dialect.gen.h", secret, "4.6.2")
+            (work / "t.cpp").write_text(_REASSEMBLY_TU, encoding="utf-8")
+            for cxx in compilers:
+                for opt in ("-O2", "-O3"):
+                    with self.subTest(compiler=cxx, opt=opt):
+                        obj = work / "t.o"
+                        subprocess.run(
+                            [cxx, opt, "-c", "t.cpp", "-o", str(obj)],
+                            cwd=work, check=True, capture_output=True, timeout=120,
+                        )
+                        blob = obj.read_bytes()
+                        self.assertFalse(secret in blob, "the reassembled secret was folded into the object")
+                        for i in range(0, SECRET_BYTES, 8):
+                            self.assertFalse(
+                                secret[i : i + 8] in blob,
+                                "secret bytes {0}..{1} were folded into the object".format(i, i + 8),
+                            )
 
 
 if __name__ == "__main__":

@@ -134,13 +134,20 @@ def _c_array(name: str, data: bytes, indent: str = "\t") -> str:
     )
 
 
-def _c_array_2d(name: str, pieces: tuple[bytes, bytes, bytes, bytes], indent: str = "\t") -> str:
+def _c_array_2d(
+    name: str,
+    pieces: tuple[bytes, bytes, bytes, bytes],
+    indent: str = "\t",
+    *,
+    volatile: bool = False,
+) -> str:
     rows = []
     for piece in pieces:
         inner = ", ".join("0x{0:02x}".format(b) for b in piece)
         rows.append("{0}{{ {1} }}".format(indent + "\t", inner))
-    return "{0}static const uint8_t {1}[4][8] = {{\n{2}\n{0}}};".format(
-        indent, name, ",\n".join(rows)
+    qualifier = "const volatile" if volatile else "const"
+    return "{0}static {1} uint8_t {2}[4][8] = {{\n{3}\n{0}}};".format(
+        indent, qualifier, name, ",\n".join(rows)
     )
 
 
@@ -185,8 +192,13 @@ def render_dialect_header(
         "",
         "/* data only — salt, masks, shards, magic, perm, opcode map, pubkey; no executable snippets from the secret */",
         _c_array("FGD_DIALECT_SALT", salt),
-        _c_array_2d("FGD_SHARD_MASKS", mask_pieces(masks)),
-        _c_array_2d("FGD_SHARDS", shard_pieces(shards)),
+        # volatile: with plain `static const` arrays the compiler folds
+        # FGD_SHARDS ^ FGD_SHARD_MASKS at build time (GCC -O3, Godot's
+        # production=yes) and stores the reassembled project secret in the
+        # binary. volatile forces a runtime load of every byte, so only the
+        # shards and masks are stored.
+        _c_array_2d("FGD_SHARD_MASKS", mask_pieces(masks), volatile=True),
+        _c_array_2d("FGD_SHARDS", shard_pieces(shards), volatile=True),
         _c_u32("FGD_PACK_MAGIC", magic),
         _c_perm("FGD_INDEX_PERM", perm),
     ]

@@ -38,6 +38,25 @@ jobs:
       # Includes `git apply --check` of every patch series against the upstream tag.
       - run: python tests/run.py
 
+  compilers:
+    # The template build compiles dialect.gen.h with GCC (Linux) and MinGW GCC
+    # (Windows). The optimizer must not fold the secret shards back into the
+    # plain secret; this checks g++, clang++ and MinGW at -O2 and -O3.
+    name: Secret is not constant-folded (g++, clang++, MinGW)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends g++ clang g++-mingw-w64-x86-64
+      - name: Compile the shard reassembly and scan the objects
+        env:
+          # The test fails if any of these is missing instead of skipping it.
+          FORTRESSGD_REQUIRE_COMPILERS: "g++,clang++,x86_64-w64-mingw32-g++"
+        run: python -m unittest -v tests.test_generator.SecretNotFoldedTests
+
   package:
     name: Wheel and sdist install
     runs-on: ubuntu-latest

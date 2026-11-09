@@ -231,6 +231,7 @@ Runtime template:
 
 - Compile `dialect_salt` and an **obfuscated encoding of `secret` shards**, not `aes_key`.
 - Shard scheme v1: secret split into 4×8-byte pieces, XOR’d with compile-time random masks stored separately, reassembled in `fortressgd_derive_key()`.
+- The shard and mask arrays in `dialect.gen.h` are `static const volatile`. With plain `static const` the optimizer folds the XOR at build time (GCC at `-O3`, which `production=yes` uses; clang at `-O2`) and the template stores the reassembled secret. `templates build` then refuses to cache it. `tests/test_generator.py` compiles the loop with every C++ compiler on `PATH` and fails if any secret bytes reach the object file.
 - Wipe stack buffers after use.
 - Replace or encrypt known anchor strings used by KeyDot (`Can't open encrypted pack directory.` and similar). Use format strings rebuilt at runtime or store encrypted.
 
