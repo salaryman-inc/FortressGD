@@ -1,4 +1,4 @@
-"""Golden corpus: core/mangle.py and plugin/addons/fortressgd/mangle.gd must agree.
+"""Golden corpus: fortressgd/core/mangle.py and fortressgd/plugin/addons/fortressgd/mangle.gd must agree.
 
 The Python side runs in every test run. The GDScript side runs the same cases
 under a real Godot when FORTRESSGD_GODOT_TESTS=1 and a Godot binary is found.
@@ -34,8 +34,8 @@ class MangleCorpusTests(unittest.TestCase):
     def test_gdscript_mangler_matches_corpus(self) -> None:
         if os.environ.get("FORTRESSGD_GODOT_TESTS") != "1":
             self.skipTest("set FORTRESSGD_GODOT_TESTS=1 to run the GDScript mangler under Godot")
-        from core.errors import UserError
-        from core.export import find_godot_bin
+        from fortressgd.core.errors import UserError
+        from fortressgd.core.export import find_godot_bin
 
         try:
             godot = find_godot_bin(os.environ)

@@ -10,24 +10,24 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core.kdf import secret_hash
-from core.errors import ToolError
-from core.secret import generate_secret_hex, secret_bytes_from_hex
-from core.templates import (
+from fortressgd.core.kdf import secret_hash
+from fortressgd.core.errors import ToolError
+from fortressgd.core.secret import generate_secret_hex, secret_bytes_from_hex
+from fortressgd.core.templates import (
     KDF_NAME,
     manifest_dict,
     patchset_for_tag,
     template_filename,
     write_manifest,
 )
-from generator.dialect import dialect_material, write_dialect_header
-from tests.support import ROOT, seed_mini_godot_tree
+from fortressgd.generator.dialect import dialect_material, write_dialect_header
+from tests.support import PKG, ROOT, seed_mini_godot_tree
 
 
 class DockerStaticTests(unittest.TestCase):
     def test_dockerfile_is_digest_pinned_and_secret_not_a_build_arg(self) -> None:
-        dockerfile = ROOT / "docker" / "Dockerfile.templates"
-        entry = ROOT / "docker" / "entrypoint.sh"
+        dockerfile = PKG / "docker" / "Dockerfile.templates"
+        entry = PKG / "docker" / "entrypoint.sh"
         self.assertTrue(dockerfile.is_file())
         self.assertTrue(entry.is_file())
         text = dockerfile.read_text(encoding="utf-8")
@@ -84,7 +84,7 @@ class DockerStaticTests(unittest.TestCase):
         last = steps[-1]
         self.assertTrue(last.startswith("Scan outputs"), last[:40])
         self.assertIn("if: always()", last)
-        self.assertIn("python3 -m core.leakscan", last)
+        self.assertIn("python3 -m fortressgd.core.leakscan", last)
         self.assertIn("--delete", last)
         self.assertIn(".cache/fortressgd/templates", last)
         self.assertIn("fortressgd-templates-build.log", last)
@@ -94,12 +94,12 @@ class DockerStaticTests(unittest.TestCase):
             self.assertNotIn("inputs.secret", run)
 
     def test_entrypoint_passes_require_signature_through(self) -> None:
-        entry = (ROOT / "docker" / "entrypoint.sh").read_text(encoding="utf-8")
+        entry = (PKG / "docker" / "entrypoint.sh").read_text(encoding="utf-8")
         self.assertIn('FGD_REQUIRE_SIGNATURE="${FGD_REQUIRE_SIGNATURE:-0}"', entry)
         self.assertIn('NAME="${NAME}-sig"', entry)
         self.assertIn('"require_signature": require_sig == "1"', entry)
         self.assertIn("FGD_REQUIRE_PACK_SIGNATURE = 1;", entry)
-        templates = (ROOT / "core" / "templates.py").read_text(encoding="utf-8")
+        templates = (PKG / "core" / "templates.py").read_text(encoding="utf-8")
         self.assertIn('"FGD_REQUIRE_SIGNATURE={0}"', templates)
         action = (ROOT / "actions" / "build-templates" / "action.yml").read_text(encoding="utf-8")
         self.assertIn("--require-signature", action)
@@ -132,16 +132,16 @@ class DockerStaticTests(unittest.TestCase):
                 "FGD_ARCH": "x86_64", "FGD_DIALECT_ID": did, "FGD_PATCHSET": pset,
                 "FORTRESSGD_SECRET_FILE": str(secret_file), "FORTRESSGD_SKIP_SCONS": "1",
                 "FGD_DIALECT": "1", "FGD_REQUIRE_SIGNATURE": "1",
-                "PATCHES_DIR": str(ROOT / "patches" / "4.6.2"), "DIALECT_HEADER": str(header),
+                "PATCHES_DIR": str(PKG / "patches" / "4.6.2"), "DIALECT_HEADER": str(header),
                 "OUT_DIR": str(out_dir), "GODOT_SRC": str(godot_src), "GIT_TERMINAL_PROMPT": "0",
             })
             # A header that does not require signatures is refused.
             write_dialect_header(header, secret, "4.6.2")
-            bad = subprocess.run(["sh", str(ROOT / "docker" / "entrypoint.sh")], capture_output=True, text=True, env=env, timeout=180)
+            bad = subprocess.run(["sh", str(PKG / "docker" / "entrypoint.sh")], capture_output=True, text=True, env=env, timeout=180)
             self.assertNotEqual(bad.returncode, 0)
             self.assertIn("does not require signatures", bad.stderr)
             write_dialect_header(header, secret, "4.6.2", require_signature=True)
-            run = subprocess.run(["sh", str(ROOT / "docker" / "entrypoint.sh")], capture_output=True, text=True, env=env, timeout=180)
+            run = subprocess.run(["sh", str(PKG / "docker" / "entrypoint.sh")], capture_output=True, text=True, env=env, timeout=180)
             self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
             name = template_filename("4.6.2", "linux", "x86_64", pset, secret_hash(secret), require_signature=True)
             self.assertTrue((out_dir / name).is_file(), sorted(p.name for p in out_dir.iterdir()))
@@ -151,11 +151,11 @@ class DockerStaticTests(unittest.TestCase):
             self.assertIn("FGD_REQUIRE_PACK_SIGNATURE = 1;", installed)
 
     def test_shipped_entrypoint_skip_scons_applies_series_and_manifest(self) -> None:
-        """Drive docker/entrypoint.sh (the shipped template-build entry) far enough
+        """Drive fortressgd/docker/entrypoint.sh (the shipped template-build entry) far enough
         to clone/apply/install header and emit §7 name + manifest. Skip-scons avoids
         a 30–60min compile. Uses host git/python so a hung docker pull cannot stall.
         """
-        entry = ROOT / "docker" / "entrypoint.sh"
+        entry = PKG / "docker" / "entrypoint.sh"
         self.assertTrue(entry.is_file())
         secret_hex = generate_secret_hex()
         secret = secret_bytes_from_hex(secret_hex)
@@ -186,7 +186,7 @@ class DockerStaticTests(unittest.TestCase):
                     "FORTRESSGD_SECRET_FILE": str(secret_file),
                     "FORTRESSGD_SKIP_SCONS": "1",
                     "FGD_DIALECT": "1",
-                    "PATCHES_DIR": str(ROOT / "patches" / "4.6.2"),
+                    "PATCHES_DIR": str(PKG / "patches" / "4.6.2"),
                     "DIALECT_HEADER": str(header),
                     "OUT_DIR": str(out_dir),
                     "GODOT_SRC": str(godot_src),
@@ -251,10 +251,10 @@ class DockerStaticTests(unittest.TestCase):
             self.skipTest("docker executable not found")
         log_raw = os.environ.get("FORTRESSGD_DOCKER_LOG", "").strip()
         log_path = Path(log_raw) if log_raw else None
-        dockerfile = ROOT / "docker" / "Dockerfile.templates"
+        dockerfile = PKG / "docker" / "Dockerfile.templates"
         try:
             build = subprocess.run(
-                [docker, "build", "-f", str(dockerfile), "-t", "fortressgd-templates:v1-test", str(ROOT / "docker")],
+                [docker, "build", "-f", str(dockerfile), "-t", "fortressgd-templates:v1-test", str(PKG / "docker")],
                 capture_output=True,
                 text=True,
                 timeout=45,

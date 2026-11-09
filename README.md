@@ -25,7 +25,7 @@ Start with leak checks on the official editor — no Docker, no custom templates
 **Derived encryption key**
 
 - PCK AES-256 key is derived at runtime (`FGD-KDF-1`, HKDF-SHA256) instead of embedding the raw 32-byte blob next to a known error string
-- Custom `template_release` binaries built in Docker from `patches/<godot-tag>/`
+- Custom `template_release` binaries built in Docker from `fortressgd/patches/<godot-tag>/`
 - CLI injects the derived key for one export process only; it is never written to `export_presets.cfg`
 
 **Per-project pack dialect** (optional, on by default in the example config)
@@ -67,7 +67,7 @@ Start with leak checks on the official editor — no Docker, no custom templates
 **Does**
 
 - Keep the official editor for day-to-day work
-- Build `template_release` binaries in Docker from `patches/<godot-tag>/`
+- Build `template_release` binaries in Docker from `fortressgd/patches/<godot-tag>/`
 - Derive the PCK AES key (`FGD-KDF-1`) instead of embedding the raw blob
 - Optionally change pack magic and index layout per project secret
 - Strip source (`.gd` text, `.cs`, DCC files, source maps) from Release
@@ -101,26 +101,26 @@ Protected platforms in v1: **Windows** and **Linux** (x86_64). Other Godot expor
 
 ## Install
 
-From a FortressGD checkout:
+Install a tagged release with pip. The editor plugin, the engine patches and the Docker build files ship inside the package, so you do not need a checkout:
 
 ```bash
-python3 cli/fortressgd --help
-# equivalent:
-python3 -m cli --help
-```
-
-After `pip install .` the `fortressgd` script is on `PATH`. Run every command from your **Godot project root** (the directory with `project.godot`).
-
-```bash
-pip install /path/to/FortressGD
+pip install "fortressgd @ git+https://github.com/salaryman-inc/FortressGD@v0.1.0"
 cd /path/to/your/godot/project
 fortressgd --version
+```
+
+Run every command from your **Godot project root** (the directory with `project.godot`).
+
+To run from a source checkout without installing, use `bin/fortressgd` (or `python3 -m fortressgd` from the checkout root):
+
+```bash
+python3 /path/to/FortressGD/bin/fortressgd --help
 ```
 
 FortressGD has no required dependencies. For large projects, install the optional `fast` extra: it adds the `cryptography` package so pack encryption and decryption (in `verify`, `export` signing, and the nameless-bytecode check) run through OpenSSL, roughly 700× faster than the built-in pure-Python AES. Both produce identical bytes.
 
 ```bash
-pip install "/path/to/FortressGD[fast]"
+pip install "fortressgd[fast] @ git+https://github.com/salaryman-inc/FortressGD@v0.1.0"
 ```
 
 ---
@@ -167,7 +167,7 @@ Use this first. It keeps source and work files out of a Release pack and proves 
 
 ```bash
 cd /path/to/your/godot/project
-python3 /path/to/FortressGD/cli/fortressgd init
+fortressgd init
 ```
 
 Then in the official editor:
@@ -192,7 +192,7 @@ ok: no production leaks in game.pck (42 packed files)
 Example failure (exit 2):
 
 ```text
-error: leaked excluded path(s) in game.pck
+error: leaked or unencrypted file(s) in game.pck
   res://main.gd (*.gd)
   res://icon.psd (*.psd)
 Run: fortressgd doctor
@@ -227,9 +227,11 @@ fortressgd export --preset Linux      # verifies the artifact when verify_on_exp
 fortressgd verify build/game.pck      # the same check, for CI or a copied artifact
 ```
 
-`export` sets `GODOT_SCRIPT_ENCRYPTION_KEY` to `FGD-KDF-1(secret, salt)` for that process only, points the preset at the cached FortressGD template, and restores `export_presets.cfg` afterwards. Missing templates print the exact `templates build` command to run.
+`export` sets `GODOT_SCRIPT_ENCRYPTION_KEY` to `FGD-KDF-1(secret, salt)` for that process only, points the preset at the cached FortressGD template, turns on PCK and directory encryption, and restores `export_presets.cfg` afterwards.
 
-The exported pack's directory is encrypted with that derived key, so `verify` reads it with the project secret and the `godot` version from `.fortressgd.toml`. Without the secret, `verify` exits 1 and says so.
+Godot encrypts a file's contents only when its path matches the preset's **Encryption Include Filters**, and an empty filter encrypts no contents at all, only the file list. So when that filter is empty, `export` sets it to `*` for its run and every file body is encrypted. A filter you set yourself is kept, for example to leave large media unencrypted for load speed; scripts must still match it. Missing templates print the exact `templates build` command to run.
+
+The exported pack's directory is encrypted with that derived key, so `verify` reads it with the project secret and the `godot` version from `.fortressgd.toml`. Without the secret, `verify` exits 1 and says so. In a pack with an encrypted directory, `verify` exits 2 if no file body is encrypted (the empty-filter mistake) or if any script body is unencrypted; `[filters].include` exempts a path.
 
 ### Full production (dialect + mangling)
 
@@ -366,7 +368,7 @@ Every command accepts `--secret-file PATH`. `--platform` is repeatable (`--platf
 | `templates build` | Docker-build `template_release` for `(godot, secret_hash, platform)`. |
 | `templates list` | Names of cached templates. |
 | `export` | Production export with derived AES key (and dialect/mangle/sign when enabled), then `verify` when `verify_on_export` is true. |
-| `verify` | List packed paths; fail on leaked excludes, shipped `.pdb` files, shaders that still contain comments, leftover debug tables, or bad signatures. |
+| `verify` | List packed paths; fail on leaked excludes, shipped `.pdb` files, shaders that still contain comments, unencrypted bodies in an encrypted pack, leftover debug tables, or bad signatures. |
 
 Exit codes: `0` ok, `1` config/user error, `2` verify/policy failure, `3` tool or engine build failure. Errors print `error: …` and `Run: <next command>`.
 
@@ -415,57 +417,78 @@ It never compiles the engine and never writes the raw secret into `export_preset
 
 ## CI
 
-Build templates once per `(godot version, patchset, secret hash, platform)` and cache them:
+Build templates once per `(godot version, patchset, secret hash, platform)` and cache them. Pin the action and the CLI to the same release tag:
 
 ```yaml
-- uses: ./actions/build-templates
+- uses: actions/setup-python@v5
+  with:
+    python-version: "3.12"
+- run: pip install "fortressgd @ git+https://github.com/salaryman-inc/FortressGD@v0.1.0"
+
+- uses: salaryman-inc/FortressGD/actions/build-templates@v0.1.0
   with:
     godot_version: "4.6.2"
     platforms: "linux,windows"
     secret: ${{ secrets.FORTRESSGD_SECRET }}
 
 - run: fortressgd export --preset Linux
+  env:
+    FORTRESSGD_SECRET: ${{ secrets.FORTRESSGD_SECRET }}
 - run: fortressgd verify path/to/your_game.pck
+  env:
+    FORTRESSGD_SECRET: ${{ secrets.FORTRESSGD_SECRET }}
 ```
 
 Cache key: `fgd-templates-{godot}-{patchset}-{secret_hash}-{platform}`. The secret is passed at **run** time; it is not a Docker build-arg and must not land in image layers.
 
-Optional unpacker regression (`FORTRESSGD_UNPACKER_TESTS=1`) runs a pinned KeyDot version; KeyDot failing to recover the key or project is a pass. GDRE Tools, gdke and GodotPCKExplorer are not pinned or tested yet, so the claim that they fail rests on design reasoning, not on a test run. See [`docs/ci.md`](docs/ci.md).
+The weekly end-to-end workflow (`.github/workflows/e2e.yml`) builds real templates, exports the sample project, and runs a pinned KeyDot version against the protected Windows build; KeyDot failing to recover the key or project is a pass. Locally the same test is opt-in (`FORTRESSGD_UNPACKER_TESTS=1`). GDRE Tools, gdke and GodotPCKExplorer are not pinned or tested yet, so the claim that they fail rests on design reasoning, not on a test run. See [`docs/ci.md`](docs/ci.md).
 
 ---
 
 ## Repository layout
 
 ```text
-DESIGN.md              source of truth for implementers
-THREAT_MODEL.md        short threat model
-plugin/addons/fortressgd editor plugin
-cli/                   fortressgd CLI
-core/                  shared library
-generator/             dialect.gen.h (build artifact, not committed)
-patches/<godot-tag>/   quilt applied to a pinned upstream tag
-docker/                template build image
-actions/               CI template factory
-testdata/              sample project + unpacker fixtures
-docs/                  getting-started, CI, agent rules
+DESIGN.md                         source of truth for implementers
+THREAT_MODEL.md                   short threat model
+bin/fortressgd                    run the CLI from a checkout
+fortressgd/                       the Python package (everything below ships in the wheel)
+  cli/                            fortressgd CLI
+  core/                           shared library
+  generator/                      writes dialect.gen.h (build artifact, not committed)
+  plugin/addons/fortressgd/       editor plugin, copied by `fortressgd init`
+  patches/<godot-tag>/            quilt applied to a pinned upstream tag
+  docker/                         template build image
+  fortressgd.example.toml         config written by `fortressgd init`
+actions/build-templates/          CI template factory
+.github/workflows/                CI for this repo
+testdata/                         sample project + unpacker fixtures
+tests/                            test suite
+docs/                             getting-started, CI, secrets, agent rules
 ```
 
-There is **no** Godot source tree in this repo. A tag without `patches/<tag>/series` is unsupported.
+There is **no** Godot source tree in this repo. A tag without `fortressgd/patches/<tag>/series` is unsupported.
 
-Tests: `python3 tests/run.py`.
+Tests: `python3 tests/run.py`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ---
 
 ## Comparison
 
-| | Official encrypt | Godot-Secure | GDMaim | ChaosProtector | FortressGD |
+| | [Official encrypt][official] | [Godot-Secure][godot-secure] | [GDMaim][gdmaim] | [ChaosProtector][chaos] | FortressGD |
 |---|---|---|---|---|---|
-| Stock KeyDot/GDRE | Usually succeed | Usually fail | Pack still opens | Claim fail (Windows) | Target: fail (KeyDot tested in CI; GDRE not yet) |
-| Editor | Official + custom templates | Patched editor | Official | Official | Official |
-| Source leaks | Your problem | Your problem | Your problem | Your problem | `verify` fails the build |
-| Script names | Intact | Intact | Mangled | Intact | Optional mangler |
-| You compile Godot how? | By hand | By hand, in-place script | No | No | Docker / Action |
-| License | MIT engine | MIT script | MIT | Paid | MIT |
+| Stock KeyDot/GDRE | Usually succeed (KeyDot reads Windows and Web builds) | Project claims fail | Pack opens; scripts are obfuscated | Vendor claims fail (Windows x86-64) | Target: fail (KeyDot checked by the e2e workflow; GDRE not tested yet) |
+| Editor | Official + custom templates | Patched editor | Official (4.5+) | Official | Official |
+| Source leaks | Your problem | Your problem | Your problem (strips comments only) | Not advertised | `verify` fails the build |
+| Script names | Intact | Intact (token IDs optionally scrambled) | Identifiers mangled; file paths intact | Not advertised | Optional mangler |
+| You compile Godot how? | By hand | By hand (in-place patch script) | No | No (post-build tool) | Docker / Action |
+| License | MIT engine | MIT | MIT | Commercial, closed source (free tier) | MIT |
+
+Third-party columns summarize each project's own documentation as of November 2026; claims marked "claims" are the project's own and were not tested by FortressGD. Corrections are welcome.
+
+[official]: https://docs.godotengine.org/en/stable/engine_details/development/compiling/compiling_with_script_encryption_key.html
+[godot-secure]: https://github.com/KnifeXRage/Godot-Secure
+[gdmaim]: https://github.com/cherriesandmochi/gdmaim
+[chaos]: https://chaosprotector.com/godot
 
 ---
 
@@ -477,6 +500,8 @@ Tests: `python3 tests/run.py`.
 - [`docs/agent-rules.md`](docs/agent-rules.md) — Callables vs string `call`/`rpc`, no secrets under `res://`
 - [`DESIGN.md`](DESIGN.md) — normative spec
 - [`THREAT_MODEL.md`](THREAT_MODEL.md) — in-scope vs out-of-scope attacks
+- [`SECURITY.md`](SECURITY.md) — how to report a vulnerability or a bypass
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — development setup, tests, project rules
 
 When implementing or changing behavior: do not add packers, VMs, anti-debug, or license servers; do not vendor Godot source; fail export rather than ship a recoverable or broken build; update `DESIGN.md` in the same change if behavior shifts.
 

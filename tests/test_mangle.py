@@ -10,9 +10,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core.export import export_preset, write_export_source_map
-from core.kdf import secret_hash
-from core.mangle import (
+from fortressgd.core.export import export_preset, write_export_source_map
+from fortressgd.core.kdf import secret_hash
+from fortressgd.core.mangle import (
     MangleError,
     collect_resource_reference_names,
     collect_user_identifiers,
@@ -25,9 +25,9 @@ from core.mangle import (
     source_map_json,
     source_map_path,
 )
-from core.secret import read_secret_file
-from core.templates import patchset_for_tag, template_filename, templates_cache_dir
-from tests.support import ROOT, base_env, run_fortressgd, write_godot_stub
+from fortressgd.core.secret import read_secret_file
+from fortressgd.core.templates import patchset_for_tag, template_filename, templates_cache_dir
+from tests.support import PKG, ROOT, base_env, run_fortressgd, write_godot_stub
 
 
 SAMPLE_SCRIPT = """extends Node2D
@@ -104,7 +104,7 @@ def _write_godot_stub_bin(directory: Path, log_path: Path) -> Path:
 
 
 def _mangle_gd() -> str:
-    return (ROOT / "plugin" / "addons" / "fortressgd" / "mangle.gd").read_text(encoding="utf-8")
+    return (PKG / "plugin" / "addons" / "fortressgd" / "mangle.gd").read_text(encoding="utf-8")
 
 
 def _gd_func_body(source: str, name: str) -> str:
@@ -673,7 +673,7 @@ class MangleStaticChecks(unittest.TestCase):
         self.assertEqual(body.count('_tok(KIND_IDENT, "pass"'), 2)
 
     def test_plugin_participates_when_mangle_scripts_true(self) -> None:
-        addon = ROOT / "plugin" / "addons" / "fortressgd"
+        addon = PKG / "plugin" / "addons" / "fortressgd"
         export_gd = (addon / "export_plugin.gd").read_text(encoding="utf-8")
         self.assertIn("extends EditorExportPlugin", export_gd)
         self.assertIn("mangle_scripts", export_gd)
@@ -690,7 +690,7 @@ class MangleStaticChecks(unittest.TestCase):
 
     def test_plugin_walk_keeps_res_scheme_slashes(self) -> None:
         """Godot FileAccess needs res://file, not res:/file from rstrip('/')."""
-        mangle_gd = (ROOT / "plugin" / "addons" / "fortressgd" / "mangle.gd").read_text(
+        mangle_gd = (PKG / "plugin" / "addons" / "fortressgd" / "mangle.gd").read_text(
             encoding="utf-8"
         )
         walk = _gd_func(mangle_gd, "_walk")
@@ -708,7 +708,7 @@ class MangleStaticChecks(unittest.TestCase):
 
     def test_plugin_abort_refuses_artifact_after_pack(self) -> None:
         """skip() after GDScript.FortressGD cannot un-pack bytecode; _export_end must."""
-        addon = ROOT / "plugin" / "addons" / "fortressgd"
+        addon = PKG / "plugin" / "addons" / "fortressgd"
         export_gd = (addon / "export_plugin.gd").read_text(encoding="utf-8")
         mangle_gd = (addon / "mangle.gd").read_text(encoding="utf-8")
         end = _gd_func(export_gd, "_export_end")
@@ -727,12 +727,12 @@ class MangleStaticChecks(unittest.TestCase):
 
     def test_no_new_mangler_engine_patch(self) -> None:
         for tag in ("4.6.2", "4.7.2"):
-            series = (ROOT / "patches" / tag / "series").read_text(encoding="utf-8")
+            series = (PKG / "patches" / tag / "series").read_text(encoding="utf-8")
             self.assertEqual(
                 [ln.strip() for ln in series.splitlines() if ln.strip()][:2],
                 ["0001-key-derive.patch", "0002-pack-hooks.patch"],
             )
-            patch_dir = ROOT / "patches" / tag
+            patch_dir = PKG / "patches" / tag
             names = sorted(p.name for p in patch_dir.iterdir() if p.suffix == ".patch")
             self.assertIn("0001-key-derive.patch", names)
             self.assertIn("0002-pack-hooks.patch", names)

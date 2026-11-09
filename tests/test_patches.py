@@ -6,9 +6,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core.errors import ToolError
-from core.patches import git_apply_check, git_apply_series, patch_files, require_series
-from tests.support import ROOT, run_fortressgd, seed_mini_godot_tree, write_godot_stub
+from fortressgd.core.errors import ToolError
+from fortressgd.core.patches import git_apply_check, git_apply_series, patch_files, require_series
+from tests.support import PKG, ROOT, run_fortressgd, seed_mini_godot_tree, write_godot_stub
 
 KEYDOT_ANCHOR = "Can't open encrypted pack directory."
 
@@ -16,7 +16,7 @@ KEYDOT_ANCHOR = "Can't open encrypted pack directory."
 class PatchTests(unittest.TestCase):
     def test_series_lists_key_derive_then_pack_hooks(self) -> None:
         for tag in ("4.6.2", "4.7.2"):
-            tag_dir = ROOT / "patches" / tag
+            tag_dir = PKG / "patches" / tag
             names = require_series(tag_dir)
             self.assertEqual(names[0], "0001-key-derive.patch")
             self.assertEqual(names[1], "0002-pack-hooks.patch")
@@ -61,7 +61,7 @@ class PatchTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp:
                 work = seed_mini_godot_tree(tag, Path(tmp))
                 pack = work / "core" / "io" / "file_access_pack.cpp"
-                files = patch_files(ROOT / "patches" / tag)
+                files = patch_files(PKG / "patches" / tag)
                 git_apply_check(work, files)
                 git_apply_series(work, files)
                 patched = pack.read_text(encoding="utf-8")

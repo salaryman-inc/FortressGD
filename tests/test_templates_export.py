@@ -9,14 +9,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core.kdf import aes_key_hex, secret_hash
-from core.secret import read_secret_file
-from core.templates import (
+from fortressgd.core.kdf import aes_key_hex, secret_hash
+from fortressgd.core.secret import read_secret_file
+from fortressgd.core.templates import (
     patchset_for_tag,
     template_filename,
     templates_cache_dir,
 )
-from generator.dialect import derive_dialect_salt
+from fortressgd.generator.dialect import derive_dialect_salt
 from tests.support import ROOT, base_env, run_fortressgd, write_godot_stub
 
 
@@ -52,6 +52,8 @@ def _write_godot_stub_bin(directory: Path, log_path: Path) -> Path:
         "    'argv': sys.argv,\n"
         "    'GODOT_SCRIPT_ENCRYPTION_KEY': os.environ.get('GODOT_SCRIPT_ENCRYPTION_KEY'),\n"
         "    'FORTRESSGD_SECRET': os.environ.get('FORTRESSGD_SECRET'),\n"
+        "    'presets': (Path(sys.argv[sys.argv.index('--path') + 1]) / 'export_presets.cfg')"
+        ".read_text(encoding='utf-8') if '--path' in sys.argv else None,\n"
         "}}\n"
         "log.write_text(json.dumps(payload), encoding='utf-8')\n"
         "sys.path.insert(0, {1!r})\n"
@@ -143,6 +145,53 @@ class TemplatesExportCliTests(unittest.TestCase):
                     blob = path.read_bytes()
                     self.assertNotIn(secret_hex.encode("ascii"), blob)
                     self.assertNotIn(derived.encode("ascii"), blob)
+
+    def _cache_linux_template(self, root: Path) -> None:
+        secret = bytes.fromhex(read_secret_file(root / ".fortressgd.secret"))
+        cache = templates_cache_dir(root / "cache")
+        cache.mkdir(parents=True, exist_ok=True)
+        name = template_filename("4.6.2", "linux", "x86_64", patchset_for_tag("4.6.2"), secret_hash(secret))
+        (cache / name).write_bytes(b"stub-template")
+
+    def _export_and_read_presets_seen_by_godot(self, root: Path) -> str:
+        bindir = root / "bin"
+        log = root / "godot-env.json"
+        _write_godot_stub_bin(bindir, log)
+        env = base_env()
+        env["PATH"] = str(bindir) + os.pathsep + env.get("PATH", "")
+        proc = run_fortressgd("export", "--preset", "Linux", cwd=root, env=env)
+        self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
+        return json.loads(log.read_text(encoding="utf-8"))["presets"]
+
+    def test_export_encrypts_every_file_body_by_default(self) -> None:
+        # Godot encrypts a body only when it matches encryption_include_filters;
+        # empty encrypts none. export sets "*" for its run and restores the file.
+        for dialect in (False, True):
+            with self.subTest(dialect=dialect), tempfile.TemporaryDirectory() as tmp:
+                root = self._project(tmp)
+                self._set_dialect(root, dialect)
+                self._cache_linux_template(root)
+                seen = self._export_and_read_presets_seen_by_godot(root)
+                section = seen.split("[preset.0.options]")[0]
+                self.assertIn('encryption_include_filters="*"', section)
+                self.assertIn("encrypt_pck=true", section)
+                self.assertIn("encrypt_directory=true", section)
+                self.assertEqual((root / "export_presets.cfg").read_text(encoding="utf-8"), PRESETS)
+
+    def test_export_keeps_a_preset_encryption_filter(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            self._set_dialect(root, False)
+            presets = PRESETS.replace(
+                "encrypt_directory=false\n",
+                'encrypt_directory=false\nencryption_include_filters="*.gdc, *.tscn"\n',
+            )
+            (root / "export_presets.cfg").write_text(presets, encoding="utf-8")
+            self._cache_linux_template(root)
+            seen = self._export_and_read_presets_seen_by_godot(root)
+            self.assertIn('encryption_include_filters="*.gdc, *.tscn"', seen)
+            self.assertNotIn('encryption_include_filters="*"', seen)
+            self.assertEqual((root / "export_presets.cfg").read_text(encoding="utf-8"), presets)
 
     def test_missing_templates_prints_build_command(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

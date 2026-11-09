@@ -1,27 +1,53 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "fortressgd"
-version = "0.1.0"
-description = "Release toolchain for Godot 4"
+dynamic = ["version"]
+description = "Release toolchain for Godot 4: derived PCK keys, per-project pack format, GDScript mangling, leak checks"
 readme = "README.md"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.9"
-authors = [{ name = "Salaryman" }]
+authors = [{ name = "Salaryman, Inc." }]
+keywords = ["godot", "godot4", "gamedev", "export", "pck", "encryption", "obfuscation"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Games/Entertainment",
+  "Topic :: Software Development :: Build Tools",
+]
+
+[project.urls]
+Homepage = "https://github.com/salaryman-inc/FortressGD"
+Documentation = "https://github.com/salaryman-inc/FortressGD#readme"
+Issues = "https://github.com/salaryman-inc/FortressGD/issues"
+Security = "https://github.com/salaryman-inc/FortressGD/security/policy"
 
 [project.scripts]
-fortressgd = "cli.main:main"
+fortressgd = "fortressgd.cli.main:main"
 
 [project.optional-dependencies]
-dev = []
-# Optional: AES through OpenSSL (~1000x faster pack decryption/encryption).
+# Optional: AES through OpenSSL (~700x faster pack decryption/encryption).
 # Without it FortressGD uses its pure-Python AES and needs no dependencies.
 fast = ["cryptography>=3.1"]
 
-[tool.setuptools.packages.find]
-include = ["cli*", "core*", "generator*"]
+[tool.setuptools.dynamic]
+version = { attr = "fortressgd.core.version.__version__" }
 
+[tool.setuptools.packages.find]
+include = ["fortressgd*"]
+
+# The editor plugin, the patch quilt, the Docker build context and the example
+# config ship inside the package; fortressgd/core/paths.py resolves them there.
 [tool.setuptools.package-data]
-"core" = []
+fortressgd = [
+  "fortressgd.example.toml",
+  "plugin/addons/fortressgd/*",
+  "patches/*/*",
+  "docker/*",
+]

@@ -7,8 +7,8 @@ import time
 import unittest
 from unittest import mock
 
-from core import aes_cfb
-from core.pack_dialect import decrypt_fae_blob, encrypt_fae_directory
+from fortressgd.core import aes_cfb
+from fortressgd.core.pack_dialect import decrypt_fae_blob, encrypt_fae_directory
 
 HAVE_OPENSSL = aes_cfb.aes_backend() == "openssl"
 
@@ -44,6 +44,34 @@ class AesBackendTests(unittest.TestCase):
     def test_loader_returns_none_without_cryptography(self) -> None:
         with mock.patch.dict("sys.modules", {"cryptography": None, "cryptography.hazmat.primitives.ciphers": None}):
             self.assertIsNone(aes_cfb._load_openssl_cfb())
+
+    def test_loader_returns_none_when_cryptography_panics_on_import(self) -> None:
+        # A distro `cryptography` without `_cffi_backend` raises pyo3's
+        # PanicException, a BaseException subclass, from its Rust bindings.
+        class PanicException(BaseException):
+            pass
+
+        real_import = __import__
+
+        def panicking_import(name, *args, **kwargs):
+            if name.startswith("cryptography"):
+                raise PanicException("Python API call failed")
+            return real_import(name, *args, **kwargs)
+
+        with mock.patch("builtins.__import__", side_effect=panicking_import):
+            self.assertIsNone(aes_cfb._load_openssl_cfb())
+
+    def test_loader_lets_keyboard_interrupt_through(self) -> None:
+        real_import = __import__
+
+        def interrupted_import(name, *args, **kwargs):
+            if name.startswith("cryptography"):
+                raise KeyboardInterrupt
+            return real_import(name, *args, **kwargs)
+
+        with mock.patch("builtins.__import__", side_effect=interrupted_import):
+            with self.assertRaises(KeyboardInterrupt):
+                aes_cfb._load_openssl_cfb()
 
     def test_arguments_are_validated_on_both_paths(self) -> None:
         for fn in (aes_cfb.aes256_cfb128, aes_cfb.aes256_cfb128_pure):

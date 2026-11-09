@@ -1,0 +1,29 @@
+schema = 1
+godot = "4.6.2"
+
+[production]
+dialect = true
+mangle_scripts = true
+nameless_bytecode = false    # opt-in
+sign_packs = false           # opt-in; rebuild templates after turning it on
+verify_on_export = true
+
+[filters]
+exclude = [
+  "*.cs",
+  "*.sln",
+  "*.csproj",
+  "*.blend",
+  "*.psd",
+  "*.kra",
+  "*.tmp",
+  "*.fortressgd.map.json",
+]
+# opt-in extras to pack
+include = []
+
+[platforms]
+build = ["windows", "linux"]
+
+[templates]
+cache_dir = "~/.cache/fortressgd"

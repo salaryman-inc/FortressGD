@@ -6,7 +6,7 @@ import re
 import unittest
 from pathlib import Path
 
-from core.config import looks_like_secret_blob
+from fortressgd.core.config import looks_like_secret_blob
 from tests.support import ROOT
 
 SKIP_DIRS = {".git", "__pycache__", ".godot", "node_modules", ".cache"}

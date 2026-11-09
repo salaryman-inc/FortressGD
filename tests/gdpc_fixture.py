@@ -56,7 +56,7 @@ def make_gdpc(
     file_data = b"".join(bodies)
     count = struct.pack("<I", len(paths))
     if flags & PACK_DIR_ENCRYPTED and aes_key is not None:
-        from core.pack_dialect import encrypt_fae_directory
+        from fortressgd.core.pack_dialect import encrypt_fae_directory
 
         dir_buf = bytearray(count + encrypt_fae_directory(bytes(dir_buf), aes_key, iv or bytes(range(16))))
     else:

@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core.secret import (
+from fortressgd.core.secret import (
     ENV_NAME,
     SECRET_BYTES,
     SECRET_HEX_LEN,
@@ -17,7 +17,7 @@ from core.secret import (
     secret_weakness,
     write_secret_file,
 )
-from core.errors import UserError
+from fortressgd.core.errors import UserError
 
 
 class SecretHelperTests(unittest.TestCase):

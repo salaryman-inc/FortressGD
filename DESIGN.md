@@ -81,7 +81,7 @@ If a change only helps out-of-scope attacks and increases maintenance, reject it
 
 ### 2.1 Editor plugin
 
-Path: `plugin/addons/fortressgd/`  
+Path: `fortressgd/plugin/addons/fortressgd/` in this repo; `addons/fortressgd/` once `fortressgd init` copies it into a project.  
 Godot: 4.6+ `EditorPlugin` + `EditorExportPlugin`.
 
 Responsibilities:
@@ -122,46 +122,60 @@ Must cache by `godot_version + patchset_id + secret_hash + platform`.
 ## 3. Repository layout
 
 ```
-fortressgd/
+FortressGD/                    # repository root
   DESIGN.md                    # this file
   README.md
   LICENSE
   THREAT_MODEL.md              # one-page restatement of §1.3
-  .fortressgd.example.toml
-  plugin/addons/fortressgd/
-  cli/
-  core/                        # shared library used by CLI
-  generator/
-    dialect.py
-    opcode_map.py              # v2; stub only in v1
-    key_shards.py
-  patches/
-    4.6.2/
-      series                   # ordered list of patch files
-      0001-key-derive.patch
-      0002-pack-hooks.patch
-      0003-nameless-bytecode.patch   # optional in v1.1
-    4.7.2/
-      series
-      ...
-  docker/
-    Dockerfile.templates
-    entrypoint.sh
+  SECURITY.md                  # private vulnerability reporting
+  CONTRIBUTING.md
+  pyproject.toml
+  bin/fortressgd               # run the CLI from a checkout without installing
+  fortressgd/                  # the Python package; everything below ships in the wheel
+    fortressgd.example.toml    # written by `fortressgd init`
+    plugin/addons/fortressgd/  # editor plugin, copied by `fortressgd init`
+    cli/
+    core/                      # shared library used by CLI
+    generator/
+      dialect.py
+      opcode_map.py
+      key_shards.py
+    patches/
+      common/                  # sources the series patches add to the engine
+      4.6.2/
+        series                 # ordered list of patch files
+        0001-key-derive.patch
+        0002-pack-hooks.patch
+        0003-nameless-bytecode.patch
+        0004-opcode-map.patch
+        0005-pack-signatures.patch
+      4.7.2/
+        series
+        ...
+    docker/
+      Dockerfile.templates
+      entrypoint.sh
   actions/build-templates/
+  .github/workflows/           # CI (§13)
   testdata/sample_project/
   testdata/fixtures/
     unpackers.lock.json        # pinned tool versions we regression-test
+  tests/
   docs/
     getting-started.md
     ci.md
-    rebasing.md
+    secrets.md
     agent-rules.md
 ```
+
+The plugin, patches, Docker build context and example config live inside the
+package so `pip install fortressgd` works without a checkout. Code finds them
+through `fortressgd/core/paths.py`, never relative to the repository root.
 
 Rules:
 
 - No Godot source tree in this repo.
-- Patches are the only engine surface. A Godot tag without a `patches/<tag>/series` file is unsupported.
+- Patches are the only engine surface. A Godot tag without a `fortressgd/patches/<tag>/series` file is unsupported.
 - `series` is a newline-separated list of patch filenames, applied in order with `git apply --check` then `git apply`.
 
 ---
@@ -173,7 +187,7 @@ Engine support: **current Godot stable + previous stable** listed in `SUPPORTED_
 
 When adding a Godot tag:
 
-1. Copy the closest `patches/` folder.
+1. Copy the closest `fortressgd/patches/<tag>/` folder.
 2. `fortressgd doctor --godot NEW` must apply every patch with `--check`.
 3. Docker build templates for `windows` and `linux`.
 4. Export `testdata/sample_project` and run `fortressgd verify`.
@@ -217,6 +231,7 @@ Runtime template:
 
 - Compile `dialect_salt` and an **obfuscated encoding of `secret` shards**, not `aes_key`.
 - Shard scheme v1: secret split into 4×8-byte pieces, XOR’d with compile-time random masks stored separately, reassembled in `fortressgd_derive_key()`.
+- The shard and mask arrays in `dialect.gen.h` are `static const volatile`. With plain `static const` the optimizer folds the XOR at build time (GCC at `-O3`, which `production=yes` uses; clang at `-O2`) and the template stores the reassembled secret. `templates build` then refuses to cache it. `tests/test_generator.py` compiles the loop with every C++ compiler on `PATH` and fails if any secret bytes reach the object file.
 - Wipe stack buffers after use.
 - Replace or encrypt known anchor strings used by KeyDot (`Can't open encrypted pack directory.` and similar). Use format strings rebuilt at runtime or store encrypted.
 
@@ -226,6 +241,7 @@ Editor / packer side:
 - CLI computes `aes_key = FGD-KDF-1(secret, salt)` and either:
   - injects it into the export preset at export time in memory, or
   - passes `GODOT_SCRIPT_ENCRYPTION_KEY` / the export CLI equivalent for the duration of one export.
+- The export also sets `encrypt_pck`, `encrypt_directory` and, when the preset's `encryption_include_filters` is empty, `encryption_include_filters="*"` for that run. Godot encrypts a body only when it matches that filter, and an empty filter encrypts none. A non-empty preset filter is kept.
 - Do not persist `aes_key` on disk.
 
 If PR-style “patch key bytes into official template” lands upstream, FortressGD may use official templates **only** for the AES layer. Dialect and derived-key patches still require FortressGD templates.
@@ -243,8 +259,8 @@ godot = "4.6.2"
 [production]
 dialect = true
 mangle_scripts = true
-nameless_bytecode = false    # v1.1
-sign_packs = false           # v2
+nameless_bytecode = false    # opt-in; see §8.4
+sign_packs = false           # opt-in; needs the -sig template (§8.4)
 verify_on_export = true
 
 [filters]
@@ -408,7 +424,7 @@ Document in `docs/agent-rules.md` for AI coding agents:
 - No secrets under `res://`.
 - No string `set`/`get` for user properties.
 
-v1.1: nameless bytecode patch so decompilers lose symbol tables even without mangling.
+With `nameless_bytecode` on (§8.4), packed bytecode also drops its symbol tables, so decompilers lose names even without mangling.
 
 ---
 
@@ -423,6 +439,7 @@ Checks:
 3. File list contains no excluded patterns from §6.3.
 4. No packed `*.fortressgd.map.json`.
 5. If `nameless_bytecode`: fail if debug name tables present in `.gdc`.
+5a. If the pack directory is encrypted: fail if no file body is encrypted, or if any script body (`.gdc`, `.gde`, `.gd`) is not. `[filters].include` exempts a path.
 6. Optional: run pinned KeyDot/GDRE binaries from `unpackers.lock.json` in a sandbox when `FORTRESSGD_UNPACKER_TESTS=1`. Failure of those tools to recover the project is a **pass**.
 
 Do not vendor unpacker binaries in the default clone. Document how CI obtains them.
@@ -464,7 +481,7 @@ Implement in this order. Do not start a later phase before the previous phase’
 
 ### Phase 2 — Templates + FGD-KDF-1
 
-- `patches/4.6.2/0001-key-derive.patch`
+- `fortressgd/patches/4.6.2/0001-key-derive.patch`
 - Docker template build for windows-x86_64 and linux-x86_64.
 - CLI export sets derived AES key for the official encrypt-PCK path.
 - Verify: stock KeyDot fixture fails on the protected exe (when unpacker tests enabled).
@@ -480,7 +497,7 @@ Implement in this order. Do not start a later phase before the previous phase’
 - Identifier mangling + export failure on unsafe dynamic calls.
 - Source maps.
 
-### Phase 5 — v1.1 / v2 (explicit milestone)
+### Phase 5 — Opt-in hardening (shipped in 0.1.0, off by default)
 
 - Nameless bytecode.
 - Opcode map.
@@ -492,7 +509,7 @@ Each phase ships behind feature flags in toml so a project can stop at Phase 2.
 
 ## 13. Testing requirements
 
-Minimum CI:
+Minimum CI (implemented in `.github/workflows/ci.yml` and `e2e.yml`; see `docs/ci.md` for what each covers and what is not covered yet):
 
 - Unit tests for FGD-KDF-1, shard encode/decode, dialect determinism.
 - Patch `--check` on every supported tag.
@@ -512,7 +529,7 @@ Manual / nightly:
 - Docker image built from this repo; pin base image digests.
 - `fortressgd doctor` warns if plugin files differ from the CLI package version.
 - Refuse to run `templates build` if `series` is empty or `git apply --check` fails.
-- Treat `generator/` output as untrusted C to embed: headers only, no executable code snippets from the secret.
+- Treat `fortressgd/generator/` output as untrusted C to embed: headers only, no executable code snippets from the secret.
 
 ---
 

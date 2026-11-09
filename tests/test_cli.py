@@ -10,8 +10,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core.config import ALLOWED_KEYS, load_path, looks_like_secret_blob
-from core.secret import ENV_NAME, SECRET_BYTES, SECRET_HEX_LEN
+from fortressgd.core.config import ALLOWED_KEYS, load_path, looks_like_secret_blob
+from fortressgd.core.secret import ENV_NAME, SECRET_BYTES, SECRET_HEX_LEN
 from tests.support import SAMPLE_PROJECT, base_env, run_fortressgd, write_godot_stub
 
 _HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")

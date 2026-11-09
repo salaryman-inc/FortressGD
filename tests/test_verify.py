@@ -7,8 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core.config import default_toml_text
-from core.gdc import (
+from fortressgd.core.config import default_toml_text
+from fortressgd.core.gdc import (
     FGDN_MAGIC,
     GDSC_MAGIC,
     TOKENIZER_VERSION,
@@ -17,8 +17,8 @@ from core.gdc import (
     encode_identifier_token,
     parse_gdsc_engine_order,
 )
-from core.pack import PACK_DIR_ENCRYPTED, PACK_FILE_ENCRYPTED
-from core.pack_dialect import (
+from fortressgd.core.pack import PACK_DIR_ENCRYPTED, PACK_FILE_ENCRYPTED
+from fortressgd.core.pack_dialect import (
     dialect_key_for_secret,
     dialect_params_for_secret,
     embed_exe_dialect,
@@ -26,8 +26,8 @@ from core.pack_dialect import (
     encrypt_fae_directory,
     read_dialect_listing,
 )
-from core.pack_sign import apply_signature, public_key_for_secret, sign_index, verify_index
-from core.secret import generate_secret_hex, read_secret_file, secret_bytes_from_hex
+from fortressgd.core.pack_sign import apply_signature, public_key_for_secret, sign_index, verify_index
+from fortressgd.core.secret import generate_secret_hex, read_secret_file, secret_bytes_from_hex
 from tests.gdpc_fixture import embed_exe, make_gdpc
 from tests.support import run_fortressgd, write_godot_stub
 
@@ -236,6 +236,71 @@ class VerifyCliTests(unittest.TestCase):
                 self.assertEqual(proc.returncode, 0, combined)
                 self.assertIn("3 packed files", combined)
                 self.assertNotIn(secret.hex(), combined)
+
+    def _encrypted_dir_pack(self, secret: bytes, plaintext: set[str]) -> bytes:
+        """An encrypted-directory pack whose bodies are encrypted except `plaintext`."""
+        key = dialect_key_for_secret(secret, "4.6.2")
+        bodies = {"main.tscn": b"[gd_scene format=3]\n", "main.gdc": b"GDSC" + bytes(32), "icon.png": b"\x89PNG" + bytes(64)}
+        contents = {}
+        file_flags = {}
+        for i, (path, body) in enumerate(bodies.items()):
+            if path in plaintext:
+                contents[path] = body
+            else:
+                contents[path] = encrypt_fae_directory(body, key, bytes([i]) * 16)
+                file_flags[path] = PACK_FILE_ENCRYPTED
+        return make_gdpc(
+            list(bodies), flags=PACK_DIR_ENCRYPTED, aes_key=key, contents=contents, file_flags=file_flags
+        )
+
+    def test_encrypted_directory_without_any_encrypted_body_exits_2(self) -> None:
+        # Godot's default: encrypt_pck on, Encryption Include Filters empty, so only
+        # the directory is encrypted and every body ships readable.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            secret = self._derived_key_project(root)
+            pck = root / "game.pck"
+            pck.write_bytes(self._encrypted_dir_pack(secret, {"main.tscn", "main.gdc", "icon.png"}))
+            proc = run_fortressgd("verify", str(pck), cwd=root)
+            self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+            for path in ("main.tscn", "main.gdc", "icon.png"):
+                self.assertIn(path, proc.stderr)
+            self.assertIn("Encryption Include Filters was empty", proc.stderr)
+
+    def test_encrypted_directory_with_plaintext_script_exits_2(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            secret = self._derived_key_project(root)
+            pck = root / "game.pck"
+            pck.write_bytes(self._encrypted_dir_pack(secret, {"main.gdc"}))
+            proc = run_fortressgd("verify", str(pck), cwd=root)
+            self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+            self.assertIn("main.gdc (unencrypted script body)", proc.stderr)
+            self.assertNotIn("main.tscn", proc.stderr)
+
+    def test_encrypted_directory_may_leave_media_plaintext(self) -> None:
+        # A preset filter such as "*.gdc, *.tscn" is the project's choice.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            secret = self._derived_key_project(root)
+            pck = root / "game.pck"
+            pck.write_bytes(self._encrypted_dir_pack(secret, {"icon.png"}))
+            proc = run_fortressgd("verify", str(pck), cwd=root)
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_include_allowlist_exempts_plaintext_script_body(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            secret = self._derived_key_project(root)
+            toml = root / ".fortressgd.toml"
+            toml.write_text(
+                toml.read_text(encoding="utf-8").replace("include = []", 'include = ["main.gdc"]'),
+                encoding="utf-8",
+            )
+            pck = root / "game.pck"
+            pck.write_bytes(self._encrypted_dir_pack(secret, {"main.gdc"}))
+            proc = run_fortressgd("verify", str(pck), cwd=root)
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
 
     def test_stock_encrypted_directory_leak_exits_2(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -512,7 +577,7 @@ class VerifyCliTests(unittest.TestCase):
     def test_sign_packs_encrypted_stock_index_range(self) -> None:
         key = bytes(range(32))
         data = make_gdpc(["main.tscn", "main.gdc"], flags=PACK_DIR_ENCRYPTED, aes_key=key, contents={"main.gdc": b"C" * 21})
-        from core.pack_dialect import STOCK_INDEX_PERM, STOCK_PACK_MAGIC, read_dialect_listing_at
+        from fortressgd.core.pack_dialect import STOCK_INDEX_PERM, STOCK_PACK_MAGIC, read_dialect_listing_at
 
         listing = read_dialect_listing_at(data, 0, magic=STOCK_PACK_MAGIC, perm=STOCK_INDEX_PERM, aes_key=key)
         self.assertEqual(listing.dir_end, listing.file_base)
@@ -532,10 +597,15 @@ class VerifyCliTests(unittest.TestCase):
                     perm=perm,
                     flags=PACK_DIR_ENCRYPTED,
                     aes_key=key,
-                    contents={"main.gdc": encode_gdsc(["x"], nameless=True)},
+                    contents={
+                        "main.gdc": encrypt_fae_directory(
+                            encode_gdsc(["x"], nameless=True), key, bytes(range(16, 32))
+                        )
+                    },
+                    file_flags={"main.gdc": PACK_FILE_ENCRYPTED},
                 )
             )
-            from core.pack_dialect import read_dialect_listing
+            from fortressgd.core.pack_dialect import read_dialect_listing
 
             data = unsigned.read_bytes()
             listing = read_dialect_listing(

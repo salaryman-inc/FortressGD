@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import unittest
 
-from core.filters import (
+from fortressgd.core.filters import (
     find_leaks,
     forced_exclude_patterns,
     glob_match,
@@ -15,7 +15,7 @@ from core.filters import (
     should_force_exclude,
     spec_forced_exclude_patterns,
 )
-from tests.support import ROOT
+from tests.support import PKG, ROOT
 
 
 class FilterMatchTests(unittest.TestCase):
@@ -25,7 +25,7 @@ class FilterMatchTests(unittest.TestCase):
         self.assertEqual(tuple(data["forced_exclude"]), spec_forced_exclude_patterns())
         self.assertEqual(production_feature_tag(), "fortressgd_production")
         plugin_json = json.loads(
-            (ROOT / "plugin" / "addons" / "fortressgd" / "filters.json").read_text(
+            (PKG / "plugin" / "addons" / "fortressgd" / "filters.json").read_text(
                 encoding="utf-8"
             )
         )
