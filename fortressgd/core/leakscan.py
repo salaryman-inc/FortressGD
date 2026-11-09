@@ -40,11 +40,14 @@ def secret_needles(secret: bytes, godot_tag: str | None = None) -> list[tuple[st
     """
     Byte strings whose presence in an output means the secret or a derived key leaked.
 
-    Covers the secret, the derived AES key, and the pack-signing seed, each as raw
-    bytes and as hex text. With no godot_tag only the secret itself is covered,
-    because the derived keys depend on the tag.
+    Covers the secret, the mangler key, the derived AES key, and the pack-signing
+    seed, each as raw bytes and as hex text. With no godot_tag the tag-dependent
+    keys (AES key, signing seed) are not covered.
     """
+    from fortressgd.core.mangle import derive_mangle_key
+
     needles = _encodings("project secret", secret)
+    needles += _encodings("mangler key", bytes.fromhex(derive_mangle_key(secret)))
     if godot_tag:
         from fortressgd.core.pack_dialect import dialect_key_for_secret
         from fortressgd.core.pack_sign import signing_seed

@@ -16,6 +16,7 @@ from fortressgd.core.mangle import (
     MangleError,
     collect_resource_reference_names,
     collect_user_identifiers,
+    derive_mangle_key,
     iter_gdscript_files,
     iter_scan_only_gdscript_files,
     mangled_identifier,
@@ -121,7 +122,7 @@ class MangleTransformTests(unittest.TestCase):
 
     def test_strip_replaces_statement_with_pass(self) -> None:
         src = "extends Node\n\nfunc _ready():\n    if true:\n        assert(1 == 1)\n    print_debug(\"x\")\n"
-        out, _ = mangle_scripts({"b.gd": src}, secret_hash="abc123", rename=True)
+        out, _ = mangle_scripts({"b.gd": src}, mangle_key="abc123", rename=True)
         self.assertEqual(
             out["b.gd"], "extends Node\n\nfunc _ready():\n    if true:\n        pass\n    pass\n"
         )
@@ -142,7 +143,7 @@ class MangleTransformTests(unittest.TestCase):
             "extends Node\nvar speed = 5\nfunc _ready():\n"
             "    var other = get_node(\"Enemy\")\n    other.speed = 10\n"
         )
-        out, mapping = mangle_scripts({"a.gd": src}, secret_hash="abc123", rename=True)
+        out, mapping = mangle_scripts({"a.gd": src}, mangle_key="abc123", rename=True)
         self.assertNotIn("speed", mapping)
         self.assertIn("var speed = 5", out["a.gd"])
         # `other` is a local and is still renamed; the member after the dot is not.
@@ -150,7 +151,7 @@ class MangleTransformTests(unittest.TestCase):
 
     def test_self_member_access_is_renamed(self) -> None:
         src = "extends Node\nvar hp = 3\nfunc hit():\n    self.hp -= 1\n    hp -= 1\n    super.hit()\n"
-        out, mapping = mangle_scripts({"a.gd": src}, secret_hash=self.HASH, rename=True)
+        out, mapping = mangle_scripts({"a.gd": src}, mangle_key=self.HASH, rename=True)
         self.assertIn("hp", mapping)
         new = mapping["hp"]
         self.assertIn("self.{0} -= 1".format(new), out["a.gd"])
@@ -164,14 +165,14 @@ class MangleTransformTests(unittest.TestCase):
             "a.gd": "extends Node\nvar speed = 1\nfunc go():\n    speed += 1\n",
             "b.gd": "extends Node\nfunc push(enemy):\n    enemy.speed = 0\n",
         }
-        out, mapping = mangle_scripts(files, secret_hash=self.HASH, rename=True)
+        out, mapping = mangle_scripts(files, mangle_key=self.HASH, rename=True)
         self.assertNotIn("speed", mapping)
         self.assertIn("var speed = 1", out["a.gd"])
         self.assertIn(".speed = 0", out["b.gd"])
 
     def test_enum_member_via_type_is_not_renamed(self) -> None:
         src = "extends Node\nenum State { IDLE, RUN }\nvar s = State.IDLE\nfunc f():\n    return IDLE\n"
-        out, mapping = mangle_scripts({"a.gd": src}, secret_hash=self.HASH, rename=True)
+        out, mapping = mangle_scripts({"a.gd": src}, mangle_key=self.HASH, rename=True)
         self.assertNotIn("IDLE", mapping)
         # The enum type is still renamed consistently; only the member is kept.
         self.assertIn(mapping["State"] + ".IDLE", out["a.gd"])
@@ -180,7 +181,7 @@ class MangleTransformTests(unittest.TestCase):
 
     def test_numbers_do_not_count_as_member_access(self) -> None:
         src = "extends Node\nvar scale_x = 1.5\nfunc f():\n    return scale_x * 2.0\n"
-        _out, mapping = mangle_scripts({"a.gd": src}, secret_hash=self.HASH, rename=True)
+        _out, mapping = mangle_scripts({"a.gd": src}, mangle_key=self.HASH, rename=True)
         self.assertIn("scale_x", mapping)
 
     def test_string_member_references_block_rename(self) -> None:
@@ -191,7 +192,7 @@ class MangleTransformTests(unittest.TestCase):
             '    var h = get("health")\n'
             '    if has_method("go"): pass\n'
         )
-        out, mapping = mangle_scripts({"s.gd": src}, secret_hash="z", rename=True)
+        out, mapping = mangle_scripts({"s.gd": src}, mangle_key="z", rename=True)
         for name in ("my_signal", "go", "health"):
             self.assertNotIn(name, mapping)
         # Only the local `h` is renamed.
@@ -201,24 +202,24 @@ class MangleTransformTests(unittest.TestCase):
 
     def test_stringname_and_nodepath_prefixes_block_rename(self) -> None:
         src = 'extends Node\nvar hp = 1\nfunc go():\n    pass\nfunc f():\n    var c = &"go"\n    var p = ^".:hp"\n'
-        _out, mapping = mangle_scripts({"s.gd": src}, secret_hash=self.HASH, rename=True)
+        _out, mapping = mangle_scripts({"s.gd": src}, mangle_key=self.HASH, rename=True)
         self.assertNotIn("go", mapping)
         self.assertNotIn("hp", mapping)
 
     def test_property_path_segments_block_rename(self) -> None:
         src = 'extends Node2D\nvar speed = Vector2.ZERO\nfunc f():\n    create_tween().tween_property(self, "speed:x", 1.0, 0.5)\n'
-        _out, mapping = mangle_scripts({"s.gd": src}, secret_hash=self.HASH, rename=True)
+        _out, mapping = mangle_scripts({"s.gd": src}, mangle_key=self.HASH, rename=True)
         self.assertNotIn("speed", mapping)
 
     def test_keep_call_target_is_not_renamed(self) -> None:
         src = 'extends Node\nfunc my_attack():\n    pass\nfunc f():\n    ## fortressgd:keep\n    call("my_attack")\n'
-        out, mapping = mangle_scripts({"s.gd": src}, secret_hash=self.HASH, rename=True)
+        out, mapping = mangle_scripts({"s.gd": src}, mangle_key=self.HASH, rename=True)
         self.assertNotIn("my_attack", mapping)
         self.assertIn("func my_attack", out["s.gd"])
 
     def test_non_identifier_strings_do_not_block(self) -> None:
         src = 'extends Node\nvar hello_world = 1\nfunc f():\n    print("hello world")\n    print("a-b", hello_world)\n'
-        _out, mapping = mangle_scripts({"s.gd": src}, secret_hash=self.HASH, rename=True)
+        _out, mapping = mangle_scripts({"s.gd": src}, mangle_key=self.HASH, rename=True)
         self.assertIn("hello_world", mapping)
 
     def test_string_in_other_file_blocks_rename(self) -> None:
@@ -226,7 +227,7 @@ class MangleTransformTests(unittest.TestCase):
             "a.gd": "extends Node\nfunc on_hit():\n    pass\n",
             "b.gd": 'extends Node\nfunc wire(n):\n    n.connect("hit", Callable(n, "on_hit"))\n',
         }
-        _out, mapping = mangle_scripts(files, secret_hash=self.HASH, rename=True)
+        _out, mapping = mangle_scripts(files, mangle_key=self.HASH, rename=True)
         self.assertNotIn("on_hit", mapping)
 
     def test_export_annotated_vars_are_never_renamed(self) -> None:
@@ -242,7 +243,7 @@ class MangleTransformTests(unittest.TestCase):
             "var plain = 1\n"
             "func _on_button_pressed() -> void:\n    speed += 1.0\n"
         )
-        _out, mapping = mangle_scripts({"main.gd": src}, secret_hash="z", rename=True)
+        _out, mapping = mangle_scripts({"main.gd": src}, mangle_key="z", rename=True)
         for name in ("speed", "level", "choice", "stacked"):
             self.assertNotIn(name, mapping)
         # @export_group declares nothing, so the plain var after it is renamed.
@@ -268,7 +269,7 @@ class MangleTransformTests(unittest.TestCase):
             self.assertNotIn("ignored_name", names)
             src = "extends Node2D\nvar speed = 1\nvar hp = 2\nvar GameState = 3\nvar other = 4\n"
             _out, mapping = mangle_scripts(
-                {"hero.gd": src}, secret_hash=self.HASH, rename=True, exclude=names
+                {"hero.gd": src}, mangle_key=self.HASH, rename=True, exclude=names
             )
             self.assertEqual(set(mapping), {"other"})
 
@@ -288,8 +289,8 @@ class MangleTransformTests(unittest.TestCase):
 
     def test_transform_strips_renames_and_is_deterministic(self) -> None:
         files = {"player.gd": SAMPLE_SCRIPT}
-        out1, mapping1 = mangle_scripts(files, secret_hash=self.HASH, rename=True)
-        out2, mapping2 = mangle_scripts(files, secret_hash=self.HASH, rename=True)
+        out1, mapping1 = mangle_scripts(files, mangle_key=self.HASH, rename=True)
+        out2, mapping2 = mangle_scripts(files, mangle_key=self.HASH, rename=True)
         self.assertEqual(out1, out2)
         self.assertEqual(mapping1, mapping2)
 
@@ -311,7 +312,7 @@ class MangleTransformTests(unittest.TestCase):
         self.assertTrue(mapping1["my_attack"].startswith("_f"))
         self.assertIn("health", mapping1)
 
-        unchanged, empty = mangle_scripts(files, secret_hash=self.HASH, rename=False)
+        unchanged, empty = mangle_scripts(files, mangle_key=self.HASH, rename=False)
         self.assertEqual(unchanged["player.gd"], SAMPLE_SCRIPT)
         self.assertEqual(empty, {})
 
@@ -327,7 +328,7 @@ class MangleTransformTests(unittest.TestCase):
             "combat.gd": 'extends Node\nfunc _ready() -> void:\n\tcall("my_attack")\n',
         }
         with self.assertRaises(MangleError) as ctx:
-            mangle_scripts(bad, secret_hash=self.HASH, rename=True)
+            mangle_scripts(bad, mangle_key=self.HASH, rename=True)
         msg = str(ctx.exception)
         self.assertIn("combat.gd:3", msg)
         self.assertIn("call", msg)
@@ -336,7 +337,7 @@ class MangleTransformTests(unittest.TestCase):
             "net.gd": 'extends Node\nfunc _ready() -> void:\n\trpc("sync_hp")\n',
         }
         with self.assertRaises(MangleError) as rpc_ctx:
-            mangle_scripts(rpc_bad, secret_hash=self.HASH, rename=True)
+            mangle_scripts(rpc_bad, mangle_key=self.HASH, rename=True)
         self.assertIn("net.gd:3", str(rpc_ctx.exception))
         self.assertIn("rpc", str(rpc_ctx.exception))
 
@@ -344,7 +345,7 @@ class MangleTransformTests(unittest.TestCase):
             "props.gd": 'extends Node\nfunc _ready() -> void:\n\tset("hp", 1)\n',
         }
         with self.assertRaises(MangleError) as set_ctx:
-            mangle_scripts(set_bad, secret_hash=self.HASH, rename=True)
+            mangle_scripts(set_bad, mangle_key=self.HASH, rename=True)
         self.assertIn("props.gd:3", str(set_ctx.exception))
         self.assertIn("set", str(set_ctx.exception))
 
@@ -359,20 +360,47 @@ class MangleTransformTests(unittest.TestCase):
                 '\tset("hp", 1)\n'
             ),
         }
-        out, _mapping = mangle_scripts(kept, secret_hash=self.HASH, rename=True)
+        out, _mapping = mangle_scripts(kept, mangle_key=self.HASH, rename=True)
         self.assertIn('call("my_attack")', out["ok.gd"])
 
     def test_source_map_payload_matches_transform_names(self) -> None:
         files = {"player.gd": SAMPLE_SCRIPT}
-        _out, mapping = mangle_scripts(files, secret_hash=self.HASH, rename=True)
+        _out, mapping = mangle_scripts(files, mangle_key=self.HASH, rename=True)
         payload = json.loads(source_map_json(self.HASH, mapping))
         self.assertEqual(payload["secret_hash"], self.HASH)
         self.assertEqual(payload["identifiers"]["my_attack"], mapping["my_attack"])
-        export_artifact = Path("build") / "game.x86_64"
-        mapped = source_map_path(export_artifact)
-        self.assertTrue(str(mapped).endswith(".fortressgd.map.json"))
-        self.assertNotEqual(mapped.suffix, ".pck")
-        self.assertIn("game.x86_64", mapped.name)
+        mapped = source_map_path(Path("/proj"), Path("build") / "game.x86_64")
+        self.assertEqual(mapped.as_posix(), "/proj/.fortressgd/maps/build/game.x86_64.fortressgd.map.json")
+
+    def test_source_map_path_never_lands_next_to_the_artifact(self) -> None:
+        root = Path("/proj")
+        cases = {
+            "build/linux/game.pck": "/proj/.fortressgd/maps/build/linux/game.pck.fortressgd.map.json",
+            "build/windows/game.pck": "/proj/.fortressgd/maps/build/windows/game.pck.fortressgd.map.json",
+            "/proj/out/game.exe": "/proj/.fortressgd/maps/out/game.exe.fortressgd.map.json",
+            "build/../dist/game.pck": "/proj/.fortressgd/maps/dist/game.pck.fortressgd.map.json",
+        }
+        for export_path, want in cases.items():
+            with self.subTest(export_path=export_path):
+                self.assertEqual(source_map_path(root, export_path).as_posix(), want)
+        outside = source_map_path(root, "/srv/builds/game.pck").as_posix()
+        self.assertRegex(outside, r"^/proj/\.fortressgd/maps/_external/game\.pck-[0-9a-f]{8}\.fortressgd\.map\.json$")
+        self.assertNotEqual(outside, source_map_path(root, "/srv/other/game.pck").as_posix())
+
+    def test_mangled_names_need_the_secret_not_secret_hash(self) -> None:
+        # v1 hashed the public secret_hash, so anyone holding it could compute a
+        # guessed name's mangled form and look it up. v2 is keyed by the secret.
+        secret = bytes(range(32))
+        key = derive_mangle_key(secret)
+        self.assertEqual(len(key), 64)
+        self.assertNotEqual(key, secret.hex())
+        self.assertNotIn(secret_hash(secret), key)
+        _out, mapping = mangle_scripts({"player.gd": SAMPLE_SCRIPT}, mangle_key=key, rename=True)
+        self.assertIn("my_attack", mapping)
+        for public in (secret_hash(secret), secret.hex()[:16]):
+            self.assertNotEqual(mangled_identifier("my_attack", public), mapping["my_attack"])
+        other = derive_mangle_key(bytes(range(1, 33)))
+        self.assertNotEqual(mangled_identifier("my_attack", other), mapping["my_attack"])
 
 
 class MangleExportPathTests(unittest.TestCase):
@@ -431,7 +459,10 @@ class MangleExportPathTests(unittest.TestCase):
             self.assertNotIn("breakpoint", packed_view)
             self.assertNotIn("strip this comment", packed_view)
 
-            expected_map = source_map_path(root / "build" / "game.x86_64")
+            expected_map = source_map_path(root, root / "build" / "game.x86_64")
+            self.assertEqual(expected_map.parent, root.resolve() / ".fortressgd" / "maps" / "build")
+            self.assertTrue((root / ".fortressgd" / ".gdignore").is_file())
+            self.assertEqual(list((root / "build").glob("*.fortressgd.map.json")), [])
             self.assertTrue(
                 expected_map.is_file(),
                 "missing {0}; maps={1}".format(
@@ -443,8 +474,9 @@ class MangleExportPathTests(unittest.TestCase):
             self.assertIn("my_attack", payload["identifiers"])
             mangled = payload["identifiers"]["my_attack"]
             self.assertIn(mangled, packed_view)
-            self.assertNotIn("pck", expected_map.name.lower().split("fortressgd")[0])
-            self.assertTrue(str(expected_map).endswith(".fortressgd.map.json"))
+            secret = bytes.fromhex(read_secret_file(root / ".fortressgd.secret"))
+            self.assertEqual(mangled, mangled_identifier("my_attack", derive_mangle_key(secret)))
+            self.assertNotIn(derive_mangle_key(secret), expected_map.read_text(encoding="utf-8"))
 
             secret_hex = read_secret_file(root / ".fortressgd.secret")
             presets = (root / "export_presets.cfg").read_text(encoding="utf-8")
@@ -456,11 +488,14 @@ class MangleExportPathTests(unittest.TestCase):
         self.assertIn("write_export_source_map", src)
         self.assertIn("mangle_scripts", src)
         with tempfile.TemporaryDirectory() as tmp:
-            artifact = Path(tmp) / "out" / "game.pck"
+            root = Path(tmp)
+            artifact = root / "out" / "game.pck"
             mapping = {"my_attack": "_fabc123def"}
-            written = write_export_source_map(artifact, "0123456789abcdef", mapping)
-            self.assertEqual(written, source_map_path(artifact))
+            written = write_export_source_map(root, artifact, "0123456789abcdef", mapping)
+            self.assertEqual(written, source_map_path(root, artifact))
             self.assertTrue(written.is_file())
+            self.assertFalse((root / "out").exists())
+            self.assertTrue((root / ".fortressgd" / ".gdignore").is_file())
             data = json.loads(written.read_text(encoding="utf-8"))
             self.assertEqual(data["identifiers"]["my_attack"], "_fabc123def")
             self.assertNotEqual(written.suffix, ".pck")
@@ -478,7 +513,7 @@ class MangleExportPathTests(unittest.TestCase):
             data = json.loads(log.read_text(encoding="utf-8"))
             self.assertIn("my_attack", data["scripts"]["player.gd"])
             self.assertNotEqual(data.get("FORTRESSGD_CLI_EXPORT"), "1")
-            self.assertFalse(source_map_path(root / "build" / "game.x86_64").is_file())
+            self.assertFalse(source_map_path(root, root / "build" / "game.x86_64").is_file())
 
     def test_unsafe_call_fails_export_before_godot(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -592,7 +627,7 @@ class MangleAddonExportTests(unittest.TestCase):
             root = self._addon_project(tmp)
             proc, data = self._export(root)
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-            payload = json.loads(source_map_path(root / "build" / "game.x86_64").read_text(encoding="utf-8"))
+            payload = json.loads(source_map_path(root, root / "build" / "game.x86_64").read_text(encoding="utf-8"))
             self.assertNotIn("score", payload["identifiers"])
             self.assertIn("lives", payload["identifiers"])
             self.assertIn("var score", data["scripts"]["player.gd"])
@@ -613,14 +648,15 @@ class MangleStaticChecks(unittest.TestCase):
     def test_plugin_has_pure_mangle_sources_for_the_corpus(self) -> None:
         gd = _mangle_gd()
         self.assertIn(
-            "static func mangle_sources(files: Dictionary, secrethash: String, exclude: Dictionary = {}) -> Dictionary:",
+            "static func mangle_sources(files: Dictionary, key: String, exclude: Dictionary = {}) -> Dictionary:",
             gd,
         )
         body = _gd_func_body(gd, "mangle_sources")
         self.assertNotIn("FileAccess", body)
         self.assertNotIn("DirAccess", body)
         runner = (ROOT / "tests" / "gd" / "run_mangle_corpus.gd").read_text(encoding="utf-8")
-        self.assertIn("FGDMangle.mangle_sources(files, secrethash, exclude)", runner)
+        self.assertIn("FGDMangle.mangle_sources(files, key, exclude)", runner)
+        self.assertIn("FGDMangle.mangle_key(args[1])", runner)
 
     def test_plugin_never_rewrites_addons(self) -> None:
         gd = _mangle_gd()
@@ -666,7 +702,7 @@ class MangleStaticChecks(unittest.TestCase):
         self.assertIn('["self", "super"]', body)
         self.assertIn("collect_foreign_member_names(", _gd_func_body(gd, "mangle_sources"))
         self.assertIn("user.erase(", _gd_func_body(gd, "mangle_sources"))
-        self.assertIn("mangle_sources(files, secrethash, exclude)", _gd_func_body(gd, "apply_project"))
+        self.assertIn("mangle_sources(files, key, exclude)", _gd_func_body(gd, "apply_project"))
 
     def test_plugin_strip_emits_pass(self) -> None:
         body = _gd_func_body(_mangle_gd(), "_strip_tokens")
@@ -678,13 +714,19 @@ class MangleStaticChecks(unittest.TestCase):
         self.assertIn("extends EditorExportPlugin", export_gd)
         self.assertIn("mangle_scripts", export_gd)
         self.assertIn("mangle.gd", export_gd)
-        self.assertIn("fortressgd.map.json", export_gd)
+        self.assertIn("FGDMangle.write_map(", export_gd)
+        # Keyed by the secret-derived key, never the public secret_hash.
+        self.assertIn("FGDMangle.apply_project(FGDMangle.mangle_key(hex_secret))", export_gd)
+        self.assertNotIn("apply_project(_mangle_secret_hash)", export_gd)
         self.assertIn("FORTRESSGD_CLI_EXPORT", export_gd)
         self.assertIn('return "GDScript.FortressGD"', export_gd)
         mangle_gd = (addon / "mangle.gd").read_text(encoding="utf-8")
         self.assertIn("fortressgd:keep", mangle_gd)
         self.assertIn("call", mangle_gd)
-        self.assertIn("secret_hash", mangle_gd)
+        self.assertIn("hmac_digest", _gd_func_body(mangle_gd, "mangled_identifier"))
+        self.assertIn('const MANGLE_INFO := "fortressgd-mangle-v2"', mangle_gd)
+        self.assertIn('const MAP_DIR := ".fortressgd/maps"', mangle_gd)
+        self.assertIn(".gdignore", _gd_func_body(mangle_gd, "write_map"))
         reserved = json.loads((addon / "mangle_reserved.json").read_text(encoding="utf-8"))
         self.assertIn("_ready", reserved["lifecycle"])
 

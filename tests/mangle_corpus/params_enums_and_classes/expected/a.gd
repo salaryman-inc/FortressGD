@@ -1,16 +1,16 @@
 extends Node
 class_name Hero
 
-enum _fd6f630a292 { _f5f9bdd11d1 = 1, _f4b38e40dc4 }
-const _fd12cef88d2 := 10
+enum _f019bc780d0 { _f4b2dd16626 = 1, _f5fdd192616 }
+const _f748d52d58a := 10
 
-class _f6d59b4a368:
-	var _f9a669090d5 = 0
+class _f7d838fb5f3:
+	var _f76ba5b8bb0 = 0
 
-func _f83b7b5537a(_fbb86aa8105: int, _fc1c4613fb5 := 0) -> int:
-	var _fb82be7e43a := _fbb86aa8105 + _fc1c4613fb5
-	for _fa95ab417ef in range(_fb82be7e43a):
+func _f25372d8704(_f7dfb7e8c57: int, _fbdd9d458d7 := 0) -> int:
+	var _ff4c2d5290b := _f7dfb7e8c57 + _fbdd9d458d7
+	for _f546ccb5e22 in range(_ff4c2d5290b):
 		pass
-	return mini(_fb82be7e43a, _fd12cef88d2)
+	return mini(_ff4c2d5290b, _f748d52d58a)
 
 """doc string with heal inside"""

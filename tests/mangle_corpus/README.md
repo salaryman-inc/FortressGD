@@ -12,7 +12,7 @@ The GDScript mangler exists twice: `fortressgd/core/mangle.py` (used by `fortres
 <case>/expected_error.txt  instead of the two above, for cases that must fail
 ```
 
-Every case uses secret hash `0123456789abcdef`.
+Every case uses the test secret `CORPUS_SECRET_HEX` from `regen.py`. Each side derives the mangler key from it itself (`derive_mangle_key` in Python, `mangle_key` in `mangle.gd`), so the corpus also checks that the two key derivations agree. The Godot run also checks that both manglers put source maps in the same place (`MAP_SAMPLES`).
 
 ## Adding a case
 

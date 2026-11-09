@@ -16,6 +16,7 @@ from fortressgd.core.filters import (
     is_shader_path,
     shader_has_comments,
     sidecar_pdb_leaks,
+    sidecar_source_map_leaks,
 )
 from fortressgd.core.gdc import CompressedGdscError, has_debug_name_tables
 from fortressgd.core.pack import (
@@ -116,6 +117,7 @@ def verify_artifact(
         packed = [item.path for item in listing.files]
 
     leaks = find_leaks(packed, include=include, exclude=exclude) + sidecar_pdb_leaks(artifact)
+    leaks += sidecar_source_map_leaks(artifact)
     body_key = dialect_key_for_secret(secret, godot_tag) if secret is not None and godot_tag else None
     leaks += _shader_source_leaks(data, listing, include, body_key)
     leaks += _plaintext_body_leaks(listing, include)

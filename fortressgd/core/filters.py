@@ -91,6 +91,7 @@ def effective_exclude_patterns(exclude: Sequence[str] | None = None) -> list[str
 
 
 DOTNET_MARKER = "*.pdb next to the artifact"
+SOURCE_MAP_MARKER = "source map next to the artifact; it reverses mangling"
 SHADER_SUFFIXES = (".gdshader", ".gdshaderinc")
 SHADER_MARKER = "shader-source: comments"
 
@@ -141,6 +142,22 @@ def sidecar_pdb_leaks(artifact) -> list[Leak]:
     for pdb in sorted(set(candidates)):
         found.append(Leak(path=pdb.relative_to(folder).as_posix(), pattern=DOTNET_MARKER))
     return found
+
+
+def sidecar_source_map_leaks(artifact) -> list[Leak]:
+    """FortressGD source maps beside the artifact.
+
+    Exports write maps under ``<project>/.fortressgd/maps/``. One next to the
+    artifact is left over from an older FortressGD or copied there, and anyone who
+    gets the build folder gets the full rename map with it.
+    """
+    from pathlib import Path
+
+    folder = Path(artifact).resolve().parent
+    return [
+        Leak(path=path.name, pattern=SOURCE_MAP_MARKER)
+        for path in sorted(folder.glob("*.fortressgd.map.json"))
+    ]
 
 
 def find_leaks(

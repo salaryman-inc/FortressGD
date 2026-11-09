@@ -22,7 +22,8 @@ FortressGD is pre-1.0. Only the latest release gets security fixes.
 
 Anything that breaks a promise in [`THREAT_MODEL.md`](THREAT_MODEL.md), for example:
 
-- The project secret or the pack-signing seed reaching anything that ships (a template, a pack, a source map) or a log, the template cache, `export_presets.cfg`, or a Docker image layer.
+- The project secret, the mangler key, or the pack-signing seed reaching anything that ships (a template, a pack, a source map) or a log, the template cache, `export_presets.cfg`, or a Docker image layer.
+- Mangled names that can be reversed without the project secret, or a source map written where an export or upload picks it up.
 - The derived PCK key reaching any of those unmasked. A template holds it only as masked shards (DESIGN.md §5.2).
 - `fortressgd verify` passing an artifact that still contains an excluded file (`.gd` text, `.cs`, `.pdb`, DCC files, source maps) or a stock debug table it is meant to reject.
 - A stock tool (KeyDot, GDRE Tools / gdsdecomp, gdke, GodotPCKExplorer) recovering the key or the project from a FortressGD-protected build in one step.

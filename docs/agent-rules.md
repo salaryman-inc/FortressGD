@@ -26,7 +26,7 @@ Unmarked `call("…")` / `rpc("…")` / `set("…")` **fail the export** with fi
 
 ## No secrets under `res://`
 
-Never put the project secret, `aes_key`, API tokens, or other credentials in anything Godot packs (`res://`, scenes, scripts, `export_presets.cfg`). The 32-byte FortressGD secret lives in `.fortressgd.secret` (gitignored) or `FORTRESSGD_SECRET`. Source maps (`*.fortressgd.map.json`) stay next to the export artifact and are not packed.
+Never put the project secret, `aes_key`, API tokens, or other credentials in anything Godot packs (`res://`, scenes, scripts, `export_presets.cfg`). The 32-byte FortressGD secret lives in `.fortressgd.secret` (gitignored) or `FORTRESSGD_SECRET`. Source maps (`*.fortressgd.map.json`) are written to `.fortressgd/maps/` in the project, never packed and never next to the export. Do not copy them into a build folder or commit them: a map reverses all mangling.
 
 ## Prefer direct access over string `set` / `get`
 

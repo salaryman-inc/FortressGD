@@ -38,11 +38,11 @@ Start with leak checks on the official editor — no Docker, no custom templates
 **GDScript mangling** (optional, on by default in the example config)
 
 - Strips comments, `assert`, `print_debug`, and `breakpoint`
-- Renames user identifiers with a PRNG seeded from `secret_hash`
+- Renames user identifiers with an HMAC keyed from the project secret, so names cannot be reversed without it (not from `secret_hash`, which appears in logs and cache keys)
 - Unmarked `call("name")` / `rpc("name")` / `set("prop")` **fail the export** — use Callables
 - Never rewrites scripts under `addons/`; names an addon mentions stay unmangled in your scripts
 - Leaves names alone that it cannot follow: members accessed on other objects, names in string literals, `@export` vars, and names used in scenes, resources and `project.godot`
-- Writes `*.fortressgd.map.json` next to the artifact, not inside the pack
+- Writes the source map (`*.fortressgd.map.json`) to `.fortressgd/maps/` in the project, never inside the pack or next to the artifact: the map reverses all mangling, and build folders get uploaded whole. `fortressgd init` suggests git-ignoring `.fortressgd/`, and `verify` fails if a map sits next to an artifact
 
 **Nameless bytecode** (off by default)
 
@@ -369,7 +369,7 @@ Every command accepts `--secret-file PATH`. `--platform` is repeatable (`--platf
 | `templates build` | Docker-build `template_release` for `(godot, secret_hash, platform)`. |
 | `templates list` | Names of cached templates. |
 | `export` | Production export with derived AES key (and dialect/mangle/sign when enabled), then `verify` when `verify_on_export` is true. |
-| `verify` | List packed paths; fail on leaked excludes, shipped `.pdb` files, shaders that still contain comments, unencrypted bodies in an encrypted pack, leftover debug tables, or bad signatures. |
+| `verify` | List packed paths; fail on leaked excludes, shipped `.pdb` files or source maps next to the artifact, shaders that still contain comments, unencrypted bodies in an encrypted pack, leftover debug tables, or bad signatures. |
 
 Exit codes: `0` ok, `1` config/user error, `2` verify/policy failure, `3` tool or engine build failure. Errors print `error: …` and `Run: <next command>`.
 
@@ -410,7 +410,7 @@ On presets tagged `fortressgd_production` the export plugin:
 - Skips forced-exclude paths (unless allowlisted)
 - Optionally mangles GDScript before bytecode remap
 - Restores original scripts after export
-- Writes `*.fortressgd.map.json` next to the artifact
+- Writes the source map to `.fortressgd/maps/` in the project (mirroring the export path), never next to the artifact
 
 It never compiles the engine and never writes the raw secret into `export_presets.cfg`. If you export from the editor without FortressGD templates, use `fortressgd export` (or build templates first) for encrypted / dialect packs.
 

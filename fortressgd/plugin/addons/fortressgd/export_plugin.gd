@@ -72,7 +72,9 @@ func _export_begin(features: PackedStringArray, is_debug: bool, path: String, fl
 		_mangle_abort = true
 		return
 	_mangle_secret_hash = FGDMangle.secret_hash(hex_secret)
-	var applied: Dictionary = FGDMangle.apply_project(_mangle_secret_hash)
+	# Keyed with a secret-derived key, never the public secret_hash (which only
+	# labels the source map).
+	var applied: Dictionary = FGDMangle.apply_project(FGDMangle.mangle_key(hex_secret))
 	if not applied.get("ok", false):
 		push_error("FortressGD: %s" % str(applied.get("error", "mangle failed")))
 		_mangle_abort = true
@@ -108,7 +110,7 @@ func _export_end() -> void:
 	if _mangle_applied:
 		FGDMangle.restore(_mangle_backups)
 		if _mangle_export_path != "":
-			# Sidecar *.fortressgd.map.json next to the export; not packed.
+			# Source map under <project>/.fortressgd/maps/, never next to the export.
 			FGDMangle.write_map(_mangle_export_path, _mangle_secret_hash, _mangle_mapping)
 	_mangle_applied = false
 	_mangle_backups = {}

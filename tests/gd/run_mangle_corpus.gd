@@ -1,8 +1,11 @@
 extends SceneTree
 ## Runs fortressgd/plugin/addons/fortressgd/mangle.gd on tests/mangle_corpus and prints one
-## result line per case: "FGD_CORPUS " + JSON {case, ok, error, sources, mapping}.
+## result line per case: "FGD_CORPUS " + JSON {case, ok, error, sources, mapping},
+## then one "FGD_MAPS " + JSON {export_path: source map path} line.
 ## Usage (from tests/test_mangle_corpus.py):
-##   godot --headless --path <project> --script res://run_mangle_corpus.gd -- <corpus_dir> <secret_hash>
+##   godot --headless --path <project> --script res://run_mangle_corpus.gd -- <corpus_dir> <secret_hex> [export_path...]
+## The mangler key is derived here with mangle.gd's mangle_key, so the corpus
+## also checks it against core/mangle.py derive_mangle_key.
 
 const FGDMangle := preload("res://addons/fortressgd/mangle.gd")
 
@@ -10,11 +13,11 @@ const FGDMangle := preload("res://addons/fortressgd/mangle.gd")
 func _init() -> void:
 	var args := OS.get_cmdline_user_args()
 	if args.size() < 2:
-		push_error("usage: -- <corpus_dir> <secret_hash>")
+		push_error("usage: -- <corpus_dir> <secret_hex> [export_path...]")
 		quit(2)
 		return
 	var corpus: String = args[0]
-	var secrethash: String = args[1]
+	var key := FGDMangle.mangle_key(args[1])
 	var cases := PackedStringArray()
 	var d := DirAccess.open(corpus)
 	if d == null:
@@ -36,9 +39,14 @@ func _init() -> void:
 				var excluded_name := line.strip_edges()
 				if excluded_name != "":
 					exclude[excluded_name] = true
-		var result: Dictionary = FGDMangle.mangle_sources(files, secrethash, exclude)
+		var result: Dictionary = FGDMangle.mangle_sources(files, key, exclude)
 		result["case"] = case_name
 		print("FGD_CORPUS " + JSON.stringify(result))
+	var root := ProjectSettings.globalize_path("res://")
+	var maps := {}
+	for i in range(2, args.size()):
+		maps[args[i]] = FGDMangle.source_map_path(root, args[i])
+	print("FGD_MAPS " + JSON.stringify(maps))
 	quit(0)
 
 

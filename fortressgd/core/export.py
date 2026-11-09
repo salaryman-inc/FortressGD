@@ -15,9 +15,11 @@ from fortressgd.core.mangle import (
     binary_resource_paths,
     collect_resource_reference_names,
     collect_scan_only_names,
+    derive_mangle_key,
     iter_gdscript_files,
     iter_scan_only_gdscript_files,
     mangle_scripts,
+    prepare_map_dir,
     source_map_json,
     source_map_path,
 )
@@ -197,12 +199,14 @@ def _production_sign_packs(cfg: dict[str, Any]) -> bool:
 
 
 def write_export_source_map(
+    project_root: Path,
     export_path: Path,
     secret_hash_value: str,
     mapping: dict[str, str],
 ) -> Path:
-    """Write ``*.fortressgd.map.json`` next to the export artifact (not packed)."""
-    dest = source_map_path(export_path)
+    """Write the source map under ``<project>/.fortressgd/maps/`` (DESIGN.md §9)."""
+    prepare_map_dir(project_root)
+    dest = source_map_path(project_root, export_path)
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(source_map_json(secret_hash_value, mapping), encoding="utf-8")
     return dest
@@ -417,7 +421,7 @@ def export_preset(
         }
         mangled_sources, identifier_map = mangle_scripts(
             sources,
-            secret_hash=secrethash,
+            mangle_key=derive_mangle_key(secret),
             rename=True,
             exclude=collect_resource_reference_names(root)
             | collect_scan_only_names(
@@ -467,7 +471,7 @@ def export_preset(
     if artifact and not artifact.is_absolute():
         artifact = root / artifact
     if mangle_on:
-        written = write_export_source_map(artifact, secrethash, identifier_map)
+        written = write_export_source_map(root, artifact, secrethash, identifier_map)
         map_file = str(written)
 
     if sign_packs:

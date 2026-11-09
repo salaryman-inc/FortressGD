@@ -7,7 +7,9 @@ the editor plugin apply them when [production].mangle_scripts is true.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
+import os
 import re
 from dataclasses import dataclass
 from functools import lru_cache
@@ -18,9 +20,16 @@ from fortressgd.core.errors import NEXT_EXPORT, UserError
 from fortressgd.core.paths import plugin_source_dir
 
 KEEP_ANNOTATION = "fortressgd:keep"
-MANGLE_INFO = "fortressgd-mangle-v1"
+# v2: names are an HMAC under a key derived from the project secret. v1 hashed
+# secret_hash, which is public (logs, cache keys, template names), so anyone with
+# it could reverse mangling by guessing names.
+MANGLE_INFO = "fortressgd-mangle-v2"
+MANGLE_KEY_INFO = b"fortressgd.mangle.key.v1"
 RESERVED_JSON_NAME = "mangle_reserved.json"
 MAP_SUFFIX = ".fortressgd.map.json"
+# Source maps live in the project, outside every export folder, so uploading a
+# build cannot publish them. The leading dot and .gdignore keep Godot out.
+MAP_DIR = ".fortressgd/maps"
 MAP_VERSION = 1
 UNSAFE_CALLEES = frozenset({"call", "rpc", "set"})
 DECL_KEYWORDS = frozenset({"func", "var", "const", "signal", "enum", "class", "for"})
@@ -79,23 +88,59 @@ def reserved_names() -> frozenset[str]:
     return frozenset(names)
 
 
-def mangled_identifier(original: str, secret_hash: str, used: set[str] | None = None) -> str:
-    """Deterministic identifier from secret_hash + original name."""
+def derive_mangle_key(secret: bytes) -> str:
+    """The mangler's key: hex HMAC-SHA256(secret, MANGLE_KEY_INFO).
+
+    Secret material: anyone holding it can reverse the mangling by guessing names.
+    Never print, log or write it; it is not secret_hash.
+    """
+    return hmac.new(secret, MANGLE_KEY_INFO, hashlib.sha256).hexdigest()
+
+
+def mangled_identifier(original: str, mangle_key: str, used: set[str] | None = None) -> str:
+    """Deterministic identifier: HMAC-SHA256 under ``mangle_key`` of the original name."""
     reserved = reserved_names()
     taken = set(used) if used is not None else set()
+    key = mangle_key.encode("utf-8")
     attempt = 0
     while True:
-        msg = "{0}|{1}|{2}|{3}".format(MANGLE_INFO, secret_hash, original, attempt).encode("utf-8")
-        digest_hex = hashlib.sha256(msg).hexdigest()
+        msg = "{0}|{1}|{2}".format(MANGLE_INFO, original, attempt).encode("utf-8")
+        digest_hex = hmac.new(key, msg, hashlib.sha256).hexdigest()
         name = "_f" + digest_hex[:10]
         if name not in reserved and name not in taken:
             return name
         attempt += 1
 
 
-def source_map_path(export_path: str | Path) -> Path:
-    """Sidecar next to the export artifact; not a packed ``res://`` path."""
-    return Path(str(export_path) + MAP_SUFFIX)
+def source_map_path(project_root: str | Path, export_path: str | Path) -> Path:
+    """Where the source map for ``export_path`` goes: ``<project>/.fortressgd/maps/``.
+
+    Never next to the artifact: a build folder gets uploaded or zipped whole, and
+    the map reverses all mangling. The export path's place in the project is
+    mirrored, so presets that both write ``game.pck`` keep separate maps. An
+    export outside the project gets its file name plus a short hash of its path.
+    """
+    root = Path(os.path.abspath(project_root))
+    target = Path(export_path)
+    if not target.is_absolute():
+        target = root / target
+    target = Path(os.path.abspath(target))
+    try:
+        name = target.relative_to(root).as_posix()
+    except ValueError:
+        digest = hashlib.sha256(target.as_posix().encode("utf-8")).hexdigest()[:8]
+        name = "_external/{0}-{1}".format(target.name, digest)
+    return root / MAP_DIR / (name + MAP_SUFFIX)
+
+
+def prepare_map_dir(project_root: str | Path) -> Path:
+    """Create ``.fortressgd/`` with a ``.gdignore`` so Godot never imports or packs it."""
+    base = Path(project_root) / ".fortressgd"
+    (base / "maps").mkdir(parents=True, exist_ok=True)
+    gdignore = base / ".gdignore"
+    if not gdignore.exists():
+        gdignore.write_text("", encoding="utf-8")
+    return base
 
 
 def source_map_payload(secret_hash: str, mapping: dict[str, str]) -> dict[str, object]:
@@ -337,7 +382,7 @@ def rewrite_source(source: str, mapping: dict[str, str], *, strip: bool = True) 
 def mangle_scripts(
     files: dict[str, str],
     *,
-    secret_hash: str,
+    mangle_key: str,
     rename: bool = True,
     exclude: Iterable[str] = frozenset(),
 ) -> tuple[dict[str, str], dict[str, str]]:
@@ -369,7 +414,7 @@ def mangle_scripts(
     mapping: dict[str, str] = {}
     used: set[str] = set(reserved_names())
     for original in sorted(user):
-        name = mangled_identifier(original, secret_hash, used)
+        name = mangled_identifier(original, mangle_key, used)
         mapping[original] = name
         used.add(name)
 

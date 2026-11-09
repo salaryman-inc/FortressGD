@@ -8,7 +8,11 @@ Each case is a directory:
     <case>/expected_map.json   identifier map, or
     <case>/expected_error.txt  the error message for cases that must fail
 
-Every case uses SECRET_HASH. Regenerate the expected files from fortressgd/core/mangle.py
+Every case uses CORPUS_SECRET_HEX, a fixed test secret: the Python side derives
+the mangler key with derive_mangle_key and the GDScript harness derives it with
+mangle.gd's mangle_key, so the corpus also holds the two key derivations
+together. MAP_SAMPLES checks that both manglers place source maps alike.
+Regenerate the expected files from fortressgd/core/mangle.py
 deliberately and review the diff:
 
     python3 tests/mangle_corpus/regen.py
@@ -23,7 +27,37 @@ from pathlib import Path
 
 CORPUS = Path(__file__).resolve().parent
 ROOT = CORPUS.parents[1]
-SECRET_HASH = "0123456789abcdef"
+# Test-only secret. Never use it for a real project.
+CORPUS_SECRET_HEX = "0123456789abcdef" * 4
+# Export paths whose source-map location both manglers must agree on, relative
+# to the project the harness runs in (absolute paths are used as given).
+MAP_SAMPLES = (
+    "build/linux/game.x86_64",
+    "build/windows/game.pck",
+    "res://out/game.exe",
+    "build/../dist/game.pck",
+    "/opt/elsewhere/game.pck",
+)
+
+
+def corpus_mangle_key() -> str:
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    from fortressgd.core.mangle import derive_mangle_key
+
+    return derive_mangle_key(bytes.fromhex(CORPUS_SECRET_HEX))
+
+
+def python_map_paths(project: Path) -> dict[str, str]:
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    from fortressgd.core.mangle import source_map_path
+
+    out = {}
+    for sample in MAP_SAMPLES:
+        rel = sample[len("res://"):] if sample.startswith("res://") else sample
+        out[sample] = source_map_path(project, rel).as_posix()
+    return out
 
 
 def iter_cases() -> list[Path]:
@@ -52,7 +86,7 @@ def run_python(case: Path) -> dict:
 
     try:
         sources, mapping = mangle_scripts(
-            read_tree(case / "input"), secret_hash=SECRET_HASH, rename=True, exclude=read_exclude(case)
+            read_tree(case / "input"), mangle_key=corpus_mangle_key(), rename=True, exclude=read_exclude(case)
         )
     except MangleError as err:
         return {"ok": False, "error": str(err), "sources": {}, "mapping": {}}
