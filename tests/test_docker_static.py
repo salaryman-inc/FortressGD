@@ -117,6 +117,29 @@ class DockerStaticTests(unittest.TestCase):
         )
         self.assertIs(data["require_signature"], True)
 
+    def test_entrypoint_passes_defines_through_godots_cppdefines_option(self) -> None:
+        # Godot 4's SConstruct declares only lowercase ccflags/cppdefines, so an
+        # uppercase CCFLAGS= is dropped without a warning and every #ifdef
+        # FORTRESSGD_* block compiles out.
+        entry = (PKG / "docker" / "entrypoint.sh").read_text(encoding="utf-8")
+        code = "\n".join(line for line in entry.splitlines() if not line.lstrip().startswith("#"))
+        self.assertNotIn("CCFLAGS=", code)
+        self.assertNotIn("ccflags=", code)
+        self.assertEqual(code.count('cppdefines="$FGD_DEFINES"'), 2)  # linux and windows
+        for define in ("FORTRESSGD_OPCODE_MAP", "FORTRESSGD_NAMELESS", "FORTRESSGD_SIGN_PACKS"):
+            self.assertIn(define, code)
+        self.assertIn('FGD_DEFINES="$FGD_DEFINES FORTRESSGD_DIALECT"', code)
+        self.assertNotIn("-DFORTRESSGD", code)  # cppdefines takes bare names
+        # The built binary must carry FORTRESSGD_SIGN_PACKS code, or the build fails.
+        message = "Pack signature check failed."
+        self.assertIn('grep -aqF "{0}" "$BIN"'.format(message), code)
+        for tag in ("4.6.2", "4.7.2"):
+            sig = (PKG / "patches" / tag / "0005-pack-signatures.patch").read_text(encoding="utf-8")
+            self.assertIn('"{0}"'.format(message), sig, msg=tag)
+        guard = code.index('grep -aqF "{0}"'.format(message))
+        self.assertLess(code.index('err "scons did not emit'), guard)
+        self.assertLess(guard, code.index('cp "$BIN" "$OUT_DIR/$NAME"'))
+
     def test_image_tag_follows_the_files_baked_into_it(self) -> None:
         # A fixed tag let an upgraded FortressGD reuse an image with an older
         # entrypoint.sh baked in, and run the old build script.

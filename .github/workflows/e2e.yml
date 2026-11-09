@@ -164,12 +164,14 @@ jobs:
           run_game() { timeout 120 ./build/linux/game.x86_64 --headless --quit-after 30 2>&1 || true; }
           # Release templates refuse --main-pack (Godot's disable_path_overrides is on
           # by default), so each test pack goes next to a copy of the binary as
-          # game.pck, which is where a shipped game looks for it.
+          # game.pck, which is where a shipped game looks for it. It runs from that
+          # folder: when no pack loads, Godot falls back to a project.godot in the
+          # working directory, and the project folder has one with the text scripts.
           run_with_pack() {
             dir="$(mktemp -d "$RUNNER_TEMP/sig.XXXXXX")"
             cp build/linux/game.x86_64 "$dir/game.x86_64"
             cp "$1" "$dir/game.pck"
-            timeout 120 "$dir/game.x86_64" --headless --quit-after 30 2>&1 || true
+            (cd "$dir" && timeout 120 ./game.x86_64 --headless --quit-after 30 2>&1) || true
           }
           expect_refused() {
             out="$(run_with_pack "$1")"

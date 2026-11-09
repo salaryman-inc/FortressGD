@@ -44,7 +44,7 @@ FORTRESSGD_SECRET="$SECRET" python3 -m fortressgd.core.leakscan --godot 4.6.2 bu
 
 ## Docker templates
 
-`fortressgd/docker/Dockerfile.templates` is digest-pinned. `fortressgd/docker/entrypoint.sh` shallow-clones the Godot tag, `git apply --check` then `git apply` of `fortressgd/patches/<tag>/series` (including `0002-pack-hooks.patch`), copies `dialect.gen.h`, and runs `scons target=template_release production=yes debug_symbols=no`. When `FGD_DIALECT=1`, scons gets `CCFLAGS=-DFORTRESSGD_DIALECT` so pack read/write use `FGD_PACK_MAGIC` and `FGD_INDEX_PERM`.
+`fortressgd/docker/Dockerfile.templates` is digest-pinned. `fortressgd/docker/entrypoint.sh` shallow-clones the Godot tag, `git apply --check` then `git apply` of `fortressgd/patches/<tag>/series` (including `0002-pack-hooks.patch`), copies `dialect.gen.h`, and runs `scons target=template_release production=yes debug_symbols=no`. The FortressGD defines go through Godot's lowercase `cppdefines` option: `FORTRESSGD_OPCODE_MAP`, `FORTRESSGD_NAMELESS` and `FORTRESSGD_SIGN_PACKS` always, plus `FORTRESSGD_DIALECT` when `FGD_DIALECT=1`, so pack read/write use `FGD_PACK_MAGIC` and `FGD_INDEX_PERM`. Godot 4 drops an uppercase `CCFLAGS=` without a warning, so after the build the entrypoint checks that the binary contains the pack-signature error message and fails if it does not.
 
 `SCRIPT_AES256_ENCRYPTION_KEY` is **not** set. The template derives the AES key at runtime via FGD-KDF-1.
 

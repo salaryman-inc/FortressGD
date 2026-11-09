@@ -28,9 +28,12 @@ FGD_REQUIRE_SIGNATURE="${FGD_REQUIRE_SIGNATURE:-0}"
 # [production].key_epoch: the pack key in dialect.gen.h is for this epoch; non-zero
 # epochs get a -e<N> suffix so each release line has its own cached template.
 FGD_KEY_EPOCH="${FGD_KEY_EPOCH:-0}"
-FGD_CCFLAGS="-DFORTRESSGD_OPCODE_MAP -DFORTRESSGD_NAMELESS -DFORTRESSGD_SIGN_PACKS"
+# Passed as Godot's lowercase cppdefines option. Godot 4's SConstruct declares only
+# lowercase ccflags/cppdefines; an uppercase CCFLAGS= on the command line is
+# dropped without a warning, and the patches then compile to stock Godot.
+FGD_DEFINES="FORTRESSGD_OPCODE_MAP FORTRESSGD_NAMELESS FORTRESSGD_SIGN_PACKS"
 if [ "$FGD_DIALECT" = "1" ]; then
-    FGD_CCFLAGS="$FGD_CCFLAGS -DFORTRESSGD_DIALECT"
+    FGD_DEFINES="$FGD_DEFINES FORTRESSGD_DIALECT"
 fi
 
 printf '%s\n' "$SECRET_HASH" | grep -Eq '^[0-9a-f]{16}$' || err "FGD_SECRET_HASH must be the 16-hex secret_hash"
@@ -151,19 +154,23 @@ fi
 if [ "$FGD_PLATFORM" = "linux" ]; then
     # shellcheck disable=SC2086
     scons platform=linuxbsd target=template_release production=yes debug_symbols=no arch="$FGD_ARCH" \
-        $DEPS_FLAGS CCFLAGS="$FGD_CCFLAGS" -j"$JOBS" \
+        $DEPS_FLAGS cppdefines="$FGD_DEFINES" -j"$JOBS" \
         || err "scons linuxbsd template_release failed"
     BIN="$(ls -1 bin/godot.linuxbsd.template_release* 2>/dev/null | head -n 1 || true)"
 elif [ "$FGD_PLATFORM" = "windows" ]; then
     # shellcheck disable=SC2086
     scons platform=windows target=template_release production=yes debug_symbols=no arch="$FGD_ARCH" use_mingw=yes \
-        $DEPS_FLAGS CCFLAGS="$FGD_CCFLAGS" -j"$JOBS" \
+        $DEPS_FLAGS cppdefines="$FGD_DEFINES" -j"$JOBS" \
         || err "scons windows template_release (mingw) failed"
     BIN="$(ls -1 bin/godot.windows.template_release* 2>/dev/null | head -n 1 || true)"
 else
     err "unsupported platform $FGD_PLATFORM"
 fi
 [ -n "${BIN:-}" ] && [ -f "$BIN" ] || err "scons did not emit a template_release binary"
+# The FortressGD defines must reach the compiler. FORTRESSGD_SIGN_PACKS is in every
+# template and leaves this message in the binary. If it is missing, so are the others.
+grep -aqF "Pack signature check failed." "$BIN" \
+    || err "template was built without the FortressGD defines ($FGD_DEFINES)"
 
 if command -v strip >/dev/null 2>&1 && [ "$FGD_PLATFORM" = "linux" ]; then
     strip --strip-unneeded "$BIN" || true
