@@ -5,17 +5,17 @@ from __future__ import annotations
 import struct
 import unittest
 
-from core.aes_cfb import aes256_cfb128, aes256_cfb128_pure, aes256_encrypt_block
-from core.kdf import fgd_kdf_1
-from core.pack import PACK_DIR_ENCRYPTED, PackError, find_gdpc_offset, list_packed_paths
-from core.pack_dialect import (
+from fortressgd.core.aes_cfb import aes256_cfb128, aes256_cfb128_pure, aes256_encrypt_block
+from fortressgd.core.kdf import fgd_kdf_1
+from fortressgd.core.pack import PACK_DIR_ENCRYPTED, PackError, find_gdpc_offset, list_packed_paths
+from fortressgd.core.pack_dialect import (
     dialect_params_for_secret,
     embed_exe_dialect,
     encode_dialect_index,
     list_dialect_paths,
 )
-from core.secret import SECRET_BYTES
-from generator.dialect import STOCK_PACK_MAGIC, derive_dialect_salt
+from fortressgd.core.secret import SECRET_BYTES
+from fortressgd.generator.dialect import STOCK_PACK_MAGIC, derive_dialect_salt
 from tests.gdpc_fixture import embed_exe, make_gdpc
 
 

@@ -7,8 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core.config import default_toml_text
-from core.gdc import (
+from fortressgd.core.config import default_toml_text
+from fortressgd.core.gdc import (
     FGDN_MAGIC,
     GDSC_MAGIC,
     TOKENIZER_VERSION,
@@ -17,8 +17,8 @@ from core.gdc import (
     encode_identifier_token,
     parse_gdsc_engine_order,
 )
-from core.pack import PACK_DIR_ENCRYPTED, PACK_FILE_ENCRYPTED
-from core.pack_dialect import (
+from fortressgd.core.pack import PACK_DIR_ENCRYPTED, PACK_FILE_ENCRYPTED
+from fortressgd.core.pack_dialect import (
     dialect_key_for_secret,
     dialect_params_for_secret,
     embed_exe_dialect,
@@ -26,8 +26,8 @@ from core.pack_dialect import (
     encrypt_fae_directory,
     read_dialect_listing,
 )
-from core.pack_sign import apply_signature, public_key_for_secret, sign_index, verify_index
-from core.secret import generate_secret_hex, read_secret_file, secret_bytes_from_hex
+from fortressgd.core.pack_sign import apply_signature, public_key_for_secret, sign_index, verify_index
+from fortressgd.core.secret import generate_secret_hex, read_secret_file, secret_bytes_from_hex
 from tests.gdpc_fixture import embed_exe, make_gdpc
 from tests.support import run_fortressgd, write_godot_stub
 
@@ -512,7 +512,7 @@ class VerifyCliTests(unittest.TestCase):
     def test_sign_packs_encrypted_stock_index_range(self) -> None:
         key = bytes(range(32))
         data = make_gdpc(["main.tscn", "main.gdc"], flags=PACK_DIR_ENCRYPTED, aes_key=key, contents={"main.gdc": b"C" * 21})
-        from core.pack_dialect import STOCK_INDEX_PERM, STOCK_PACK_MAGIC, read_dialect_listing_at
+        from fortressgd.core.pack_dialect import STOCK_INDEX_PERM, STOCK_PACK_MAGIC, read_dialect_listing_at
 
         listing = read_dialect_listing_at(data, 0, magic=STOCK_PACK_MAGIC, perm=STOCK_INDEX_PERM, aes_key=key)
         self.assertEqual(listing.dir_end, listing.file_base)
@@ -535,7 +535,7 @@ class VerifyCliTests(unittest.TestCase):
                     contents={"main.gdc": encode_gdsc(["x"], nameless=True)},
                 )
             )
-            from core.pack_dialect import read_dialect_listing
+            from fortressgd.core.pack_dialect import read_dialect_listing
 
             data = unsigned.read_bytes()
             listing = read_dialect_listing(

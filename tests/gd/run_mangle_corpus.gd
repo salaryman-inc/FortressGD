@@ -1,5 +1,5 @@
 extends SceneTree
-## Runs plugin/addons/fortressgd/mangle.gd on tests/mangle_corpus and prints one
+## Runs fortressgd/plugin/addons/fortressgd/mangle.gd on tests/mangle_corpus and prints one
 ## result line per case: "FGD_CORPUS " + JSON {case, ok, error, sources, mapping}.
 ## Usage (from tests/test_mangle_corpus.py):
 ##   godot --headless --path <project> --script res://run_mangle_corpus.gd -- <corpus_dir> <secret_hash>

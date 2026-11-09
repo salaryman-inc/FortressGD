@@ -21,11 +21,11 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from core.config import load_path
-from core.pack import PACK_DIR_ENCRYPTED
-from core.pack_dialect import dialect_key_for_secret, dialect_params_for_secret, encode_dialect_index
-from core.secret import read_secret_file, secret_bytes_from_hex
-from core.templates import concrete_godot_tag
+from fortressgd.core.config import load_path
+from fortressgd.core.pack import PACK_DIR_ENCRYPTED
+from fortressgd.core.pack_dialect import dialect_key_for_secret, dialect_params_for_secret, encode_dialect_index
+from fortressgd.core.secret import read_secret_file, secret_bytes_from_hex
+from fortressgd.core.templates import concrete_godot_tag
 from tests.gdpc_fixture import make_gdpc
 
 

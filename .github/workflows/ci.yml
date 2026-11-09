@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests (Python ${{ matrix.python }}${{ matrix.fast && ', cryptography' || '' }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.11", "3.13", "3.14"]
+        fast: [false]
+        include:
+          # The OpenSSL AES path (pip install fortressgd[fast]).
+          - python: "3.13"
+            fast: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install the optional cryptography backend
+        if: matrix.fast
+        run: python -m pip install "cryptography>=3.1"
+      # Includes `git apply --check` of every patch series against the upstream tag.
+      - run: python tests/run.py
+
+  package:
+    name: Wheel and sdist install
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install build
+      - run: python -m build
+      - name: Install the wheel outside the checkout and use it
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install dist/*.whl
+          cp -r testdata/sample_project "$RUNNER_TEMP/proj"
+          cd "$RUNNER_TEMP/proj"
+          FGD="$RUNNER_TEMP/venv/bin/fortressgd"
+          "$FGD" --version
+          "$FGD" init
+          "$FGD" secret generate
+          "$FGD" doctor
+          test -f addons/fortressgd/plugin.cfg
+          test -f .fortressgd.toml
+      - name: Install the sdist and check the shipped data files
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/venv-sdist"
+          "$RUNNER_TEMP/venv-sdist/bin/pip" install dist/*.tar.gz
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/venv-sdist/bin/python" - <<'PY'
+          from fortressgd.core.paths import docker_dir, example_toml_path, patches_root, plugin_source_dir
+          from fortressgd.core.version import SUPPORTED_GODOT
+          for tag in SUPPORTED_GODOT:
+              assert (patches_root() / tag / "series").is_file(), tag
+          assert (patches_root() / "common" / "fortressgd_kdf.cpp").is_file()
+          assert (docker_dir() / "Dockerfile.templates").is_file()
+          assert (docker_dir() / "entrypoint.sh").is_file()
+          assert (plugin_source_dir() / "plugin.cfg").is_file()
+          assert example_toml_path().is_file()
+          print("ok: sdist install ships plugin, patches, docker and example config")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7
+
+  godot:
+    name: GDScript mangler under Godot ${{ matrix.godot }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        godot: ["4.6.2", "4.7.2"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Download the official Godot editor
+        run: |
+          set -euo pipefail
+          base="https://github.com/godotengine/godot/releases/download/${{ matrix.godot }}-stable"
+          zip="Godot_v${{ matrix.godot }}-stable_linux.x86_64.zip"
+          cd "$RUNNER_TEMP"
+          curl -sSLf -O "$base/$zip" -O "$base/SHA512-SUMS.txt"
+          grep " $zip\$" SHA512-SUMS.txt | sha512sum -c -
+          unzip -q "$zip" -d godot
+          echo "GODOT=$RUNNER_TEMP/godot/Godot_v${{ matrix.godot }}-stable_linux.x86_64" >> "$GITHUB_ENV"
+      - name: Python and GDScript manglers agree on the golden corpus
+        env:
+          FORTRESSGD_GODOT_TESTS: "1"
+        run: |
+          set -euo pipefail
+          python -m unittest -v tests.test_mangle_corpus 2>&1 | tee "$RUNNER_TEMP/corpus.log"
+          # A skip here means Godot was not found; that must not pass silently.
+          if grep -q "skipped" "$RUNNER_TEMP/corpus.log"; then
+            echo "error: the GDScript mangler test was skipped" >&2
+            exit 1
+          fi

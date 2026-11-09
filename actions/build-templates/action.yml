@@ -42,9 +42,9 @@ runs:
         python3 - "$ROOT" "$GODOT_VERSION" <<'PY'
         import os, sys
         sys.path.insert(0, sys.argv[1])
-        from core.leakscan import secret_needles
-        from core.secret import secret_bytes_from_hex, validate_secret_hex
-        from core.templates import concrete_godot_tag
+        from fortressgd.core.leakscan import secret_needles
+        from fortressgd.core.secret import secret_bytes_from_hex, validate_secret_hex
+        from fortressgd.core.templates import concrete_godot_tag
         secret = secret_bytes_from_hex(validate_secret_hex(os.environ["FORTRESSGD_SECRET"]))
         for _label, needle in secret_needles(secret, concrete_godot_tag(sys.argv[2])):
             try:
@@ -67,9 +67,9 @@ runs:
         META="$(python3 - "$ROOT" "$GODOT_VERSION" <<'PY'
         import os, sys
         sys.path.insert(0, sys.argv[1])
-        from core.kdf import secret_hash
-        from core.secret import secret_bytes_from_hex, validate_secret_hex
-        from core.templates import concrete_godot_tag, patchset_for_tag
+        from fortressgd.core.kdf import secret_hash
+        from fortressgd.core.secret import secret_bytes_from_hex, validate_secret_hex
+        from fortressgd.core.templates import concrete_godot_tag, patchset_for_tag
         secret = secret_bytes_from_hex(validate_secret_hex(os.environ["FORTRESSGD_SECRET"]))
         godot = concrete_godot_tag(sys.argv[2])
         sh = secret_hash(secret)
@@ -108,7 +108,7 @@ runs:
         if [ "${{ inputs.sign_packs }}" = "true" ]; then
           ARGS+=(--require-signature)
         fi
-        python3 cli/fortressgd templates build --godot "${{ inputs.godot_version }}" "${ARGS[@]}" 2>&1 \
+        python3 bin/fortressgd templates build --godot "${{ inputs.godot_version }}" "${ARGS[@]}" 2>&1 \
           | tee "$RUNNER_TEMP/fortressgd-templates-build.log"
 
     # Runs even when the build failed, before actions/cache saves in its post step
@@ -128,4 +128,4 @@ runs:
           IFS=',' read -r -a EXTRA <<< "$SCAN_PATHS"
           PATHS+=("${EXTRA[@]}")
         fi
-        python3 -m core.leakscan --godot "$GODOT_VERSION" --delete "${PATHS[@]}"
+        python3 -m fortressgd.core.leakscan --godot "$GODOT_VERSION" --delete "${PATHS[@]}"

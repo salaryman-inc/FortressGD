@@ -1,4 +1,4 @@
-"""Golden corpus for the two manglers (core/mangle.py and plugin/.../mangle.gd).
+"""Golden corpus for the two manglers (fortressgd/core/mangle.py and fortressgd/plugin/.../mangle.gd).
 
 Each case is a directory:
 
@@ -8,7 +8,7 @@ Each case is a directory:
     <case>/expected_map.json   identifier map, or
     <case>/expected_error.txt  the error message for cases that must fail
 
-Every case uses SECRET_HASH. Regenerate the expected files from core/mangle.py
+Every case uses SECRET_HASH. Regenerate the expected files from fortressgd/core/mangle.py
 deliberately and review the diff:
 
     python3 tests/mangle_corpus/regen.py
@@ -48,7 +48,7 @@ def run_python(case: Path) -> dict:
     """{ok, error, sources, mapping} from core.mangle, the same shape mangle.gd returns."""
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
-    from core.mangle import MangleError, mangle_scripts
+    from fortressgd.core.mangle import MangleError, mangle_scripts
 
     try:
         sources, mapping = mangle_scripts(

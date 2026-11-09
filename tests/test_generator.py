@@ -6,10 +6,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core.kdf import fgd_kdf_1
-from core.secret import SECRET_BYTES
-from core.shards import decode_shards
-from generator.dialect import (
+from fortressgd.core.kdf import fgd_kdf_1
+from fortressgd.core.secret import SECRET_BYTES
+from fortressgd.core.shards import decode_shards
+from fortressgd.generator.dialect import (
     GENERATOR_VERSION,
     STOCK_PACK_MAGIC,
     derive_dialect_salt,
@@ -20,7 +20,7 @@ from generator.dialect import (
     render_dialect_header,
     write_dialect_header,
 )
-from generator.opcode_map import FGD_OPCODE_COUNT, opcode_map, opcode_unmap
+from fortressgd.generator.opcode_map import FGD_OPCODE_COUNT, opcode_map, opcode_unmap
 
 
 class GeneratorTests(unittest.TestCase):

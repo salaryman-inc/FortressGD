@@ -6,7 +6,7 @@ import hashlib
 import hmac
 import unittest
 
-from core.kdf import (
+from fortressgd.core.kdf import (
     FGD_KDF_INFO,
     FGD_KDF_LEN,
     SALT_LEN,
@@ -14,10 +14,10 @@ from core.kdf import (
     fgd_kdf_1,
     secret_hash,
 )
-from core.secret import SECRET_BYTES
-from core.shards import decode_shards, encode_shards, split_pieces
-from generator.dialect import derive_dialect_salt
-from generator.key_shards import derive_masks, encode_secret
+from fortressgd.core.secret import SECRET_BYTES
+from fortressgd.core.shards import decode_shards, encode_shards, split_pieces
+from fortressgd.generator.dialect import derive_dialect_salt
+from fortressgd.generator.key_shards import derive_masks, encode_secret
 
 
 def independent_hkdf_sha256(ikm: bytes, salt: bytes, info: bytes, length: int) -> bytes:

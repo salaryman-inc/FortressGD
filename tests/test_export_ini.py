@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from core.export import upsert_ini_key
+from fortressgd.core.export import upsert_ini_key
 
 CFG = """[preset.0]
 

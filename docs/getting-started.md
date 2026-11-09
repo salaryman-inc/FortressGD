@@ -6,12 +6,14 @@ You do this with the **official Godot editor**. Custom export templates, Docker,
 
 ## 1. Install into a Godot 4.6.2 / 4.7.2 project
 
-From a FortressGD checkout:
+Install FortressGD (see the README's Install section), then:
 
 ```bash
 cd /path/to/your/godot/project
-python3 /path/to/FortressGD/cli/fortressgd init
+fortressgd init
 ```
+
+From a source checkout without installing, run `python3 /path/to/FortressGD/bin/fortressgd` in place of `fortressgd`.
 
 This writes `.fortressgd.toml` (commit it; it has no secret), suggests `.gitignore` entries, and copies `addons/fortressgd`.
 
@@ -40,7 +42,7 @@ Export PCK/ZIP or a full project from the official editor. You do not need Fortr
 ## 4. Verify the artifact
 
 ```bash
-python3 /path/to/FortressGD/cli/fortressgd verify path/to/game.pck
+fortressgd verify path/to/game.pck
 # also:  fortressgd verify path/to/game.exe
 ```
 
@@ -71,8 +73,8 @@ When you are ready to encrypt a Release PCK so stock KeyDot cannot one-click ext
 
 ```bash
 export FORTRESSGD_SECRET="$(cat .fortressgd.secret)"
-python3 /path/to/FortressGD/cli/fortressgd templates build --godot 4.6.2 --platform linux
-python3 /path/to/FortressGD/cli/fortressgd export --preset Linux
+fortressgd templates build --godot 4.6.2 --platform linux
+fortressgd export --preset Linux
 ```
 
 That builds `template_release` in Docker (see `docs/ci.md`) and runs one official Godot export with `GODOT_SCRIPT_ENCRYPTION_KEY` set to FGD-KDF-1(secret, salt) for that process only. Missing templates print the exact `fortressgd templates build …` command to run.

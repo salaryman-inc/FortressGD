@@ -6,9 +6,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core.config import ConfigError, default_toml_text, load_path, parse_toml, validate
-from core.errors import NEXT_DOCTOR
-from tests.support import ROOT
+from fortressgd.core.config import ConfigError, default_toml_text, load_path, parse_toml, validate
+from fortressgd.core.errors import NEXT_DOCTOR
+from tests.support import PKG, ROOT
 
 
 class ConfigTests(unittest.TestCase):
@@ -62,7 +62,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(data, {"a": {"x": 1}, "b": {"x": 2}})
 
     def test_godot_is_supported_matches_patch_dirs(self) -> None:
-        from core.config import godot_is_supported, supported_godot_message
+        from fortressgd.core.config import godot_is_supported, supported_godot_message
 
         for version in ("4.6.2", "4.7", "4.7.x", "4.7.2"):
             self.assertTrue(godot_is_supported(version), version)
@@ -75,7 +75,7 @@ class ConfigTests(unittest.TestCase):
             import tomllib
         except ImportError:
             self.skipTest("tomllib not available")
-        raw = (ROOT / ".fortressgd.example.toml").read_text(encoding="utf-8")
+        raw = (PKG / "fortressgd.example.toml").read_text(encoding="utf-8")
         std = tomllib.loads(raw)
         ours = parse_toml(raw)
         self.assertEqual(ours, std)

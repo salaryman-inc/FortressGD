@@ -1,6 +1,6 @@
 # Mangler golden corpus
 
-The GDScript mangler exists twice: `core/mangle.py` (used by `fortressgd export`) and `plugin/addons/fortressgd/mangle.gd` (used by editor exports). These cases hold both to the same output.
+The GDScript mangler exists twice: `fortressgd/core/mangle.py` (used by `fortressgd export`) and `fortressgd/plugin/addons/fortressgd/mangle.gd` (used by editor exports). These cases hold both to the same output.
 
 ## Layout
 
@@ -17,7 +17,7 @@ Every case uses secret hash `0123456789abcdef`.
 ## Adding a case
 
 1. Create `<case>/input/` with one or more `.gd` files (and `exclude.txt` if the case needs project-wide exclusions, as scenes and addons provide in a real export).
-2. Run `python3 tests/mangle_corpus/regen.py` from the repo root. It writes the expected files from `core/mangle.py`.
+2. Run `python3 tests/mangle_corpus/regen.py` from the repo root. It writes the expected files from `fortressgd/core/mangle.py`.
 3. Read the diff. The expected files are the spec: commit them only if the output is right.
 
 ## Running

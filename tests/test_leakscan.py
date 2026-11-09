@@ -13,19 +13,19 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from core import leakscan
-from core.errors import ToolError
-from core.pack_dialect import dialect_key_for_secret
-from core.secret import ENV_NAME, generate_secret_hex, secret_bytes_from_hex, write_secret_file
-from core.templates import build_templates
+from fortressgd.core import leakscan
+from fortressgd.core.errors import ToolError
+from fortressgd.core.pack_dialect import dialect_key_for_secret
+from fortressgd.core.secret import ENV_NAME, generate_secret_hex, secret_bytes_from_hex, write_secret_file
+from fortressgd.core.templates import build_templates
 from tests.support import ROOT
 
 FAKE_DOCKER = """#!{python}
 import os, sys
 from pathlib import Path
 sys.path.insert(0, {root!r})
-from core.kdf import secret_hash
-from core.templates import manifest_dict, template_filename, write_manifest
+from fortressgd.core.kdf import secret_hash
+from fortressgd.core.templates import manifest_dict, template_filename, write_manifest
 
 args = sys.argv[1:]
 if args[:2] == ["image", "inspect"]:

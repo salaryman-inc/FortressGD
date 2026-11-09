@@ -9,14 +9,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core.kdf import aes_key_hex, secret_hash
-from core.secret import read_secret_file
-from core.templates import (
+from fortressgd.core.kdf import aes_key_hex, secret_hash
+from fortressgd.core.secret import read_secret_file
+from fortressgd.core.templates import (
     patchset_for_tag,
     template_filename,
     templates_cache_dir,
 )
-from generator.dialect import derive_dialect_salt
+from fortressgd.generator.dialect import derive_dialect_salt
 from tests.support import ROOT, base_env, run_fortressgd, write_godot_stub
 
 

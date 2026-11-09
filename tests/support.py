@@ -8,7 +8,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / "cli" / "fortressgd"
+PKG = ROOT / "fortressgd"
+CLI = ROOT / "bin" / "fortressgd"
 SAMPLE_PROJECT = ROOT / "testdata" / "sample_project"
 
 
@@ -24,7 +25,7 @@ def run_fortressgd(
     cwd: Path,
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    """Run the shipped CLI the same way a user does: `python cli/fortressgd ...`."""
+    """Run the shipped CLI the same way a user does: `python bin/fortressgd ...`."""
     cmd = [sys.executable, str(CLI), *args]
     return subprocess.run(
         cmd,
