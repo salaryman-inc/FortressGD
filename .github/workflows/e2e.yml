@@ -161,9 +161,18 @@ jobs:
           # export signs the pack; verify_on_export then checks the signature.
           fortressgd export --preset Linux
           fortressgd verify build/linux/game.pck
-          run_game() { timeout 120 ./build/linux/game.x86_64 --headless --quit-after 30 "$@" 2>&1 || true; }
+          run_game() { timeout 120 ./build/linux/game.x86_64 --headless --quit-after 30 2>&1 || true; }
+          # Release templates refuse --main-pack (Godot's disable_path_overrides is on
+          # by default), so each test pack goes next to a copy of the binary as
+          # game.pck, which is where a shipped game looks for it.
+          run_with_pack() {
+            dir="$(mktemp -d "$RUNNER_TEMP/sig.XXXXXX")"
+            cp build/linux/game.x86_64 "$dir/game.x86_64"
+            cp "$1" "$dir/game.pck"
+            timeout 120 "$dir/game.x86_64" --headless --quit-after 30 2>&1 || true
+          }
           expect_refused() {
-            out="$(run_game --main-pack "$1")"
+            out="$(run_with_pack "$1")"
             printf '%s\n' "$out"
             if printf '%s\n' "$out" | grep -q "FortressGD sample project"; then
               echo "error: the -sig template ran $2" >&2
@@ -174,6 +183,10 @@ jobs:
           out="$(run_game)"
           printf '%s\n' "$out"
           printf '%s\n' "$out" | grep -q "FortressGD sample project"
+          # Control: the signed pack also runs when loaded this way.
+          out="$(run_with_pack build/linux/game.pck)"
+          printf '%s\n' "$out"
+          printf '%s\n' "$out" | grep -q "FortressGD sample project" || { echo "error: the copied binary did not run the signed pack" >&2; exit 1; }
           expect_refused "$RUNNER_TEMP/unsigned.pck" "an unsigned pack"
           # Corrupt the signature (64 bytes from header offset 40).
           cp build/linux/game.pck "$RUNNER_TEMP/tampered.pck"
