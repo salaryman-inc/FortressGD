@@ -346,6 +346,17 @@ class TemplatesExportCliTests(unittest.TestCase):
             self.assertIn("game.x86_64", proc.stderr)
             self.assertIn("game.pck", proc.stderr)
 
+    def test_export_fails_when_godot_leaves_no_artifact_even_without_verify(self) -> None:
+        # The plugin deletes a refused artifact and Godot still exits 0.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            self._set_dialect(root, False)
+            self._set_verify_on_export(root, False)
+            proc = self._export_with_stub(root, FGD_STUB_NO_ARTIFACT="1")
+            self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+            self.assertIn("produced no artifact", proc.stderr)
+            self.assertNotIn("ok: exported", proc.stdout)
+
 
     def _enable_sign_packs(self, root: Path) -> None:
         toml = root / ".fortressgd.toml"

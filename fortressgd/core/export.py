@@ -457,6 +457,18 @@ def export_preset(
     artifact = Path(out_path or export_path)
     if artifact and not artifact.is_absolute():
         artifact = root / artifact
+    sibling = artifact.with_suffix(".pck")
+    if (out_path or export_path) and not (artifact.is_file() or sibling.is_file()):
+        # The plugin deletes the artifact when it cannot filter or mangle the
+        # export (Godot 4 gives it no way to fail the run), so Godot exits 0.
+        detail = (proc.stderr or proc.stdout or "").strip()
+        where = str(artifact) if sibling == artifact else "{0} or {1}".format(artifact, sibling)
+        raise UserError(
+            "godot export produced no artifact at {0}: {1}".format(
+                where, detail or "no output from Godot"
+            ),
+            NEXT_EXPORT,
+        )
     mangle_summary = ""
     if mangle_on:
         from fortressgd.core.mangle_report import analyze_project, summary_line

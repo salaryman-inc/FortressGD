@@ -99,9 +99,10 @@ func _export_end() -> void:
 		# skip() here is too late: GDScript.FortressGD runs after the built-in
 		# GDScript plugin, which has already add_file'd bytecode. Refuse the
 		# finished artifact (ExportNotifier destructor runs after save_pack).
+		# Godot 4 has no way for a plugin to set the export's exit code, so
+		# fortressgd export fails on the missing artifact instead.
 		push_error("FortressGD: refusing export artifact after mangle abort")
 		FGDMangle.refuse_export_artifact(_mangle_export_path)
-		OS.set_exit_code(1)
 		_mangle_abort = false
 		_mangle_applied = false
 		_mangle_backups = {}
