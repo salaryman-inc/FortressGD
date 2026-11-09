@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.astro/
+
+# Written by scripts/sync-content.mjs from the Markdown in docs/ and the
+# repository root. Edit those files, not the copies here.
+/src/content/docs/*
+!/src/content/docs/index.mdx

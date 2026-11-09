@@ -15,3 +15,14 @@ updates:
         patterns: ["*"]
     commit-message:
       prefix: ci
+
+  # The docs site (Starlight). Grouped so Astro and Starlight move together.
+  - package-ecosystem: npm
+    directory: "/docs"
+    schedule:
+      interval: weekly
+    groups:
+      docs:
+        patterns: ["*"]
+    commit-message:
+      prefix: docs

@@ -46,6 +46,7 @@ From DESIGN.md §15, in short:
 - **Mangler.** It exists twice: `fortressgd/core/mangle.py` (CLI exports) and `fortressgd/plugin/addons/fortressgd/mangle.gd` (editor exports). Change both, then add or update a case in `tests/mangle_corpus/` (see its README) so CI holds them to the same output.
 - **Config keys.** `fortressgd/core/config.py`, `fortressgd/plugin/addons/fortressgd/schema.json` and the GDScript parser in `config.gd` must accept exactly the same input.
 - **A new Godot tag.** Follow DESIGN.md §4. The tag is supported only once `fortressgd/patches/<tag>/series` exists and the patches apply.
+- **Docs.** Edit the Markdown in `docs/` or at the repository root; the site in `docs/` (Starlight) is built from those files and deployed to GitHub Pages when they change on `main`. A new page also needs an entry in `docs/site.config.mjs`. See `docs/README.md` to preview it.
 - **Version bump.** `fortressgd/core/version.py` and `fortressgd/plugin/addons/fortressgd/plugin.cfg` must match; `doctor` and the tests check it.
 
 ## Pull requests
