@@ -43,17 +43,27 @@ while i < len(args):
         i += 2
     else:
         i += 1
-hex_secret = Path(vols["/run/secrets/fortressgd"]).read_text().strip()
+log = os.environ.get("FAKE_DOCKER_ARGS")
+if log:
+    Path(log).write_text("\\n".join(args), encoding="utf-8")
+# The container gets dialect.gen.h and the public secret_hash, never the secret.
+# The worst a build can leak is the masked pack key, folded back into plain form.
+import re
+header = Path(vols["/src/dialect.gen.h"]).read_text()
+def array(name):
+    body = re.search(name + r"\\[4\\]\\[8\\] = \\{{(.*?)\\}};", header, re.S).group(1)
+    return bytes(int(v, 16) for v in re.findall(r"0x([0-9a-f]{{2}})", body))
+key = bytes(a ^ b for a, b in zip(array("FGD_KEY_SHARDS"), array("FGD_KEY_MASKS")))
 mode = os.environ.get("FAKE_DOCKER_LEAK", "")
 if mode == "stderr":
-    sys.stderr.write("scons: debug FORTRESSGD_SECRET=" + hex_secret + "\\n")
+    sys.stderr.write("scons: debug FGD_KEY=" + key.hex() + "\\n")
     sys.exit(2)
-sh = secret_hash(bytes.fromhex(hex_secret))
+sh = env["FGD_SECRET_HASH"]
 name = template_filename(env["FGD_GODOT"], env["FGD_PLATFORM"], env["FGD_ARCH"], env["FGD_PATCHSET"], sh)
 out = Path(vols["/out"])
 body = b"\\x7fELF fake template"
 if mode == "binary":
-    body += b"\\x00" + bytes.fromhex(hex_secret)
+    body += b"\\x00" + key
 (out / name).write_bytes(body)
 write_manifest(
     out / (name + ".manifest.json"),
@@ -140,7 +150,12 @@ class TemplatesBuildLeakGuardTests(unittest.TestCase):
         hex_secret = generate_secret_hex()
         secret_file = tmp / "secret"
         write_secret_file(secret_file, hex_secret)
-        env = {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", ""), "FAKE_DOCKER_LEAK": mode}
+        self.docker_args = tmp / "docker-args.txt"
+        env = {
+            "PATH": str(bindir) + os.pathsep + os.environ.get("PATH", ""),
+            "FAKE_DOCKER_LEAK": mode,
+            "FAKE_DOCKER_ARGS": str(self.docker_args),
+        }
         cache = tmp / "cache"
         with mock.patch.dict(os.environ, env):
             try:
@@ -166,11 +181,20 @@ class TemplatesBuildLeakGuardTests(unittest.TestCase):
         self.assertEqual(error, "")
         self.assertEqual(len(self._cached(cache)), 2)
 
-    def test_planted_secret_aborts_cache_write(self) -> None:
+    def test_container_never_receives_the_secret(self) -> None:
+        _cache, result = self._run_build("")
+        hex_secret, _error = result.split("|", 1)
+        args = self.docker_args.read_text(encoding="utf-8")
+        self.assertIn("FGD_SECRET_HASH=", args)
+        self.assertNotIn(hex_secret, args.lower())
+        self.assertNotIn("/run/secrets", args)
+        self.assertNotIn("FORTRESSGD_SECRET", args)
+
+    def test_unmasked_pack_key_aborts_cache_write(self) -> None:
         cache, result = self._run_build("binary")
         hex_secret, error = result.split("|", 1)
         self.assertIn("refusing to cache", error)
-        self.assertIn("project secret", error)
+        self.assertIn("derived AES key", error)
         self.assertNotIn(hex_secret, error)
         self.assertEqual(self._cached(cache), [])
 

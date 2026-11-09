@@ -1,6 +1,8 @@
 #!/bin/sh
 # Clone a pinned Godot tag, apply the FortressGD series, copy dialect.gen.h, build templates.
-# Secret arrives at RUN via a mount (FORTRESSGD_SECRET_FILE). Never echo it. Never write it to /out.
+# The project secret never enters this container. The host passes the generated
+# dialect.gen.h (masked pack key and public values only) and FGD_SECRET_HASH, the
+# public 16-hex id used in the template name.
 set -eu
 
 err() {
@@ -13,7 +15,7 @@ GODOT_VERSION="${GODOT_VERSION:-4.6.2-stable}"
 FGD_GODOT="${FGD_GODOT:-4.6.2}"
 FGD_PLATFORM="${FGD_PLATFORM:-linux}"
 FGD_ARCH="${FGD_ARCH:-x86_64}"
-SECRET_FILE="${FORTRESSGD_SECRET_FILE:-/run/secrets/fortressgd}"
+SECRET_HASH="${FGD_SECRET_HASH:-}"
 PATCHES_DIR="${PATCHES_DIR:-/patches}"
 HEADER_SRC="${DIALECT_HEADER:-/src/dialect.gen.h}"
 OUT_DIR="${OUT_DIR:-/out}"
@@ -28,7 +30,7 @@ if [ "$FGD_DIALECT" = "1" ]; then
     FGD_CCFLAGS="$FGD_CCFLAGS -DFORTRESSGD_DIALECT"
 fi
 
-[ -f "$SECRET_FILE" ] || err "secret mount missing at $SECRET_FILE"
+printf '%s\n' "$SECRET_HASH" | grep -Eq '^[0-9a-f]{16}$' || err "FGD_SECRET_HASH must be the 16-hex secret_hash"
 [ -d "$PATCHES_DIR" ] || err "patches directory missing at $PATCHES_DIR"
 [ -f "$HEADER_SRC" ] || err "dialect.gen.h missing at $HEADER_SRC"
 mkdir -p "$OUT_DIR"
@@ -42,27 +44,20 @@ for patch in "$@"; do
     [ -f "$PATCHES_DIR/$patch" ] || err "series lists missing patch file: $patch"
 done
 
-# Hashes from mounted inputs (not from the secret as a build-arg).
-META="$(python3 - "$SECRET_FILE" "$PATCHES_DIR" <<'PY'
+# Patchset id from the mounted patches; the host's value is cross-checked below.
+PATCHSET_ID="$(python3 - "$PATCHES_DIR" <<'PY'
 import hashlib, pathlib, sys
-secret_path, patches = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
-raw = secret_path.read_text(encoding="ascii").strip()
-secret = bytes.fromhex(raw)
-secrethash = hashlib.sha256(b"fortressgd-v1|" + secret).hexdigest()[:16]
+patches = pathlib.Path(sys.argv[1])
 names = []
 for line in (patches / "series").read_text(encoding="utf-8").splitlines():
     name = line.split("#", 1)[0].strip()
     if name:
         names.append(name)
 blob = b"".join((patches / n).read_bytes() for n in names)
-patchset = hashlib.sha256(blob).hexdigest()[:12]
-print(secrethash)
-print(patchset)
+print(hashlib.sha256(blob).hexdigest()[:12])
 PY
 )"
-SECRET_HASH="$(printf '%s\n' "$META" | sed -n '1p')"
-PATCHSET_ID="$(printf '%s\n' "$META" | sed -n '2p')"
-[ -n "$SECRET_HASH" ] && [ -n "$PATCHSET_ID" ] || err "failed to compute secret_hash/patchset_id"
+[ -n "$PATCHSET_ID" ] || err "failed to compute patchset_id"
 
 if [ -n "${FGD_PATCHSET:-}" ] && [ "$FGD_PATCHSET" != "$PATCHSET_ID" ]; then
     err "patchset_id mismatch (host $FGD_PATCHSET vs computed $PATCHSET_ID)"

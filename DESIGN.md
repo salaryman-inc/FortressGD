@@ -328,7 +328,7 @@ The `-sig` variant is built when `[production].sign_packs = true` and refuses pa
 
 Docker image `Dockerfile.templates`:
 
-- Input: Godot tag, patch dir, `dialect.gen.h`, `FORTRESSGD_SECRET` (build-arg must **not** be stored in image layers; pass at run via secret mount).
+- Input: Godot tag, patch dir, `dialect.gen.h`, and `FGD_SECRET_HASH` (the public 16-hex id for the template name). The project secret never enters the container, as a build-arg, an env var or a mount: the host writes `dialect.gen.h`, which holds only the masked pack key and public values (§5.2).
 - Steps: shallow clone tag → `git apply` series → copy generated headers → `scons target=template_release production=yes debug_symbols=no` per platform → `strip` where applicable → emit artifact + `manifest.json`.
 
 `manifest.json`:

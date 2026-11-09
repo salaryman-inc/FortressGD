@@ -243,10 +243,9 @@ def build_templates(
     with tempfile.TemporaryDirectory(prefix="fortressgd-tmpl-") as tmp:
         tmp_path = Path(tmp)
         header = tmp_path / "dialect.gen.h"
+        # The header holds the masked pack key and public values; the project
+        # secret itself is never written here or passed to the container.
         write_dialect_header(header, secret, tag, require_signature=require_signature)
-        secret_path = tmp_path / "secret"
-        secret_path.write_text(hex_secret + "\n", encoding="ascii")
-        os.chmod(secret_path, 0o600)
         out_dir = tmp_path / "out"
         out_dir.mkdir()
 
@@ -272,15 +271,13 @@ def build_templates(
                     "-e",
                     "FGD_PATCHSET={0}".format(pset),
                     "-e",
-                    "FORTRESSGD_SECRET_FILE=/run/secrets/fortressgd",
+                    "FGD_SECRET_HASH={0}".format(secrethash),
                     "-e",
                     "FORTRESSGD_SKIP_SCONS={0}".format("1" if skip else "0"),
                     "-e",
                     "FGD_DIALECT={0}".format("1" if dialect else "0"),
                     "-e",
                     "FGD_REQUIRE_SIGNATURE={0}".format("1" if require_signature else "0"),
-                    "-v",
-                    "{0}:/run/secrets/fortressgd:ro".format(secret_path),
                     "-v",
                     "{0}:/patches:ro".format(tag_dir),
                     "-v",

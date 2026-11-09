@@ -23,7 +23,7 @@ Cache key: `fgd-templates-{godot}-{patchset}-{secret_hash}-{platform}` (the Acti
 
 Set `sign_packs: "true"` when the project has `[production].sign_packs = true`. The Action then builds the `-sig` template variant, which refuses unsigned or tampered packs, and appends `-sig` to the cache key.
 
-The secret is an Actions secret passed at **run** time. It is not a Docker build-arg and must not land in image layers.
+The secret is an Actions secret that only the host-side `fortressgd` process reads. It never enters the Docker build container: the container gets `dialect.gen.h` (masked pack key, public values) and the public `secret_hash`.
 
 ### Keeping the secret out of logs and caches
 

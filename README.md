@@ -440,7 +440,7 @@ Build templates once per `(godot version, patchset, secret hash, platform)` and 
     FORTRESSGD_SECRET: ${{ secrets.FORTRESSGD_SECRET }}
 ```
 
-Cache key: `fgd-templates-{godot}-{patchset}-{secret_hash}-{platform}`. The secret is passed at **run** time; it is not a Docker build-arg and must not land in image layers.
+Cache key: `fgd-templates-{godot}-{patchset}-{secret_hash}-{platform}`. The secret never enters the build container: `templates build` writes `dialect.gen.h` (the masked pack key and public values) on the host and passes only that file and the public `secret_hash` to Docker.
 
 The weekly end-to-end workflow (`.github/workflows/e2e.yml`) builds real templates, exports the sample project, and runs a pinned KeyDot version against the protected Windows build; KeyDot failing to recover the key or project is a pass. Locally the same test is opt-in (`FORTRESSGD_UNPACKER_TESTS=1`). GDRE Tools, gdke and GodotPCKExplorer are not pinned or tested yet, so the claim that they fail rests on design reasoning, not on a test run. See [`docs/ci.md`](docs/ci.md).
 

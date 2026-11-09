@@ -37,7 +37,10 @@ class DockerStaticTests(unittest.TestCase):
         self.assertNotIn("ARG SECRET", text)
         self.assertNotRegex(text, r"SCRIPT_AES256_ENCRYPTION_KEY=")
         entry_text = entry.read_text(encoding="utf-8")
-        self.assertIn("FORTRESSGD_SECRET_FILE", entry_text)
+        # The secret never enters the container; only the public secret_hash does.
+        self.assertIn("FGD_SECRET_HASH", entry_text)
+        self.assertNotIn("FORTRESSGD_SECRET_FILE", entry_text)
+        self.assertNotIn("/run/secrets", entry_text)
         self.assertIn("git apply --check", entry_text)
         self.assertIn("FGD-KDF-1", entry_text)
         self.assertIn("template_release", entry_text)
@@ -113,6 +116,20 @@ class DockerStaticTests(unittest.TestCase):
         )
         self.assertIs(data["require_signature"], True)
 
+    def test_shipped_entrypoint_requires_the_public_secret_hash(self) -> None:
+        for value in (None, "", "not-hex", "0123456789ABCDEF", "0123456789abcdef00"):
+            with self.subTest(value=value):
+                env = os.environ.copy()
+                env.pop("FGD_SECRET_HASH", None)
+                if value is not None:
+                    env["FGD_SECRET_HASH"] = value
+                run = subprocess.run(
+                    ["sh", str(PKG / "docker" / "entrypoint.sh")],
+                    capture_output=True, text=True, env=env, timeout=60,
+                )
+                self.assertEqual(run.returncode, 3, run.stdout + run.stderr)
+                self.assertIn("FGD_SECRET_HASH must be the 16-hex secret_hash", run.stderr)
+
     def test_shipped_entrypoint_require_signature_names_and_records_variant(self) -> None:
         secret_hex = generate_secret_hex()
         secret = secret_bytes_from_hex(secret_hex)
@@ -120,8 +137,6 @@ class DockerStaticTests(unittest.TestCase):
         _salt, _masks, _shards, did = dialect_material(secret, "4.6.2")
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            secret_file = tmp_path / "secret"
-            secret_file.write_text(secret_hex + "\n", encoding="ascii")
             header = tmp_path / "dialect.gen.h"
             out_dir = tmp_path / "out"
             out_dir.mkdir()
@@ -130,7 +145,7 @@ class DockerStaticTests(unittest.TestCase):
             env.update({
                 "GODOT_VERSION": "4.6.2-stable", "FGD_GODOT": "4.6.2", "FGD_PLATFORM": "linux",
                 "FGD_ARCH": "x86_64", "FGD_DIALECT_ID": did, "FGD_PATCHSET": pset,
-                "FORTRESSGD_SECRET_FILE": str(secret_file), "FORTRESSGD_SKIP_SCONS": "1",
+                "FGD_SECRET_HASH": secret_hash(secret), "FORTRESSGD_SKIP_SCONS": "1",
                 "FGD_DIALECT": "1", "FGD_REQUIRE_SIGNATURE": "1",
                 "PATCHES_DIR": str(PKG / "patches" / "4.6.2"), "DIALECT_HEADER": str(header),
                 "OUT_DIR": str(out_dir), "GODOT_SRC": str(godot_src), "GIT_TERMINAL_PROMPT": "0",
@@ -166,9 +181,6 @@ class DockerStaticTests(unittest.TestCase):
         log_path = Path(log_raw) if log_raw else None
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            secret_file = tmp_path / "secret"
-            secret_file.write_text(secret_hex + "\n", encoding="ascii")
-            os.chmod(secret_file, 0o600)
             header = tmp_path / "dialect.gen.h"
             write_dialect_header(header, secret, "4.6.2")
             out_dir = tmp_path / "out"
@@ -183,7 +195,7 @@ class DockerStaticTests(unittest.TestCase):
                     "FGD_ARCH": "x86_64",
                     "FGD_DIALECT_ID": did,
                     "FGD_PATCHSET": pset,
-                    "FORTRESSGD_SECRET_FILE": str(secret_file),
+                    "FGD_SECRET_HASH": sh,
                     "FORTRESSGD_SKIP_SCONS": "1",
                     "FGD_DIALECT": "1",
                     "PATCHES_DIR": str(PKG / "patches" / "4.6.2"),
