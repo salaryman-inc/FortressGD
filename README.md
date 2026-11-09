@@ -447,7 +447,7 @@ Build templates once per `(godot version, patchset, secret hash, platform)` and 
 
 Cache key: `fgd-templates-{godot}-{patchset}-{secret_hash}-{platforms}-e{key_epoch}[-sig]`. Pass `key_epoch` to the Action when the project sets `[production].key_epoch`. The secret never enters the build container: `templates build` writes `dialect.gen.h` (the masked pack key and public values) on the host and passes only that file and the public `secret_hash` to Docker.
 
-The weekly end-to-end workflow (`.github/workflows/e2e.yml`) builds real templates, exports the sample project, and runs a pinned KeyDot version against the protected Windows build; KeyDot failing to recover the key or project is a pass. Locally the same test is opt-in (`FORTRESSGD_UNPACKER_TESTS=1`). GDRE Tools, gdke and GodotPCKExplorer are not pinned or tested yet, so the claim that they fail rests on design reasoning, not on a test run. See [`docs/ci.md`](docs/ci.md).
+The weekly end-to-end workflow (`.github/workflows/e2e.yml`) builds real templates, exports the sample project, and runs a pinned KeyDot version against the protected Windows build; KeyDot failing to recover the key or project is a pass. Locally the same test is opt-in (`FORTRESSGD_UNPACKER_TESTS=1`). The same workflow runs the latest GDRE Tools release with `--recover` on the protected Linux build and fails if any script contents come back, and checks that a `sign_packs` template refuses unsigned and tampered packs. gdke and GodotPCKExplorer are not tested yet, so the claim that they fail rests on design reasoning, not on a test run. See [`docs/ci.md`](docs/ci.md).
 
 ---
 
@@ -482,7 +482,7 @@ Tests: `python3 tests/run.py`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 | | [Official encrypt][official] | [Godot-Secure][godot-secure] | [GDMaim][gdmaim] | [ChaosProtector][chaos] | FortressGD |
 |---|---|---|---|---|---|
-| Stock KeyDot/GDRE | Usually succeed (KeyDot reads Windows and Web builds) | Project claims fail | Pack opens; scripts are obfuscated | Vendor claims fail (Windows x86-64) | Target: fail (KeyDot checked by the e2e workflow; GDRE not tested yet) |
+| Stock KeyDot/GDRE | Usually succeed (KeyDot reads Windows and Web builds) | Project claims fail | Pack opens; scripts are obfuscated | Vendor claims fail (Windows x86-64) | Target: fail (KeyDot and latest GDRE checked by the e2e workflow) |
 | Editor | Official + custom templates | Patched editor | Official (4.5+) | Official | Official |
 | Source leaks | Your problem | Your problem | Your problem (strips comments only) | Not advertised | `verify` fails the build |
 | Script names | Intact | Intact (token IDs optionally scrambled) | Identifiers mangled; file paths intact | Not advertised | Optional mangler |
