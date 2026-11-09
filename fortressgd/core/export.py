@@ -407,8 +407,10 @@ def export_preset(
     else:
         out_path = export_path
         cmd = [binary, "--headless", "--path", str(root), "--export-release", preset_name]
+    output_file: Path | None = None
     if out_path:
-        cmd.append(str(root / out_path) if not Path(out_path).is_absolute() else out_path)
+        output_file = Path(out_path) if Path(out_path).is_absolute() else root / out_path
+        cmd.append(str(output_file))
 
     child_env = dict(env)
     child_env["GODOT_SCRIPT_ENCRYPTION_KEY"] = derived_hex
@@ -446,6 +448,11 @@ def export_preset(
                 script_backups[path] = original_src
                 path.write_text(text, encoding="utf-8")
         child_env["FORTRESSGD_CLI_EXPORT"] = "1"
+
+    if output_file is not None:
+        # Godot's headless export fails with "The given export path doesn't exist"
+        # when the output folder is missing; it never creates it.
+        output_file.parent.mkdir(parents=True, exist_ok=True)
 
     presets_path.write_text(modified, encoding="utf-8")
     try:
