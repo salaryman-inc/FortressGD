@@ -162,7 +162,9 @@ elif [ "$FGD_PLATFORM" = "windows" ]; then
     scons platform=windows target=template_release production=yes debug_symbols=no arch="$FGD_ARCH" use_mingw=yes \
         $DEPS_FLAGS cppdefines="$FGD_DEFINES" -j"$JOBS" \
         || err "scons windows template_release (mingw) failed"
-    BIN="$(ls -1 bin/godot.windows.template_release* 2>/dev/null | head -n 1 || true)"
+    # scons also builds godot.windows.template_release.<arch>.console.exe, a small
+    # launcher that sorts first. The template is the engine binary next to it.
+    BIN="$(ls -1 bin/godot.windows.template_release*.exe 2>/dev/null | grep -v '\.console\.exe$' | head -n 1 || true)"
 else
     err "unsupported platform $FGD_PLATFORM"
 fi

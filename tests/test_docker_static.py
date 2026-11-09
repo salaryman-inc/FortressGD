@@ -136,6 +136,9 @@ class DockerStaticTests(unittest.TestCase):
         for tag in ("4.6.2", "4.7.2"):
             sig = (PKG / "patches" / tag / "0005-pack-signatures.patch").read_text(encoding="utf-8")
             self.assertIn('"{0}"'.format(message), sig, msg=tag)
+        # The Windows build also emits a .console.exe launcher, which sorts first.
+        win_bin = next(line for line in code.splitlines() if "bin/godot.windows.template_release" in line)
+        self.assertIn("grep -v '\\.console\\.exe$'", win_bin)
         guard = code.index('grep -aqF "{0}"'.format(message))
         self.assertLess(code.index('err "scons did not emit'), guard)
         self.assertLess(guard, code.index('cp "$BIN" "$OUT_DIR/$NAME"'))
