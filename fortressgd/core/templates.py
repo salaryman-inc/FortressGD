@@ -13,7 +13,7 @@ from typing import Any
 
 from fortressgd.core.errors import NEXT_TEMPLATES, ToolError, UserError
 from fortressgd.core.kdf import secret_hash
-from fortressgd.core.patches import patch_dir_for_tag, patch_files, patchset_id, require_series
+from fortressgd.core.patches import patch_dir_for_tag, patchset_id, patchset_inputs, require_series
 from fortressgd.core.leakscan import format_leaks, redact, scan_paths, secret_needles
 from fortressgd.core.paths import default_cache_dir, docker_dir, patches_root
 from fortressgd.core.secret import load_secret_hex, secret_bytes_from_hex
@@ -75,6 +75,61 @@ def template_filename(
     )
 
 
+EDITOR_PLATFORM = "linux"
+
+
+def editor_filename(godot: str, arch: str, patchset: str, secrethash: str, *, key_epoch: int = 0) -> str:
+    """godot-<ver>-editor-linux-<arch>-fgd<patchset12>-<secrethash16>[-e<N>]
+
+    The FortressGD-patched headless editor that writes dialect packs. It runs on
+    the export machine only and is never shipped.
+    """
+    return "godot-{0}-editor-{1}-{2}-fgd{3}-{4}{5}".format(
+        godot, EDITOR_PLATFORM, arch, patchset, secrethash, "-e{0}".format(key_epoch) if key_epoch else ""
+    )
+
+
+def find_cached_editor(
+    *,
+    godot: str,
+    patchset: str,
+    secrethash: str,
+    arch: str = DEFAULT_ARCH,
+    cache_dir: str | Path | None = None,
+    key_epoch: int = 0,
+) -> Path | None:
+    path = templates_cache_dir(cache_dir) / editor_filename(godot, arch, patchset, secrethash, key_epoch=key_epoch)
+    return path if path.is_file() else None
+
+
+def read_manifest(binary: Path) -> dict[str, Any]:
+    """The manifest cached next to a template or editor binary, or {} when missing."""
+    path = Path(str(binary) + ".manifest.json")
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def require_dialect_match(binary: Path, dialect: bool, godot: str, platform: str) -> None:
+    """Refuse a cached template or editor built for the other [production].dialect.
+
+    A dialect template cannot open a stock pack and a stock template cannot open a
+    dialect pack, and the template name does not say which it is: the manifest does.
+    """
+    recorded = read_manifest(binary).get("dialect_enabled")
+    if recorded is None or bool(recorded) != bool(dialect):
+        raise UserError(
+            "{0} was built with dialect = {1}, but .fortressgd.toml has dialect = {2}; "
+            "the game could not open its own pack".format(
+                Path(binary).name,
+                "unknown" if recorded is None else str(bool(recorded)).lower(),
+                str(bool(dialect)).lower(),
+            ),
+            templates_build_command(godot, platform) + " --force",
+        )
+
+
 def templates_build_command(godot: str, platform: str) -> str:
     # key_epoch and sign_packs come from .fortressgd.toml, so the plain command
     # builds the variant the project needs.
@@ -131,6 +186,8 @@ def manifest_dict(
     arch: str = DEFAULT_ARCH,
     require_signature: bool = False,
     key_epoch: int = 0,
+    dialect_enabled: bool = True,
+    target: str = "template_release",
 ) -> dict[str, Any]:
     return {
         "godot": godot,
@@ -143,6 +200,8 @@ def manifest_dict(
         "generator_version": str(GENERATOR_VERSION),
         "require_signature": bool(require_signature),
         "key_epoch": int(key_epoch),
+        "dialect_enabled": bool(dialect_enabled),
+        "target": target,
     }
 
 
@@ -171,8 +230,7 @@ def normalize_platform(platform: str) -> str:
 def patchset_for_tag(godot: str, patches_dir: Path | None = None) -> str:
     tag = concrete_godot_tag(godot)
     root = patches_root() if patches_dir is None else Path(patches_dir)
-    files = patch_files(patch_dir_for_tag(tag, root))
-    return patchset_id(files)
+    return patchset_id(patchset_inputs(patch_dir_for_tag(tag, root)))
 
 
 def godot_git_tag(version: str) -> str:
@@ -258,9 +316,8 @@ def build_templates(
 
     root = patches_root() if patches_dir is None else Path(patches_dir)
     tag_dir = patch_dir_for_tag(tag, root)
-    files = patch_files(tag_dir)
     require_series(tag_dir)
-    pset = patchset_id(files)
+    pset = patchset_id(patchset_inputs(tag_dir))
 
     _salt, _masks, _shards, did = dialect_material(secret, tag, key_epoch=key_epoch)
     needles = secret_needles(secret, tag, key_epoch=key_epoch)

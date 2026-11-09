@@ -57,6 +57,10 @@ for line in (patches / "series").read_text(encoding="utf-8").splitlines():
     name = line.split("#", 1)[0].strip()
     if name:
         names.append(name)
+# Same inputs as fortressgd/core/patches.py patchset_inputs: series patches, then build-deps.sh.
+deps = patches / "build-deps.sh"
+if deps.is_file():
+    names.append("build-deps.sh")
 blob = b"".join((patches / n).read_bytes() for n in names)
 print(hashlib.sha256(blob).hexdigest()[:12])
 PY
@@ -136,16 +140,25 @@ fi
 
 cd "$GODOT_SRC"
 JOBS="$(nproc 2>/dev/null || echo 2)"
+# Libraries Godot's own CI links into its templates for this tag and platform
+# (D3D12 and ANGLE on Windows, AccessKit everywhere). See build-deps.sh.
+DEPS_FLAGS=""
+if [ -f "$PATCHES_DIR/build-deps.sh" ]; then
+    DEPS_FLAGS="$(sh "$PATCHES_DIR/build-deps.sh" "$FGD_PLATFORM")" \
+        || err "build dependencies for $FGD_PLATFORM failed to install (see build-deps.sh)"
+fi
 # Do not set SCRIPT_AES256_ENCRYPTION_KEY — that would bake a KeyDot-extractable blob.
 if [ "$FGD_PLATFORM" = "linux" ]; then
+    # shellcheck disable=SC2086
     scons platform=linuxbsd target=template_release production=yes debug_symbols=no arch="$FGD_ARCH" \
-        CCFLAGS="$FGD_CCFLAGS" -j"$JOBS" \
+        $DEPS_FLAGS CCFLAGS="$FGD_CCFLAGS" -j"$JOBS" \
         || err "scons linuxbsd template_release failed"
     BIN="$(ls -1 bin/godot.linuxbsd.template_release* 2>/dev/null | head -n 1 || true)"
 elif [ "$FGD_PLATFORM" = "windows" ]; then
+    # shellcheck disable=SC2086
     scons platform=windows target=template_release production=yes debug_symbols=no arch="$FGD_ARCH" use_mingw=yes \
-        CCFLAGS="$FGD_CCFLAGS" -j"$JOBS" \
-        || err "scons windows template_release (mingw) failed. See docs/ci.md for the manual Windows job."
+        $DEPS_FLAGS CCFLAGS="$FGD_CCFLAGS" -j"$JOBS" \
+        || err "scons windows template_release (mingw) failed"
     BIN="$(ls -1 bin/godot.windows.template_release* 2>/dev/null | head -n 1 || true)"
 else
     err "unsupported platform $FGD_PLATFORM"
