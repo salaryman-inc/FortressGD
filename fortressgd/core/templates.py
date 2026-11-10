@@ -339,22 +339,15 @@ def ensure_docker_image() -> None:
     )
     if inspect.returncode == 0:
         return
+    # Stream the build (stdout to our stderr) so a slow package mirror shows in
+    # the log instead of as minutes of silence.
+    print("fortressgd: building {0} (the build toolchain)".format(docker_image()), file=sys.stderr, flush=True)
     built = subprocess.run(
-        [
-            "docker",
-            "build",
-            "-f",
-            str(dockerfile),
-            "-t",
-            docker_image(),
-            str(docker_dir()),
-        ],
-        capture_output=True,
-        text=True,
+        ["docker", "build", "--progress=plain", "-f", str(dockerfile), "-t", docker_image(), str(docker_dir())],
+        stdout=2,
     )
     if built.returncode != 0:
-        detail = (built.stderr or built.stdout or "").strip()
-        raise ToolError("docker build failed: {0}".format(detail), NEXT_TEMPLATES)
+        raise ToolError("docker build of {0} failed (log above)".format(docker_image()), NEXT_TEMPLATES)
 
 
 BUILD_IMAGE_REPO = "fortressgd-build"
