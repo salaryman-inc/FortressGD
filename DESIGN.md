@@ -690,6 +690,7 @@ The machine that exports is trusted: it already holds the secret. So the export 
 - At export, the CLI passes the per-project values to it in environment variables for the length of one export: `FORTRESSGD_PACK_PARAMS` (magic and index permutation) and `GODOT_SCRIPT_ENCRYPTION_KEY` (the AES key). They are never written to disk, never passed as arguments, and never logged.
 - The editor needs no opcode tables. A pack carries GDScript as tokens, and the template compiles them to bytecode with its own table, so the editor's bytecode never reaches a pack.
 - Pack signing stays in the CLI (`fortressgd/core/pack_sign.py`). The editor never sees the signing seed.
+- On 4.7.2, patch `0007-editor-shutdown-doc-cache.patch` fixes an upstream crash at the end of a headless export. EditorFileSystem can emit `sources_changed` after EditorNode is freed. `EditorNode::is_cmdline_mode()` then returns false, so EditorHelp starts regenerating the script doc cache, and its thread walks the freed file system. The editor wrote the pack but died with SIGABRT, and Godot's crash handler printed nothing because the OS singleton was already gone. The official 4.7.2 editor has the same bug: it hit it during `--import` when editor settings from an earlier run were present. The patch touches only `editor/`, so it is not compiled into templates.
 
 That removes the per-project editor build, which the dialect path needed in 0.1.
 

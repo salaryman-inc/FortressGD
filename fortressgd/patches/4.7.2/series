@@ -4,3 +4,4 @@
 0004-opcode-map.patch
 0005-pack-signatures.patch
 0006-signed-file-md5.patch
+0007-editor-shutdown-doc-cache.patch
