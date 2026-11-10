@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -66,6 +67,17 @@ def find_godot_bin(environ: dict[str, str] | None = None) -> str:
         "godot editor not found on PATH (set GODOT or FORTRESSGD_GODOT)",
         NEXT_EXPORT,
     )
+
+
+def describe_exit(returncode: int) -> str:
+    """Say how a child process ended: "exit code 1" or "killed by SIGSEGV"."""
+    if returncode < 0:
+        try:
+            name = signal.Signals(-returncode).name
+        except ValueError:
+            name = "signal {0}".format(-returncode)
+        return "killed by {0}".format(name)
+    return "exit code {0}".format(returncode)
 
 
 def find_dialect_editor(
@@ -491,7 +503,7 @@ def export_preset(
         if proc.returncode != 0:
             detail = (proc.stderr or proc.stdout or "").strip()
             raise UserError(
-                "godot export failed: {0}".format(detail),
+                "godot export failed ({0}): {1}".format(describe_exit(proc.returncode), detail),
                 NEXT_EXPORT,
             )
     finally:

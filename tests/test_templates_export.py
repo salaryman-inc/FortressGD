@@ -469,5 +469,20 @@ class TemplatesExportCliTests(unittest.TestCase):
             self.assertIn("warning: .NET project", proc.stderr)
 
 
+class DescribeExitTests(unittest.TestCase):
+    def test_exit_code(self) -> None:
+        from fortressgd.core.export import describe_exit
+
+        self.assertEqual(describe_exit(1), "exit code 1")
+
+    def test_signal(self) -> None:
+        import signal
+
+        from fortressgd.core.export import describe_exit
+
+        self.assertEqual(describe_exit(-int(signal.SIGSEGV)), "killed by SIGSEGV")
+        self.assertEqual(describe_exit(-250), "killed by signal 250")
+
+
 if __name__ == "__main__":
     unittest.main()
