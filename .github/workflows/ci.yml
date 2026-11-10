@@ -95,7 +95,8 @@ jobs:
     # (Windows). The optimizer must not fold the masked pack-key shards back
     # into the plain key; this checks g++, clang++ and MinGW at -O2 and -O3,
     # runs the shipped key reassembly, and checks the header holds nothing the
-    # project secret or signing seed can be recovered from.
+    # project secret or signing seed can be recovered from. It also checks the
+    # engine's Ed25519 pack-signature verifier against the Python signer.
     name: Template key material (g++, clang++, MinGW)
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -109,11 +110,11 @@ jobs:
         with:
           python-version: "3.12"
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends g++ clang g++-mingw-w64-x86-64
-      - name: Compile the shard reassembly and scan the objects
+      - name: Compile the shard reassembly and the signature verifier
         env:
           # The test fails if any of these is missing instead of skipping it.
           FORTRESSGD_REQUIRE_COMPILERS: "g++,clang++,x86_64-w64-mingw32-g++"
-        run: python -m unittest -v tests.test_generator.TemplateKeyMaterialTests
+        run: python -m unittest -v tests.test_generator.TemplateKeyMaterialTests tests.test_engine_ed25519
 
   package:
     name: Wheel and sdist install

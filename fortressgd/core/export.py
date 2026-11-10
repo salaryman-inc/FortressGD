@@ -9,7 +9,8 @@ from pathlib import Path
 from typing import Any
 
 from fortressgd.core.config import key_epoch, load_path
-from fortressgd.core.errors import NEXT_DOCTOR, NEXT_EXPORT, UserError
+from fortressgd.core.errors import NEXT_DOCTOR, NEXT_EXPORT, NEXT_INIT, UserError
+from fortressgd.core.ini import upsert_ini_key  # noqa: F401  (also re-exported for callers)
 from fortressgd.core.kdf import aes_key_hex, secret_hash
 from fortressgd.core.mangle import (
     binary_resource_paths,
@@ -23,7 +24,14 @@ from fortressgd.core.mangle import (
     source_map_json,
     source_map_path,
 )
-from fortressgd.core.project import CONFIG_NAME, DOTNET_WARNING, is_dotnet_project, require_godot_root
+from fortressgd.core.project import (
+    CONFIG_NAME,
+    DOTNET_WARNING,
+    PLUGIN_NOT_ENABLED,
+    is_dotnet_project,
+    plugin_enabled,
+    require_godot_root,
+)
 from fortressgd.core.secret import load_secret_hex, secret_bytes_from_hex
 from fortressgd.core.templates import (
     DEFAULT_ARCH,
@@ -135,45 +143,6 @@ def _unquote(value: str) -> str:
 
 def _quote_ini(value: str) -> str:
     return '"' + value.replace('"', '\\"') + '"'
-
-
-def upsert_ini_key(text: str, section: str, key: str, value: str) -> str:
-    """Set key=value in [section], inserting the section if needed. Preserves other lines."""
-    header = "[{0}]".format(section)
-    lines = text.splitlines(keepends=True)
-    if not lines:
-        return "{0}\n{1}={2}\n".format(header, key, value)
-    in_section = False
-    section_start = None
-    next_section = None
-    key_line = None
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped.startswith("[") and stripped.endswith("]"):
-            name = stripped[1:-1].strip()
-            if in_section:
-                next_section = i
-                break
-            if name == section:
-                in_section = True
-                section_start = i
-            continue
-        if in_section and stripped.split("=", 1)[0].strip() == key:
-            key_line = i
-    assignment = "{0}={1}\n".format(key, value)
-    if key_line is not None:
-        lines[key_line] = assignment
-        return "".join(lines)
-    if in_section:
-        insert_at = next_section if next_section is not None else len(lines)
-        if insert_at > 0 and not lines[insert_at - 1].endswith("\n"):
-            lines[insert_at - 1] += "\n"
-        lines.insert(insert_at, assignment)
-        return "".join(lines)
-    extra = ""
-    if lines and not "".join(lines).endswith("\n"):
-        extra = "\n"
-    return "".join(lines) + extra + "\n{0}\n{1}".format(header, assignment)
 
 
 def load_project_config(project_root: Path) -> dict[str, Any]:
@@ -308,6 +277,10 @@ def export_preset(
     """
     env = os.environ if environ is None else environ
     root = require_godot_root(cwd if cwd is not None else Path.cwd())
+    if not plugin_enabled(root):
+        # The §6.3 forced excludes run in the plugin's export hook, inside Godot.
+        # Without it the pack would carry addons/fortressgd/ and leftover sources.
+        raise UserError(PLUGIN_NOT_ENABLED, NEXT_INIT)
     cfg = load_project_config(root)
     godot_ver = concrete_godot_tag(str(cfg["godot"]))
     use_dialect = _production_dialect(cfg)
@@ -484,6 +457,18 @@ def export_preset(
     artifact = Path(out_path or export_path)
     if artifact and not artifact.is_absolute():
         artifact = root / artifact
+    sibling = artifact.with_suffix(".pck")
+    if (out_path or export_path) and not (artifact.is_file() or sibling.is_file()):
+        # The plugin deletes the artifact when it cannot filter or mangle the
+        # export (Godot 4 gives it no way to fail the run), so Godot exits 0.
+        detail = (proc.stderr or proc.stdout or "").strip()
+        where = str(artifact) if sibling == artifact else "{0} or {1}".format(artifact, sibling)
+        raise UserError(
+            "godot export produced no artifact at {0}: {1}".format(
+                where, detail or "no output from Godot"
+            ),
+            NEXT_EXPORT,
+        )
     mangle_summary = ""
     if mangle_on:
         from fortressgd.core.mangle_report import analyze_project, summary_line

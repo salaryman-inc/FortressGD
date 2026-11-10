@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import shutil
 from pathlib import Path
 
 from fortressgd.core.config import default_toml_text, godot_is_supported, load_path, supported_godot_message
 from fortressgd.core.errors import NEXT_DOCTOR, NEXT_INIT, NEXT_SECRET, NEXT_SECRET_FORCE, UserError
+from fortressgd.core.ini import get_ini_value, upsert_ini_key
 from fortressgd.core.paths import plugin_source_dir
 from fortressgd.core.secret import load_secret_hex, secret_file_mode_problem, secret_status, secret_weakness
 from fortressgd.core.version import __version__
@@ -16,6 +18,18 @@ from fortressgd.core.version import __version__
 GITIGNORE_ENTRIES = (".fortressgd.secret", ".fortressgd/")
 CONFIG_NAME = ".fortressgd.toml"
 PROJECT_GODOT = "project.godot"
+# Godot loads an editor plugin, and runs its export hook, only when project.godot
+# lists it here. The §6.3 forced excludes live in that hook.
+PLUGIN_CFG_RES = "res://addons/fortressgd/plugin.cfg"
+EDITOR_PLUGINS_SECTION = "editor_plugins"
+EDITOR_PLUGINS_KEY = "enabled"
+PLUGIN_NOT_ENABLED = (
+    "the FortressGD plugin is not enabled in project.godot. Godot applies the release "
+    "filters (DESIGN.md §6.3) only through it, so the export would ship addons/fortressgd/ "
+    "and any leftover source. fortressgd init enables it, or enable FortressGD in "
+    "Project → Project Settings → Plugins"
+)
+_QUOTED = re.compile(r'"((?:[^"\\]|\\.)*)"')
 
 
 def require_godot_root(cwd: Path) -> Path:
@@ -43,6 +57,10 @@ def init_project(cwd: Path) -> dict[str, str]:
 
     dest = install_plugin(root)
     notes.append("installed plugin at {0}".format(dest.relative_to(root).as_posix()))
+    if enable_plugin(root):
+        notes.append("enabled plugin in {0}".format(PROJECT_GODOT))
+    else:
+        notes.append("plugin already enabled in {0}".format(PROJECT_GODOT))
 
     gi_note = apply_gitignore_suggestion(root)
     notes.append(gi_note)
@@ -64,6 +82,35 @@ def install_plugin(project_root: Path) -> Path:
         shutil.rmtree(dest)
     shutil.copytree(src, dest, ignore=shutil.ignore_patterns(".DS_Store", "*.uid"))
     return dest
+
+
+def enabled_editor_plugins(project_text: str) -> list[str]:
+    """Paths in project.godot's [editor_plugins] enabled=PackedStringArray(...)."""
+    raw = get_ini_value(project_text, EDITOR_PLUGINS_SECTION, EDITOR_PLUGINS_KEY)
+    if not raw:
+        return []
+    return [m.group(1) for m in _QUOTED.finditer(raw)]
+
+
+def plugin_enabled(project_root: Path) -> bool:
+    text = (project_root / PROJECT_GODOT).read_text(encoding="utf-8")
+    return PLUGIN_CFG_RES in enabled_editor_plugins(text)
+
+
+def enable_plugin(project_root: Path) -> bool:
+    """Add the FortressGD plugin to project.godot's enabled list. True if the file changed.
+
+    Other enabled plugins and every other line are kept as they are.
+    """
+    path = project_root / PROJECT_GODOT
+    text = path.read_text(encoding="utf-8")
+    plugins = enabled_editor_plugins(text)
+    if PLUGIN_CFG_RES in plugins:
+        return False
+    plugins.append(PLUGIN_CFG_RES)
+    value = "PackedStringArray({0})".format(", ".join('"{0}"'.format(p) for p in plugins))
+    path.write_text(upsert_ini_key(text, EDITOR_PLUGINS_SECTION, EDITOR_PLUGINS_KEY, value), encoding="utf-8")
+    return True
 
 
 def apply_gitignore_suggestion(project_root: Path) -> str:
@@ -178,6 +225,13 @@ def doctor_project(
             "warning: installed plugin files differ from CLI package version {0}\n"
             "  {1}\nRun: {2}".format(__version__, "; ".join(pdetails), NEXT_INIT)
         )
+    enabled = plugin_enabled(root)
+    if not enabled:
+        warnings.append(
+            "warning: {0}; fortressgd export refuses to run until it is\nRun: {1}".format(
+                PLUGIN_NOT_ENABLED, NEXT_INIT
+            )
+        )
     if secret["state"] == "present":
         _check_secret_hygiene(secret, secret_file=secret_file, environ=environ, cwd=root)
     if is_dotnet_project(root):
@@ -191,6 +245,7 @@ def doctor_project(
         "config": cfg,
         "plugin_status": pstatus,
         "plugin_details": pdetails,
+        "plugin_enabled": enabled,
         "secret": secret,
         "godot": version,
         "warnings": warnings,
@@ -231,6 +286,8 @@ def format_doctor_ok(result: dict[str, object]) -> str:
     pstatus = result["plugin_status"]
     if pstatus == "match":
         lines.append("ok: plugin files match CLI package version {0}".format(__version__))
+    if result.get("plugin_enabled"):
+        lines.append("ok: plugin enabled in {0}".format(PROJECT_GODOT))
     secret = result["secret"]  # type: ignore[assignment]
     if secret["state"] == "present":
         src = secret["source"]

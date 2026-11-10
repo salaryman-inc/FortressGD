@@ -143,7 +143,7 @@ fortressgd init
 fortressgd secret generate
 export FORTRESSGD_SECRET="$(cat .fortressgd.secret)"
 
-# 3. Enable the FortressGD plugin in Project → Project Settings → Plugins.
+# 3. init already enabled the FortressGD plugin in project.godot.
 #    On the Release preset: GDScript Export Mode = Binary tokens (or compressed),
 #    and add the custom feature tag fortressgd_production.
 
@@ -172,13 +172,12 @@ cd /path/to/your/godot/project
 fortressgd init
 ```
 
-Then in the official editor:
+`init` also enables the **FortressGD** plugin in `project.godot`. Then in the official editor:
 
-1. Enable **FortressGD** under **Project → Project Settings → Plugins**.
-2. Open **Project → Export** on the Release preset (not debug).
-3. Set **GDScript Export Mode** to **Binary tokens** or **Compressed binary tokens**.
-4. Add the custom feature tag `fortressgd_production`.
-5. Export PCK/ZIP or a full project as usual.
+1. Open **Project → Export** on the Release preset (not debug).
+2. Set **GDScript Export Mode** to **Binary tokens** or **Compressed binary tokens**.
+3. Add the custom feature tag `fortressgd_production`.
+4. Export PCK/ZIP or a full project as usual.
 
 ```bash
 fortressgd verify path/to/game.pck
@@ -408,7 +407,7 @@ Godot binary resolution for `export`: `FORTRESSGD_GODOT`, then `GODOT`, then `GO
 
 ## Editor plugin
 
-`fortressgd init` copies `addons/fortressgd`. Enable it in **Project → Project Settings → Plugins**.
+`fortressgd init` copies `addons/fortressgd` and enables it in `project.godot`. The release filters only run while it is enabled, so `fortressgd export` refuses to run if it is turned off, and `fortressgd doctor` warns. Run `fortressgd init` again, or re-enable it in **Project → Project Settings → Plugins**.
 
 On presets tagged `fortressgd_production` the export plugin:
 

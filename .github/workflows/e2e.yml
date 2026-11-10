@@ -161,9 +161,21 @@ jobs:
           # export signs the pack; verify_on_export then checks the signature.
           fortressgd export --preset Linux
           fortressgd verify build/linux/game.pck
-          run_game() { timeout 120 ./build/linux/game.x86_64 --headless --quit-after 30 "$@" 2>&1 || true; }
+          run_game() { timeout 120 ./build/linux/game.x86_64 --headless --quit-after 30 2>&1 || true; }
+          # Release templates refuse --main-pack (Godot's disable_path_overrides is on
+          # by default), so each test pack goes next to a copy of the binary as
+          # game.pck, which is where a shipped game looks for it. It runs from that
+          # folder so no project.godot is in the working directory. Release templates
+          # refuse that fallback anyway (disable_path_overrides); this keeps the test
+          # from depending on it.
+          run_with_pack() {
+            dir="$(mktemp -d "$RUNNER_TEMP/sig.XXXXXX")"
+            cp build/linux/game.x86_64 "$dir/game.x86_64"
+            cp "$1" "$dir/game.pck"
+            (cd "$dir" && timeout 120 ./game.x86_64 --headless --quit-after 30 2>&1) || true
+          }
           expect_refused() {
-            out="$(run_game --main-pack "$1")"
+            out="$(run_with_pack "$1")"
             printf '%s\n' "$out"
             if printf '%s\n' "$out" | grep -q "FortressGD sample project"; then
               echo "error: the -sig template ran $2" >&2
@@ -174,6 +186,10 @@ jobs:
           out="$(run_game)"
           printf '%s\n' "$out"
           printf '%s\n' "$out" | grep -q "FortressGD sample project"
+          # Control: the signed pack also runs when loaded this way.
+          out="$(run_with_pack build/linux/game.pck)"
+          printf '%s\n' "$out"
+          printf '%s\n' "$out" | grep -q "FortressGD sample project" || { echo "error: the copied binary did not run the signed pack" >&2; exit 1; }
           expect_refused "$RUNNER_TEMP/unsigned.pck" "an unsigned pack"
           # Corrupt the signature (64 bytes from header offset 40).
           cp build/linux/game.pck "$RUNNER_TEMP/tampered.pck"
@@ -186,10 +202,13 @@ jobs:
           PY
           expect_refused "$RUNNER_TEMP/tampered.pck" "a pack with a corrupted signature"
 
+      # upload-artifact refuses paths with "..", which PROJ has. Copy the build out first.
+      - name: Stage the protected Windows build
+        run: cp -r "$PROJ/build/windows" "$RUNNER_TEMP/protected-windows"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: protected-windows-${{ matrix.godot }}
-          path: ${{ env.PROJ }}/build/windows/
+          path: ${{ runner.temp }}/protected-windows/
           if-no-files-found: error
           retention-days: 3
 
@@ -227,6 +246,7 @@ jobs:
           set -euo pipefail
           export FORTRESSGD_KEYDOT="$RUNNER_TEMP/keydot.exe"
           export FORTRESSGD_PROTECTED_EXE="$GITHUB_WORKSPACE/protected/game.exe"
+          export FORTRESSGD_PROTECTED_PCK="$GITHUB_WORKSPACE/protected/game.pck"
           export FORTRESSGD_KEYDOT_LOG="$RUNNER_TEMP/keydot.log"
           # The test checks the binary against the pinned sha256 before running it.
           python -m unittest -v tests.test_unpackers 2>&1 | tee "$RUNNER_TEMP/unpackers.log"

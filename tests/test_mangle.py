@@ -719,7 +719,7 @@ class MangleStaticChecks(unittest.TestCase):
         self.assertIn("FGDMangle.apply_project(FGDMangle.mangle_key(hex_secret))", export_gd)
         self.assertNotIn("apply_project(_mangle_secret_hash)", export_gd)
         self.assertIn("FORTRESSGD_CLI_EXPORT", export_gd)
-        self.assertIn('return "GDScript.FortressGD"', export_gd)
+        self.assertIn('const LATE_NAME := "GDScript.FortressGD"', export_gd)
         mangle_gd = (addon / "mangle.gd").read_text(encoding="utf-8")
         self.assertIn("fortressgd:keep", mangle_gd)
         self.assertIn("call", mangle_gd)
@@ -749,7 +749,7 @@ class MangleStaticChecks(unittest.TestCase):
         self.assertNotEqual("res://".rstrip("/") + "/" + "main.gd", "res://main.gd")
 
     def test_plugin_abort_refuses_artifact_after_pack(self) -> None:
-        """skip() after GDScript.FortressGD cannot un-pack bytecode; _export_end must."""
+        """An aborted export still writes a pack; _export_end must delete it."""
         addon = PKG / "plugin" / "addons" / "fortressgd"
         export_gd = (addon / "export_plugin.gd").read_text(encoding="utf-8")
         mangle_gd = (addon / "mangle.gd").read_text(encoding="utf-8")

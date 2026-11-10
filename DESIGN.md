@@ -86,6 +86,8 @@ If a change only helps out-of-scope attacks and increases maintenance, reject it
 Path: `fortressgd/plugin/addons/fortressgd/` in this repo; `addons/fortressgd/` once `fortressgd init` copies it into a project.  
 Godot: 4.6+ `EditorPlugin` + `EditorExportPlugin`.
 
+Godot runs the export hook only when `project.godot` lists the plugin under `[editor_plugins] enabled`, and the §6.3 forced excludes live in that hook. So `fortressgd init` adds `res://addons/fortressgd/plugin.cfg` to that list, keeping any other enabled plugins. `fortressgd export` refuses to run while it is missing, and `fortressgd doctor` warns about it.
+
 Responsibilities:
 
 - Read/write `.fortressgd.toml` (project root).
@@ -303,6 +305,8 @@ When production export is on, the export plugin **forces** these excludes unless
 - files named `*.fortressgd.map.json`
 - `*.pdb` (.NET debug symbols); `verify` also fails on a `*.pdb` next to the artifact or under its `data_*` folder
 
+Godot sorts export plugins by name and gives a file to the next plugin only while none has skipped or remapped it. Its GDScript plugin (`GDScript`) remaps every `*.gd` to bytecode, so FortressGD registers two instances. `FortressGD` sorts before it and skips every excluded path, except a script that only the `*.gd` rule matches, which goes on to become bytecode. `GDScript.FortressGD` sorts after it and skips any `*.gd` that is still text (Text export mode, or a script Godot could not tokenize).
+
 Excluding `*.cs` only keeps the source text out. A .NET game still ships its managed assembly, which decompiles to near-original C#; FortressGD does not obfuscate it, and `doctor` / `export` warn about this on .NET projects.
 
 If a C# project cannot run without `.cs` in the PCK on a given Godot version, `fortressgd doctor` must print that as a known limitation and refuse `exclude *.cs` rather than produce a broken game. Document the tested Godot versions where excluding `.cs` is safe.
@@ -397,7 +401,7 @@ Do not reimplement the full Godot packer in Python in v1.
 - Ed25519 signatures over the pack index when `[production].sign_packs = true`. Public key is data-only (`FGD_PACK_PUBKEY`); the private seed is derived from the project secret, which never ships, so no template or pack yields it.
   - Signed message: `"fortressgd.pack.sig.v1"` + the on-disk directory bytes from the directory offset to the end of the directory. For an encrypted directory that is the plaintext `u32 file_count` plus the FileAccessEncrypted blob (`md5[16]`, `u64 length`, `iv[16]`, ciphertext padded to 16 bytes). The 64-byte signature sits in the reserved header area at offset 40 (V3/V4).
   - The template verifies the signature before it registers any index entry, for plaintext and encrypted directories alike.
-  - **How a template learns signatures are required (decision, #11):** `templates build` with `sign_packs = true` passes `FGD_REQUIRE_SIGNATURE=1` into Docker; the generator writes `FGD_REQUIRE_PACK_SIGNATURE = 1` into `dialect.gen.h` (0 otherwise); `manifest.json` records `"require_signature"`; the filename gets `-sig` (§7.1). Such a template refuses a pack whose signature is missing, all-zero, or invalid. `-DFORTRESSGD_SIGN_PACKS` stays compiled into every template, so a template without the requirement still rejects an invalid non-zero signature. `fortressgd export` with `sign_packs = true` fails if only the non-`-sig` template is cached.
+  - **How a template learns signatures are required (decision, #11):** `templates build` with `sign_packs = true` passes `FGD_REQUIRE_SIGNATURE=1` into Docker; the generator writes `FGD_REQUIRE_PACK_SIGNATURE = 1` into `dialect.gen.h` (0 otherwise); `manifest.json` records `"require_signature"`; the filename gets `-sig` (§7.1). Such a template refuses a pack whose signature is missing, all-zero, or invalid. `FORTRESSGD_SIGN_PACKS` (passed as Godot's `cppdefines`) stays compiled into every template, so a template without the requirement still rejects an invalid non-zero signature. `fortressgd export` with `sign_packs = true` fails if only the non-`-sig` template is cached.
   - **Encrypted sparse bundles on 4.7.2 (decision, #11):** unsupported with `sign_packs`. Godot 4.7 stores the sparse-bundle directory salt at header offset 40, where the signature goes. The patched reader reads the salt there as upstream does and, when a signature is required, refuses to load such a pack; `fortressgd export` refuses to sign one. Windows and Linux exports are not sparse by default.
 - Nameless bytecode (`0003-nameless-bytecode.patch`): omit stock GDSC identifier/line tables from packed `.gdc`; runtime names live in an `FGDN` trailer. `fortressgd verify` fails if those debug tables are still present when `[production].nameless_bytecode = true`.
 

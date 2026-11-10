@@ -15,9 +15,9 @@ fortressgd init
 
 From a source checkout without installing, run `python3 /path/to/FortressGD/bin/fortressgd` in place of `fortressgd`.
 
-This writes `.fortressgd.toml` (commit it; it has no secret), suggests `.gitignore` entries, and copies `addons/fortressgd`.
+This writes `.fortressgd.toml` (commit it; it has no secret), suggests `.gitignore` entries, copies `addons/fortressgd`, and enables the **FortressGD** plugin in `project.godot`.
 
-Enable the **FortressGD** plugin in **Project → Project Settings → Plugins**.
+Keep the plugin enabled: Godot applies FortressGD's release filters only through it. If it is turned off in **Project → Project Settings → Plugins**, `fortressgd export` refuses to run and `fortressgd doctor` warns until you run `fortressgd init` again or re-enable it.
 
 ## 2. Mark a production export preset
 

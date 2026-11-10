@@ -8,6 +8,17 @@ const FGDConfig := preload("res://addons/fortressgd/config.gd")
 const FGDFilters := preload("res://addons/fortressgd/filters.gd")
 const FGDMangle := preload("res://addons/fortressgd/mangle.gd")
 
+# Godot sorts export plugins by name and stops at the first one that skips a file
+# or remaps it. Its GDScript plugin ("GDScript") remaps every *.gd to bytecode, so
+# a plugin sorted after it never sees a script at all.
+# EARLY_NAME sorts before it: it drops excluded paths before bytecode is made, and
+# owns the config, the mangler and the abort. LATE_NAME sorts after it and drops
+# any *.gd text Godot left as text (Text export mode, or a script it could not
+# tokenize).
+const EARLY_NAME := "FortressGD"
+const LATE_NAME := "GDScript.FortressGD"
+
+var _late: bool = false
 var _include: PackedStringArray = PackedStringArray()
 var _exclude: PackedStringArray = PackedStringArray()
 var _mangle_enabled: bool = false
@@ -19,11 +30,14 @@ var _mangle_export_path: String = ""
 var _mangle_secret_hash: String = ""
 
 
+func _init(late := false) -> void:
+	_late = late
+
+
 func _get_name() -> String:
-	# Sorted after Godot's built-in "GDScript" plugin so binary-token .gdc remap
-	# runs first. skip() on *.gd then only hits leftover text scripts.
-	# Mangling rewrites sources in _export_begin so that remap sees mangled text.
-	return "GDScript.FortressGD"
+	# Mangling rewrites sources in _export_begin, before any _export_file, so the
+	# GDScript plugin tokenizes mangled text.
+	return LATE_NAME if _late else EARLY_NAME
 
 
 func _export_begin(features: PackedStringArray, is_debug: bool, path: String, flags: int) -> void:
@@ -40,7 +54,7 @@ func _export_begin(features: PackedStringArray, is_debug: bool, path: String, fl
 	if not result.get("ok", false):
 		# Fail closed on production presets: exporting without the config would skip
 		# mangling and [filters] with no error. Other presets export as before.
-		if features.has(FGDFilters.production_feature_tag()):
+		if features.has(FGDFilters.production_feature_tag()) and not _late:
 			push_error("FortressGD: %s. Run: %s" % [str(result.get("error", "cannot load .fortressgd.toml")), str(result.get("next_command", "fortressgd doctor"))])
 			_mangle_abort = true
 		return
@@ -55,7 +69,7 @@ func _export_begin(features: PackedStringArray, is_debug: bool, path: String, fl
 		if typeof(exc) == TYPE_ARRAY:
 			for item in exc:
 				_exclude.append(str(item))
-	if not features.has(FGDFilters.production_feature_tag()):
+	if _late or not features.has(FGDFilters.production_feature_tag()):
 		return
 	var production: Variant = data.get("production", {})
 	if typeof(production) != TYPE_DICTIONARY:
@@ -90,18 +104,25 @@ func _export_file(path: String, type: String, features: PackedStringArray) -> vo
 		return
 	if not features.has(FGDFilters.production_feature_tag()):
 		return
-	if FGDFilters.should_skip_forced(path, _include, _exclude):
+	if _late:
+		# Only reached by a *.gd the GDScript plugin did not remap to bytecode.
+		if FGDFilters.should_skip_forced(path, _include, _exclude):
+			skip()
+		return
+	if FGDFilters.should_skip_before_bytecode(path, _include, _exclude):
 		skip()
 
 
 func _export_end() -> void:
+	if _late:
+		return
 	if _mangle_abort:
-		# skip() here is too late: GDScript.FortressGD runs after the built-in
-		# GDScript plugin, which has already add_file'd bytecode. Refuse the
+		# Every file was skipped, but Godot still writes the pack. Refuse the
 		# finished artifact (ExportNotifier destructor runs after save_pack).
+		# Godot 4 has no way for a plugin to set the export's exit code, so
+		# fortressgd export fails on the missing artifact instead.
 		push_error("FortressGD: refusing export artifact after mangle abort")
 		FGDMangle.refuse_export_artifact(_mangle_export_path)
-		OS.set_exit_code(1)
 		_mangle_abort = false
 		_mangle_applied = false
 		_mangle_backups = {}
