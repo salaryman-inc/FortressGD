@@ -76,29 +76,47 @@ def template_filename(
 
 
 EDITOR_PLATFORM = "linux"
+EDITOR_HEADER_NAME = "fortressgd_editor_dialect.h"
 
 
-def editor_filename(godot: str, arch: str, patchset: str, secrethash: str, *, key_epoch: int = 0) -> str:
-    """godot-<ver>-editor-linux-<arch>-fgd<patchset12>-<secrethash16>[-e<N>]
+def editor_header_path(patches_dir: Path | None = None) -> Path:
+    """The fixed dialect.gen.h of the shared export editor (DESIGN.md §18.5)."""
+    root = patches_root() if patches_dir is None else Path(patches_dir)
+    return root / "common" / EDITOR_HEADER_NAME
 
-    The FortressGD-patched headless editor that writes dialect packs. It runs on
-    the export machine only and is never shipped.
+
+def editor_header_id(patches_dir: Path | None = None) -> str:
+    """8 hex of the editor header's sha256; entrypoint.sh computes the same."""
+    return hashlib.sha256(editor_header_path(patches_dir).read_bytes()).hexdigest()[:8]
+
+
+def editor_filename(godot: str, arch: str, patchset: str, header_id: str) -> str:
+    """godot-<ver>-editor-linux-<arch>-fgd<patchset12>-p<header8>
+
+    The shared FortressGD export editor for one Godot tag. It holds nothing
+    project-specific: `fortressgd export` passes the dialect in
+    FORTRESSGD_PACK_PARAMS. It runs on the export machine only and is never
+    shipped. The header id is in the name because the patchset id does not cover
+    the editor header.
     """
-    return "godot-{0}-editor-{1}-{2}-fgd{3}-{4}{5}".format(
-        godot, EDITOR_PLATFORM, arch, patchset, secrethash, "-e{0}".format(key_epoch) if key_epoch else ""
-    )
+    return "godot-{0}-editor-{1}-{2}-fgd{3}-p{4}".format(godot, EDITOR_PLATFORM, arch, patchset, header_id)
+
+
+def editor_build_command(godot: str) -> str:
+    return "fortressgd templates build --editor --godot {0}".format(godot)
 
 
 def find_cached_editor(
     *,
     godot: str,
-    patchset: str,
-    secrethash: str,
     arch: str = DEFAULT_ARCH,
     cache_dir: str | Path | None = None,
-    key_epoch: int = 0,
+    patches_dir: Path | None = None,
 ) -> Path | None:
-    path = templates_cache_dir(cache_dir) / editor_filename(godot, arch, patchset, secrethash, key_epoch=key_epoch)
+    """The cached shared editor for this tag and FortressGD version, if built."""
+    tag = concrete_godot_tag(godot)
+    name = editor_filename(tag, arch, patchset_for_tag(tag, patches_dir), editor_header_id(patches_dir))
+    path = templates_cache_dir(cache_dir) / name
     return path if path.is_file() else None
 
 
@@ -338,43 +356,23 @@ def build_templates(
         ensure_docker_image()
         produced = []
         for platform in plats:
-            run = subprocess.run(
-                [
-                    "docker",
-                    "run",
-                    "--rm",
-                    "-e",
-                    "GODOT_VERSION={0}".format(godot_git_tag(tag)),
-                    "-e",
-                    "FGD_GODOT={0}".format(tag),
-                    "-e",
-                    "FGD_PLATFORM={0}".format(platform),
-                    "-e",
-                    "FGD_ARCH={0}".format(DEFAULT_ARCH),
-                    "-e",
-                    "FGD_DIALECT_ID={0}".format(did),
-                    "-e",
-                    "FGD_PATCHSET={0}".format(pset),
-                    "-e",
-                    "FGD_SECRET_HASH={0}".format(secrethash),
-                    "-e",
-                    "FGD_KEY_EPOCH={0}".format(int(key_epoch)),
-                    "-e",
-                    "FORTRESSGD_SKIP_SCONS={0}".format("1" if skip else "0"),
-                    "-e",
-                    "FGD_DIALECT={0}".format("1" if dialect else "0"),
-                    "-e",
-                    "FGD_REQUIRE_SIGNATURE={0}".format("1" if require_signature else "0"),
-                    "-v",
-                    "{0}:/patches:ro".format(tag_dir),
-                    "-v",
-                    "{0}:/src/dialect.gen.h:ro".format(header),
-                    "-v",
-                    "{0}:/out".format(out_dir),
-                    docker_image(),
-                ],
-                capture_output=True,
-                text=True,
+            run = _run_build_container(
+                {
+                    "GODOT_VERSION": godot_git_tag(tag),
+                    "FGD_GODOT": tag,
+                    "FGD_PLATFORM": platform,
+                    "FGD_ARCH": DEFAULT_ARCH,
+                    "FGD_DIALECT_ID": did,
+                    "FGD_PATCHSET": pset,
+                    "FGD_SECRET_HASH": secrethash,
+                    "FGD_KEY_EPOCH": str(int(key_epoch)),
+                    "FORTRESSGD_SKIP_SCONS": "1" if skip else "0",
+                    "FGD_DIALECT": "1" if dialect else "0",
+                    "FGD_REQUIRE_SIGNATURE": "1" if require_signature else "0",
+                },
+                patches=tag_dir,
+                header=header,
+                out_dir=out_dir,
             )
             if run.returncode != 0:
                 detail = redact((run.stderr or run.stdout or "").strip(), needles)
@@ -417,6 +415,91 @@ def build_templates(
             _assert_manifest_safe(dest_man, secrethash, require_signature, key_epoch)
             produced.append(dest_bin)
         return produced
+
+
+def _run_build_container(
+    env: dict[str, str], *, patches: Path, header: Path, out_dir: Path
+) -> subprocess.CompletedProcess:
+    """Run entrypoint.sh in the build image with the patches and header read-only."""
+    cmd = ["docker", "run", "--rm"]
+    for key, value in env.items():
+        cmd += ["-e", "{0}={1}".format(key, value)]
+    cmd += [
+        "-v",
+        "{0}:/patches:ro".format(patches),
+        "-v",
+        "{0}:/src/dialect.gen.h:ro".format(header),
+        "-v",
+        "{0}:/out".format(out_dir),
+        docker_image(),
+    ]
+    return subprocess.run(cmd, capture_output=True, text=True)
+
+
+def build_editor(
+    *,
+    godot: str,
+    environ: dict[str, str] | None = None,
+    cache_dir: str | Path | None = None,
+    patches_dir: Path | None = None,
+    skip_scons: bool = False,
+) -> Path:
+    """
+    Build the shared export editor for one Godot tag (DESIGN.md §18.5) and cache it.
+
+    It needs no project secret: the container gets the fixed editor header, and
+    `fortressgd export` passes each project's dialect at export time.
+    """
+    env = os.environ if environ is None else environ
+    tag = concrete_godot_tag(godot)
+    root = patches_root() if patches_dir is None else Path(patches_dir)
+    tag_dir = patch_dir_for_tag(tag, root)
+    require_series(tag_dir)
+    pset = patchset_id(patchset_inputs(tag_dir))
+    header = editor_header_path(root)
+    if not header.is_file():
+        raise ToolError("missing {0}".format(header.as_posix()), NEXT_TEMPLATES)
+    name = editor_filename(tag, DEFAULT_ARCH, pset, editor_header_id(root))
+    dest_root = templates_cache_dir(cache_dir)
+    dest_root.mkdir(parents=True, exist_ok=True)
+    skip = skip_scons or env.get("FORTRESSGD_SKIP_SCONS") == "1"
+    ensure_docker_image()
+    with tempfile.TemporaryDirectory(prefix="fortressgd-editor-") as tmp:
+        out_dir = Path(tmp) / "out"
+        out_dir.mkdir()
+        run = _run_build_container(
+            {
+                "GODOT_VERSION": godot_git_tag(tag),
+                "FGD_GODOT": tag,
+                "FGD_PLATFORM": EDITOR_PLATFORM,
+                "FGD_ARCH": DEFAULT_ARCH,
+                "FGD_PATCHSET": pset,
+                "FGD_TARGET": "editor",
+                "FORTRESSGD_SKIP_SCONS": "1" if skip else "0",
+            },
+            patches=tag_dir,
+            header=header,
+            out_dir=out_dir,
+        )
+        if run.returncode != 0:
+            raise ToolError(
+                "editor build failed: {0}".format((run.stderr or run.stdout or "").strip()),
+                editor_build_command(tag),
+            )
+        src_bin = out_dir / name
+        src_man = out_dir / (name + ".manifest.json")
+        if not src_bin.is_file() or not src_man.is_file():
+            raise ToolError(
+                "editor build did not emit {0} and its manifest".format(name), editor_build_command(tag)
+            )
+        manifest = json.loads(src_man.read_text(encoding="utf-8"))
+        if manifest.get("target") != "editor" or manifest.get("patchset_id") != pset:
+            raise ToolError("editor manifest does not match {0}".format(name), editor_build_command(tag))
+        dest_bin = dest_root / name
+        shutil.copy2(src_bin, dest_bin)
+        shutil.copy2(src_man, dest_root / (name + ".manifest.json"))
+        dest_bin.chmod(dest_bin.stat().st_mode | 0o111)
+        return dest_bin
 
 
 def _assert_manifest_safe(

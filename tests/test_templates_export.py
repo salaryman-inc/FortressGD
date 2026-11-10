@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 
 from fortressgd.core.kdf import aes_key_hex, secret_hash
+from fortressgd.core.pack_dialect import dialect_params_for_secret, format_pack_params
 from fortressgd.core.secret import read_secret_file
 from fortressgd.core.templates import (
     patchset_for_tag,
@@ -52,6 +53,7 @@ def _write_godot_stub_bin(directory: Path, log_path: Path) -> Path:
         "    'argv': sys.argv,\n"
         "    'GODOT_SCRIPT_ENCRYPTION_KEY': os.environ.get('GODOT_SCRIPT_ENCRYPTION_KEY'),\n"
         "    'FORTRESSGD_SECRET': os.environ.get('FORTRESSGD_SECRET'),\n"
+        "    'FORTRESSGD_PACK_PARAMS': os.environ.get('FORTRESSGD_PACK_PARAMS'),\n"
         "    'presets': (Path(sys.argv[sys.argv.index('--path') + 1]) / 'export_presets.cfg')"
         ".read_text(encoding='utf-8') if '--path' in sys.argv else None,\n"
         "}}\n"
@@ -251,6 +253,8 @@ class TemplatesExportCliTests(unittest.TestCase):
                 self.assertNotIn("--export-release", data["argv"])
                 self.assertEqual(data["GODOT_SCRIPT_ENCRYPTION_KEY"], derived)
                 self.assertIsNone(data["FORTRESSGD_SECRET"])
+                magic, perm, _key = dialect_params_for_secret(secret, "4.6.2")
+                self.assertEqual(data["FORTRESSGD_PACK_PARAMS"], format_pack_params(magic, perm))
                 argv_join = " ".join(data["argv"])
                 self.assertNotIn("pack.py", argv_join)
                 self.assertNotIn("python -m", argv_join)
@@ -260,6 +264,48 @@ class TemplatesExportCliTests(unittest.TestCase):
             self.assertNotIn(secret_hex, presets)
             self.assertEqual(presets, PRESETS)
 
+
+    def test_stock_export_never_passes_pack_params(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            self._set_dialect(root, False)
+            proc = self._export_with_stub(root, FORTRESSGD_PACK_PARAMS="1:9f3c1a77:2013")
+            self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
+            data = json.loads((root / "godot-env.json").read_text(encoding="utf-8"))
+            self.assertIsNone(data["FORTRESSGD_PACK_PARAMS"])
+
+    def test_dialect_export_fails_when_the_editor_writes_a_stock_pack(self) -> None:
+        # An official editor ignores FORTRESSGD_PACK_PARAMS and writes GDPC, which
+        # the dialect template could not open.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            self._set_dialect(root, True)
+            self._set_verify_on_export(root, False)
+            proc = self._export_with_stub(root, FGD_STUB_IGNORE_PARAMS="1")
+            self.assertEqual(proc.returncode, 1, proc.stderr + proc.stdout)
+            self.assertIn("did not write a dialect pack", proc.stderr)
+            self.assertIn("fortressgd templates build --editor --godot 4.6.2", proc.stderr)
+
+    def test_dialect_export_still_accepts_a_project_built_editor(self) -> None:
+        # 0.1 users built a patched editor with their own dialect.gen.h and pointed
+        # FORTRESSGD_GODOT at it. It ignores the variable and writes the dialect.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            self._set_dialect(root, True)
+            proc = self._export_with_stub(root, FGD_STUB_BAKED_DIALECT="1")
+            self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
+
+    def test_dialect_export_prefers_fortressgd_editor_over_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            self._set_dialect(root, True)
+            editor_log = root / "editor-env.json"
+            editor = _write_godot_stub_bin(root / "editor-bin", editor_log)
+            proc = self._export_with_stub(root, FORTRESSGD_EDITOR=str(editor))
+            self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
+            # Each stub logs to its own file: only the FORTRESSGD_EDITOR one ran.
+            self.assertTrue(editor_log.is_file())
+            self.assertFalse((root / "godot-env.json").exists())
 
     def _export_with_stub(self, root: Path, *, require_signature: bool = False, **stub_env: str):
         """Cache a stub template, then run `fortressgd export` with a stub godot."""

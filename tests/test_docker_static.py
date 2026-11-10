@@ -104,7 +104,7 @@ class DockerStaticTests(unittest.TestCase):
         self.assertIn('"require_signature": require_sig == "1"', entry)
         self.assertIn("FGD_REQUIRE_PACK_SIGNATURE = 1;", entry)
         templates = (PKG / "core" / "templates.py").read_text(encoding="utf-8")
-        self.assertIn('"FGD_REQUIRE_SIGNATURE={0}"', templates)
+        self.assertIn('"FGD_REQUIRE_SIGNATURE": "1" if require_signature else "0"', templates)
         action = (ROOT / "actions" / "build-templates" / "action.yml").read_text(encoding="utf-8")
         self.assertIn("--require-signature", action)
         self.assertIn("'-sig'", action)
@@ -125,7 +125,7 @@ class DockerStaticTests(unittest.TestCase):
         code = "\n".join(line for line in entry.splitlines() if not line.lstrip().startswith("#"))
         self.assertNotIn("CCFLAGS=", code)
         self.assertNotIn("ccflags=", code)
-        self.assertEqual(code.count('cppdefines="$FGD_DEFINES"'), 2)  # linux and windows
+        self.assertEqual(code.count('cppdefines="$FGD_DEFINES"'), 3)  # linux, windows and the editor
         for define in ("FORTRESSGD_OPCODE_MAP", "FORTRESSGD_NAMELESS", "FORTRESSGD_SIGN_PACKS"):
             self.assertIn(define, code)
         self.assertIn('FGD_DEFINES="$FGD_DEFINES FORTRESSGD_DIALECT"', code)

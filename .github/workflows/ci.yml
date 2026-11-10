@@ -96,7 +96,8 @@ jobs:
     # into the plain key; this checks g++, clang++ and MinGW at -O2 and -O3,
     # runs the shipped key reassembly, and checks the header holds nothing the
     # project secret or signing seed can be recovered from. It also checks the
-    # engine's Ed25519 pack-signature verifier against the Python signer.
+    # engine's Ed25519 pack-signature verifier against the Python signer, and the
+    # shared export editor's FORTRESSGD_PACK_PARAMS reader against the CLI.
     name: Template key material (g++, clang++, MinGW)
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -110,11 +111,11 @@ jobs:
         with:
           python-version: "3.12"
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends g++ clang g++-mingw-w64-x86-64
-      - name: Compile the shard reassembly and the signature verifier
+      - name: Compile the shard reassembly, the signature verifier and the editor header
         env:
           # The test fails if any of these is missing instead of skipping it.
           FORTRESSGD_REQUIRE_COMPILERS: "g++,clang++,x86_64-w64-mingw32-g++"
-        run: python -m unittest -v tests.test_generator.TemplateKeyMaterialTests tests.test_engine_ed25519
+        run: python -m unittest -v tests.test_generator.TemplateKeyMaterialTests tests.test_engine_ed25519 tests.test_shared_editor.EditorHeaderTests
 
   package:
     name: Wheel and sdist install
@@ -157,6 +158,7 @@ jobs:
           for tag in SUPPORTED_GODOT:
               assert (patches_root() / tag / "series").is_file(), tag
           assert (patches_root() / "common" / "fortressgd_kdf.cpp").is_file()
+          assert (patches_root() / "common" / "fortressgd_editor_dialect.h").is_file()
           assert (docker_dir() / "Dockerfile.templates").is_file()
           assert (docker_dir() / "entrypoint.sh").is_file()
           assert (plugin_source_dir() / "plugin.cfg").is_file()

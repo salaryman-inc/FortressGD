@@ -330,6 +330,14 @@ godot-4.6.2-template_release-windows-x86_64-fgd3a1c0b9d2e4f-9f3c1a77b0e2d145-sig
 
 The `-sig` variant is built when `[production].sign_packs = true` and refuses packs without a valid index signature (§8.4). The two variants never share a cache entry.
 
+The shared export editor (§8.3) has no secret hash, epoch or `-sig` part, because it holds nothing project-specific:
+
+```
+godot-<ver>-editor-linux-<arch>-fgd<patchset12>-p<editorheader8>
+```
+
+`<editorheader8>` is the first 8 hex of the sha256 of `patches/common/fortressgd_editor_dialect.h`, which the patchset id does not cover.
+
 ### 7.2 Build
 
 Docker image `Dockerfile.templates`:
@@ -388,10 +396,11 @@ Minimal hooks in `core/io/file_access_pack.cpp` (and editor packer counterpart):
 - Index field order from `FGD_INDEX_PERM`.
 - Stock official builds remain 100% compatible. Dialect exists only in FortressGD templates **and** in the packer used at export.
 
-Export packer:
+Export packer: the CLI drives the **shared FortressGD export editor** with `--export-pack`, on the export machine only. Designers do not use it.
 
-- Preferred: CLI drives a **FortressGD-built editor-headless binary** (`target=editor` with the same patches) only on the export machine. Designers do not use it.
-- Alternative v1 acceptable: CLI writes the PCK itself by shelling to that headless binary with `--export-pack`.
+- `fortressgd templates build --editor` builds it in Docker once per Godot tag (`target=editor`, the same series, Linux only, no LTO). Instead of a generated header it gets the fixed `patches/common/fortressgd_editor_dialect.h`, and it is compiled with `FORTRESSGD_DIALECT` only: the editor writes packs, and never runs the game's bytecode or checks pack signatures.
+- `fortressgd export` passes the project's magic and index permutation in `FORTRESSGD_PACK_PARAMS=1:<magic, 8 lowercase hex>:<permutation, 4 digits>` for that one process, and the AES key in `GODOT_SCRIPT_ENCRYPTION_KEY` as for a stock export (§18.5). Unset, the editor reads and writes stock packs. Malformed, it exits with status 2 at startup.
+- The CLI looks for the editor in `FORTRESSGD_EDITOR`, then the cache (on Linux hosts), then the usual Godot lookup, which still finds a patched editor a user built for one project. It fails the export if the pack it gets back is not in the project's dialect, so an official editor cannot produce a stock pack for a dialect template.
 
 Do not reimplement the full Godot packer in Python in v1.
 
@@ -590,7 +599,7 @@ If that path needs more than the commands above plus installing Docker and the p
 
 ## 18. Planned: per-project code (0.2, not implemented)
 
-Status: accepted design, not implemented. Nothing in §1–§17 changes until the work below lands; each part updates the sections it touches in the same change (§15 rule 7). `THREAT_MODEL.md` carries the matching goal under "Planned for 0.2".
+Status: accepted design. Step 1 of §18.8 (the shared export editor, §18.5) is implemented; the rest is not. Nothing else in §1–§17 changes until the work below lands; each part updates the sections it touches in the same change (§15 rule 7). `THREAT_MODEL.md` carries the matching goal under "Planned for 0.2".
 
 ### 18.1 Why
 
@@ -673,13 +682,16 @@ Naming and cache: template names and the CI cache key gain the generator version
 
 ### 18.5 Export side
 
+Status: implemented (§8.3), except that the editor is built by `templates build --editor` and cached; it moves into the build image with §18.4.
+
 The machine that exports is trusted: it already holds the secret. So the export side does not need per-build code.
 
 - The patched headless editor (§8.3) is built **once** per Godot tag, without generated code, and ships in the build image.
-- At export, the CLI passes the per-project values to it in an environment variable for the length of one export, as it does today with `GODOT_SCRIPT_ENCRYPTION_KEY`. That covers magic, index permutation, opcode tables and the AES key. They are never written to disk, never passed as arguments, and never logged.
+- At export, the CLI passes the per-project values to it in environment variables for the length of one export: `FORTRESSGD_PACK_PARAMS` (magic and index permutation) and `GODOT_SCRIPT_ENCRYPTION_KEY` (the AES key). They are never written to disk, never passed as arguments, and never logged.
+- The editor needs no opcode tables. A pack carries GDScript as tokens, and the template compiles them to bytecode with its own table, so the editor's bytecode never reaches a pack.
 - Pack signing stays in the CLI (`fortressgd/core/pack_sign.py`). The editor never sees the signing seed.
 
-That removes the per-project editor build, which the dialect path needs today.
+That removes the per-project editor build, which the dialect path needed in 0.1.
 
 ### 18.6 Compatibility
 
@@ -705,7 +717,7 @@ These tests show that builds differ. They cannot show that a static extractor fo
 
 Each step is a separate PR with its own tests:
 
-1. Shared headless editor reading values from the environment (§18.5).
+1. Shared headless editor reading values from the environment (§18.5). Done.
 2. Generator v2, its interpreter, `fortressgd_gen_api.h`, and patches switched to the API (§18.3), still built from source.
 3. Build images with a precompiled tree, plus the relink path and the LTO measurement (§18.4).
 4. Release workflow: tag ruleset, image publishing, provenance, and digest pinning in the CLI.

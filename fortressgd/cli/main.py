@@ -28,6 +28,7 @@ from fortressgd.core.secret import (
 )
 from fortressgd.core.templates import (
     SUPPORTED_PLATFORMS,
+    build_editor,
     build_templates,
     list_cached_templates,
     resolve_cache_dir_from_config,
@@ -108,6 +109,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="pack key epoch to build for (default: toml production.key_epoch, else 0)",
+    )
+    build.add_argument(
+        "--editor",
+        action="store_true",
+        help="build only the shared headless editor that dialect exports use (linux; needs no secret)",
     )
     tmpl_sub.add_parser("list", help="list cached templates")
 
@@ -213,6 +219,18 @@ def cmd_templates_build(args: argparse.Namespace) -> int:
     godot = args.godot or (str(cfg["godot"]) if cfg else None)
     if not godot:
         raise UserError("godot version required (--godot or .fortressgd.toml)", NEXT_HELP)
+    cache = resolve_cache_dir_from_config(cfg) if cfg else None
+    patches_dir = Path(args.patches_dir) if args.patches_dir else None
+    if args.editor:
+        if args.platforms or args.require_signature or args.key_epoch is not None:
+            raise UserError(
+                "--editor builds only the shared editor; drop --platform, --require-signature and --key-epoch",
+                NEXT_HELP,
+            )
+        editor = build_editor(godot=godot, environ=os.environ, cache_dir=cache, patches_dir=patches_dir)
+        sys.stdout.write(editor.name + "\n")
+        sys.stdout.write("ok: shared editor\n")
+        return 0
     platforms = list(args.platforms or [])
     if not platforms:
         listed = (cfg.get("platforms") or {}).get("build") if cfg else None
@@ -220,8 +238,6 @@ def cmd_templates_build(args: argparse.Namespace) -> int:
             platforms = [str(p) for p in listed]
         else:
             platforms = list(SUPPORTED_PLATFORMS)
-    cache = resolve_cache_dir_from_config(cfg) if cfg else None
-    patches_dir = Path(args.patches_dir) if args.patches_dir else None
     dialect = True
     require_signature = bool(args.require_signature)
     if cfg:
