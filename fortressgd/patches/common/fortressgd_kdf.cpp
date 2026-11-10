@@ -1,7 +1,7 @@
 /**************************************************************************/
 /*  fortressgd_kdf.cpp                                                    */
 /**************************************************************************/
-/* FortressGD pack key: reassembled from masked shards (DESIGN.md §5.2).   */
+/* FortressGD pack key: decoded by generator v2's fgd_derive_key (§18.3).   */
 /**************************************************************************/
 
 #include "fortressgd_kdf.h"
@@ -15,17 +15,13 @@ void fortressgd_wipe(void *p, size_t n) {
 	}
 }
 
-/* FGD_KEY_SHARDS ^ FGD_KEY_MASKS is the pack AES key, FGD-KDF-1(secret, salt),
- * which fortressgd computes when it writes dialect.gen.h. The project secret is
- * never compiled in, so nothing in the binary yields the secret or the
- * pack-signing seed. Both arrays are volatile so the compiler cannot fold the
- * XOR into a stored copy of the key. */
+/* The pack AES key, FGD-KDF-1(secret, salt), is decoded by fgd_derive_key() from
+ * the per-build generated code in fortressgd_gen.cpp (generator v2). The project
+ * secret is never compiled in, so nothing in the binary yields the secret or the
+ * pack-signing seed. The editor build compiles in no key, so its fgd_derive_key()
+ * returns zeros. */
 void fortressgd_derive_key(uint8_t r_key[32]) {
-	for (int shard = 0; shard < 4; shard++) {
-		for (int i = 0; i < 8; i++) {
-			r_key[shard * 8 + i] = FGD_KEY_SHARDS[shard][i] ^ FGD_KEY_MASKS[shard][i];
-		}
-	}
+	fgd_derive_key(r_key);
 }
 
 static String fortressgd_decode_msg(const uint8_t *p_enc, size_t p_len) {

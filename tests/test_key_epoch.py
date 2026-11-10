@@ -24,8 +24,8 @@ from fortressgd.generator.dialect import (
     derive_index_perm,
     derive_pack_magic,
     dialect_material,
-    write_dialect_header,
 )
+from fortressgd.generator.generate import render_gen_cpp
 from fortressgd.generator.opcode_map import opcode_map
 from tests.gdpc_fixture import make_gdpc
 from tests.support import PKG, run_fortressgd, seed_mini_godot_tree, write_godot_stub
@@ -121,8 +121,11 @@ class KeyEpochDerivationTests(unittest.TestCase):
 
 class KeyEpochEntrypointTests(unittest.TestCase):
     def _env(self, tmp: Path, epoch: str) -> tuple[dict[str, str], Path, Path]:
-        header = tmp / "dialect.gen.h"
-        write_dialect_header(header, SECRET, "4.6.2", key_epoch=int(epoch) if epoch.isdigit() else 0)
+        gen_cpp = tmp / "fortressgd_gen.cpp"
+        gen_cpp.write_text(
+            render_gen_cpp(SECRET, "4.6.2", key_epoch=int(epoch) if epoch.isdigit() else 0),
+            encoding="utf-8",
+        )
         out_dir = tmp / "out"
         out_dir.mkdir()
         godot_src = seed_mini_godot_tree("4.6.2", tmp / "godot")
@@ -132,7 +135,8 @@ class KeyEpochEntrypointTests(unittest.TestCase):
             "FGD_ARCH": "x86_64", "FGD_DIALECT_ID": "d" * 16, "FGD_PATCHSET": patchset_for_tag("4.6.2"),
             "FGD_SECRET_HASH": secret_hash(SECRET), "FORTRESSGD_SKIP_SCONS": "1", "FGD_DIALECT": "0",
             "FGD_KEY_EPOCH": epoch, "PATCHES_DIR": str(PKG / "patches" / "4.6.2"),
-            "DIALECT_HEADER": str(header), "OUT_DIR": str(out_dir), "GODOT_SRC": str(godot_src),
+            "FORTRESSGD_GEN_CPP": str(gen_cpp), "FORTRESSGD_COMMON": str(PKG / "patches" / "common"),
+            "OUT_DIR": str(out_dir), "GODOT_SRC": str(godot_src),
             "GIT_TERMINAL_PROMPT": "0",
         })
         return env, out_dir, godot_src

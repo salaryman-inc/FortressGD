@@ -27,6 +27,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define FORTRESSGD_PACK_PARAMS_ENV "FORTRESSGD_PACK_PARAMS"
 #define FORTRESSGD_STOCK_PACK_MAGIC 0x43504447u
@@ -121,13 +122,18 @@ inline const FortressgdPackParams &fortressgd_pack_params() {
 
 /* No pack key is compiled in. The editor's own pack reader gets the zero key, as
  * a stock editor built without SCRIPT_AES256_ENCRYPTION_KEY does; exporting
- * never reads an encrypted pack. */
-static const volatile uint8_t FGD_KEY_MASKS[4][8] = {};
-static const volatile uint8_t FGD_KEY_SHARDS[4][8] = {};
+ * never reads an encrypted pack. fortressgd_kdf.cpp (patch 0001) calls this in
+ * both builds; the template build defines it in the generated fortressgd_gen.cpp
+ * (generator v2, §18.3). */
+inline void fgd_derive_key(uint8_t r_key[32]) {
+	memset(r_key, 0, 32);
+}
 
 /* The editor is built without FORTRESSGD_SIGN_PACKS; `fortressgd export` signs
  * packs itself. These only satisfy the patches that name them. */
 static const uint8_t FGD_PACK_PUBKEY[32] = {};
-static const uint8_t FGD_REQUIRE_PACK_SIGNATURE = 0;
+#ifndef FGD_REQUIRE_PACK_SIGNATURE
+#define FGD_REQUIRE_PACK_SIGNATURE 0
+#endif
 
 #endif /* FORTRESSGD_DIALECT_GEN_H */

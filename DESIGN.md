@@ -720,7 +720,7 @@ These tests show that builds differ. They cannot show that a static extractor fo
 Each step is a separate PR with its own tests:
 
 1. Shared headless editor reading values from the environment (§18.5). Done.
-2. Generator v2, its interpreter, `fortressgd_gen_api.h`, and patches switched to the API (§18.3), still built from source.
+2. Generator v2, its interpreter, and patches switched to the generated header (§18.3), still built from source. Done.
 3. Build images with a precompiled tree, plus the relink path and the LTO measurement (§18.4).
 4. Release workflow: tag ruleset, image publishing, provenance, and digest pinning in the CLI.
 5. Cross-build e2e and docs: README, `THREAT_MODEL.md` (removing "planned"), `docs/ci.md`.

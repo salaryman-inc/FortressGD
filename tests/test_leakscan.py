@@ -48,12 +48,11 @@ if log:
     Path(log).write_text("\\n".join(args), encoding="utf-8")
 # The container gets dialect.gen.h and the public secret_hash, never the secret.
 # The worst a build can leak is the masked pack key, folded back into plain form.
-import re
-header = Path(vols["/src/dialect.gen.h"]).read_text()
-def array(name):
-    body = re.search(name + r"\\[4\\]\\[8\\] = \\{{(.*?)\\}};", header, re.S).group(1)
-    return bytes(int(v, 16) for v in re.findall(r"0x([0-9a-f]{{2}})", body))
-key = bytes(a ^ b for a, b in zip(array("FGD_KEY_SHARDS"), array("FGD_KEY_MASKS")))
+# The real secret never reaches the container. The leak guard must catch the
+# pack key in build output however it appears, so the test injects the key a
+# leaking build would emit (generator v2 encodes it in the header, not as the
+# plain arrays a scraper could read here).
+key = bytes.fromhex(os.environ.get("FAKE_DOCKER_LEAK_KEY", ""))
 mode = os.environ.get("FAKE_DOCKER_LEAK", "")
 if mode == "stderr":
     sys.stderr.write("scons: debug FGD_KEY=" + key.hex() + "\\n")
@@ -155,6 +154,9 @@ class TemplatesBuildLeakGuardTests(unittest.TestCase):
             "PATH": str(bindir) + os.pathsep + os.environ.get("PATH", ""),
             "FAKE_DOCKER_LEAK": mode,
             "FAKE_DOCKER_ARGS": str(self.docker_args),
+            "FAKE_DOCKER_LEAK_KEY": dialect_key_for_secret(
+                secret_bytes_from_hex(hex_secret), "4.6.2"
+            ).hex(),
         }
         cache = tmp / "cache"
         with mock.patch.dict(os.environ, env):

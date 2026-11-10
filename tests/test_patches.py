@@ -77,11 +77,14 @@ class PatchTests(unittest.TestCase):
                 self.assertNotIn("memcpy(key.ptrw(), script_encryption_key, 32)", patched)
                 self.assertNotIn("key.write[i] = script_encryption_key[i]", patched)
                 self.assertIn("fortressgd_wipe", patched)
-                # The template reassembles the pack key from masked shards; it never
-                # holds the project secret, so there is no runtime KDF over it.
-                self.assertIn("FGD_KEY_SHARDS", kdf)
-                self.assertIn("FGD_KEY_MASKS", kdf)
-                for gone in ("FGD_SHARDS", "FGD_SHARD_MASKS", "FGD_DIALECT_SALT", "hkdf", "secret["):
+                # The template decodes the pack key with the per-build generated
+                # fgd_derive_key() (generator v2); it never holds the project
+                # secret, the salt or the v1 masked shards, and runs no KDF.
+                self.assertIn("fgd_derive_key", kdf)
+                for gone in (
+                    "FGD_KEY_SHARDS", "FGD_KEY_MASKS", "FGD_SHARDS", "FGD_SHARD_MASKS",
+                    "FGD_DIALECT_SALT", "hkdf", "secret[",
+                ):
                     self.assertNotIn(gone, kdf)
                 for blob in (header, patched, packer, exporter):
                     self.assertIn("FORTRESSGD_DIALECT", blob)
