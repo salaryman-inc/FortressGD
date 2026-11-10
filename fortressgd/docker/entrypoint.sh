@@ -33,6 +33,9 @@ FGD_REQUIRE_SIGNATURE="${FGD_REQUIRE_SIGNATURE:-0}"
 # [production].key_epoch: the pack key in dialect.gen.h is for this epoch; non-zero
 # epochs get a -e<N> suffix so each release line has its own cached template.
 FGD_KEY_EPOCH="${FGD_KEY_EPOCH:-0}"
+# Generator version (fortressgd/generator/codeseed.py CODEGEN_VERSION); template
+# names carry it as -g<N> so generators never share a cached template.
+FGD_GENERATOR="${FGD_GENERATOR:-2}"
 FGD_TARGET="${FGD_TARGET:-template_release}"
 # The fixed editor header defines this; a generated header never does.
 EDITOR_HEADER_MARK="FORTRESSGD_PACK_PARAMS_ENV"
@@ -80,6 +83,7 @@ else
         || err "a template needs the generated fortressgd_gen.cpp, not the editor header"
 fi
 printf '%s\n' "$FGD_KEY_EPOCH" | grep -Eq '^(0|[1-9][0-9]{0,9})$' || err "FGD_KEY_EPOCH must be a non-negative integer"
+printf '%s\n' "$FGD_GENERATOR" | grep -Eq '^[1-9][0-9]{0,3}$' || err "FGD_GENERATOR must be a positive integer"
 mkdir -p "$OUT_DIR"
 
 SERIES_FILES="$(grep -v '^[[:space:]]*#' "$PATCHES_DIR/series" 2>/dev/null | grep -v '^[[:space:]]*$' || true)"
@@ -119,7 +123,7 @@ if [ "$FGD_TARGET" = "editor" ]; then
     HEADER_ID="$(python3 -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest()[:8])' "$HEADER_SRC")"
     NAME="godot-${FGD_GODOT}-editor-${FGD_PLATFORM}-${FGD_ARCH}-fgd${PATCHSET_ID}-p${HEADER_ID}"
 else
-    NAME="godot-${FGD_GODOT}-template_release-${FGD_PLATFORM}-${FGD_ARCH}-fgd${PATCHSET_ID}-${SECRET_HASH}"
+    NAME="godot-${FGD_GODOT}-template_release-${FGD_PLATFORM}-${FGD_ARCH}-fgd${PATCHSET_ID}-${SECRET_HASH}-g${FGD_GENERATOR}"
 fi
 if [ "$FGD_TARGET" != "editor" ] && [ "$FGD_KEY_EPOCH" != "0" ]; then
     NAME="${NAME}-e${FGD_KEY_EPOCH}"
@@ -185,9 +189,9 @@ write_manifest() {
         write_editor_manifest
         return
     fi
-    python3 - "$OUT_DIR/$NAME.manifest.json" "$FGD_GODOT" "$PATCHSET_ID" "$SECRET_HASH" "$FGD_PLATFORM" "$FGD_ARCH" "$DIALECT_ID" "$SKIP_SCONS" "$FGD_REQUIRE_SIGNATURE" "$FGD_KEY_EPOCH" <<'PY'
+    python3 - "$OUT_DIR/$NAME.manifest.json" "$FGD_GODOT" "$PATCHSET_ID" "$SECRET_HASH" "$FGD_PLATFORM" "$FGD_ARCH" "$DIALECT_ID" "$SKIP_SCONS" "$FGD_REQUIRE_SIGNATURE" "$FGD_KEY_EPOCH" "$FGD_GENERATOR" <<'PY'
 import json, sys
-path, godot, patchset, secrethash, platform, arch, dialect, skip, require_sig, key_epoch = sys.argv[1:11]
+path, godot, patchset, secrethash, platform, arch, dialect, skip, require_sig, key_epoch, generator = sys.argv[1:12]
 data = {
     "godot": godot,
     "patchset_id": patchset,
@@ -198,6 +202,7 @@ data = {
     "arch": arch,
     "require_signature": require_sig == "1",
     "key_epoch": int(key_epoch),
+    "generator_version": generator,
 }
 if skip == "1":
     data["skip_scons"] = "1"

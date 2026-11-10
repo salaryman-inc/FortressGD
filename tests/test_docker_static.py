@@ -109,6 +109,8 @@ class DockerStaticTests(unittest.TestCase):
         self.assertIn('"FGD_REQUIRE_SIGNATURE": "1" if require_signature else "0"', templates)
         action = (ROOT / "actions" / "build-templates" / "action.yml").read_text(encoding="utf-8")
         self.assertIn("--require-signature", action)
+        self.assertIn("steps.meta.outputs.generator", action)
+        self.assertIn("print(GENERATOR_SUFFIX)", action)
         self.assertIn("'-sig'", action)
         self.assertTrue(
             template_filename("4.6.2", "linux", "x86_64", "a" * 12, "b" * 16, require_signature=True).endswith("-sig")

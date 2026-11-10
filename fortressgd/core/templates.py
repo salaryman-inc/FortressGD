@@ -18,7 +18,8 @@ from fortressgd.core.leakscan import format_leaks, redact, scan_paths, secret_ne
 from fortressgd.core.paths import default_cache_dir, docker_dir, patches_root
 from fortressgd.core.secret import load_secret_hex, secret_bytes_from_hex
 from fortressgd.core.version import concrete_godot_tag  # noqa: F401  (re-exported)
-from fortressgd.generator.dialect import GENERATOR_VERSION, dialect_material
+from fortressgd.generator.codeseed import CODEGEN_VERSION
+from fortressgd.generator.dialect import dialect_material
 from fortressgd.generator.generate import render_gen_cpp
 
 KDF_NAME = "FGD-KDF-1"
@@ -73,6 +74,9 @@ def editor_cache_home(binary: str | Path, cache_dir: str | Path | None = None) -
 
 
 SIGNATURE_SUFFIX = "-sig"
+# Generator version in template names and the CI cache key (DESIGN.md §18.4): a
+# template from one generator never reuses another generator's cache entry.
+GENERATOR_SUFFIX = "-g{0}".format(CODEGEN_VERSION)
 
 
 def template_filename(
@@ -85,18 +89,22 @@ def template_filename(
     require_signature: bool = False,
     key_epoch: int = 0,
 ) -> str:
-    """godot-<ver>-template_release-<platform>-<arch>-fgd<patchset12>-<secrethash16>[-e<N>][-sig]
+    """godot-<ver>-template_release-<platform>-<arch>-fgd<patchset12>-<secrethash16>-g<G>[-e<N>][-sig]
+
+    -g<G> is the generator version (CODEGEN_VERSION), so templates from different
+    generators never share a name or a cache entry.
 
     -e<N> marks a template whose pack key comes from [production].key_epoch N
     (absent for epoch 0). The -sig variant refuses packs without a valid index
     signature (sign_packs).
     """
-    return "godot-{0}-template_release-{1}-{2}-fgd{3}-{4}{5}{6}".format(
+    return "godot-{0}-template_release-{1}-{2}-fgd{3}-{4}{5}{6}{7}".format(
         godot,
         platform,
         arch,
         patchset,
         secrethash,
+        GENERATOR_SUFFIX,
         "-e{0}".format(key_epoch) if key_epoch else "",
         SIGNATURE_SUFFIX if require_signature else "",
     )
@@ -242,7 +250,7 @@ def manifest_dict(
         "dialect_id": dialect,
         "platform": platform,
         "arch": arch,
-        "generator_version": str(GENERATOR_VERSION),
+        "generator_version": str(CODEGEN_VERSION),
         "require_signature": bool(require_signature),
         "key_epoch": int(key_epoch),
         "dialect_enabled": bool(dialect_enabled),
@@ -401,6 +409,7 @@ def build_templates(
                     "FORTRESSGD_SKIP_SCONS": "1" if skip else "0",
                     "FGD_DIALECT": "1" if dialect else "0",
                     "FGD_REQUIRE_SIGNATURE": "1" if require_signature else "0",
+                    "FGD_GENERATOR": str(CODEGEN_VERSION),
                 },
                 patches=tag_dir,
                 gen_cpp=gen_cpp,

@@ -25,7 +25,7 @@ inputs:
     default: ""
 outputs:
   cache_key:
-    description: "Cache key prefix fgd-templates-{godot}-{patchset}-{secret_hash}"
+    description: "Cache key prefix fgd-templates-{godot}-{patchset}-{secret_hash}-g{generator}"
     value: ${{ steps.meta.outputs.cache_key }}
   secret_hash:
     description: "16-hex secret_hash (not the secret)"
@@ -76,7 +76,7 @@ runs:
         sys.path.insert(0, sys.argv[1])
         from fortressgd.core.kdf import secret_hash
         from fortressgd.core.secret import secret_bytes_from_hex, validate_secret_hex
-        from fortressgd.core.templates import concrete_godot_tag, patchset_for_tag
+        from fortressgd.core.templates import GENERATOR_SUFFIX, concrete_godot_tag, patchset_for_tag
         secret = secret_bytes_from_hex(validate_secret_hex(os.environ["FORTRESSGD_SECRET"]))
         godot = concrete_godot_tag(sys.argv[2])
         sh = secret_hash(secret)
@@ -84,21 +84,24 @@ runs:
         print(sh)
         print(ps)
         print(godot)
+        print(GENERATOR_SUFFIX)
         PY
         )"
         SECRET_HASH="$(printf '%s\n' "$META" | sed -n '1p')"
         PATCHSET="$(printf '%s\n' "$META" | sed -n '2p')"
         GODOT="$(printf '%s\n' "$META" | sed -n '3p')"
+        GENERATOR="$(printf '%s\n' "$META" | sed -n '4p')"
         echo "secret_hash=$SECRET_HASH" >> "$GITHUB_OUTPUT"
         echo "patchset=$PATCHSET" >> "$GITHUB_OUTPUT"
         echo "godot=$GODOT" >> "$GITHUB_OUTPUT"
-        echo "cache_key=fgd-templates-${GODOT}-${PATCHSET}-${SECRET_HASH}" >> "$GITHUB_OUTPUT"
+        echo "generator=$GENERATOR" >> "$GITHUB_OUTPUT"
+        echo "cache_key=fgd-templates-${GODOT}-${PATCHSET}-${SECRET_HASH}${GENERATOR}" >> "$GITHUB_OUTPUT"
 
     - name: Restore template cache
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.cache/fortressgd/templates
-        key: fgd-templates-${{ steps.meta.outputs.godot }}-${{ steps.meta.outputs.patchset }}-${{ steps.meta.outputs.secret_hash }}-${{ inputs.platforms }}-e${{ inputs.key_epoch }}${{ inputs.sign_packs == 'true' && '-sig' || '' }}
+        key: fgd-templates-${{ steps.meta.outputs.godot }}-${{ steps.meta.outputs.patchset }}-${{ steps.meta.outputs.secret_hash }}${{ steps.meta.outputs.generator }}-${{ inputs.platforms }}-e${{ inputs.key_epoch }}${{ inputs.sign_packs == 'true' && '-sig' || '' }}
 
     - name: Build templates
       shell: bash
