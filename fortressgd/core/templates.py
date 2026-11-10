@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -355,6 +356,99 @@ def ensure_docker_image() -> None:
         raise ToolError("docker build failed: {0}".format(detail), NEXT_TEMPLATES)
 
 
+BUILD_IMAGE_REPO = "fortressgd-build"
+# SCons lto= for build images and their relinks (DESIGN.md §18.4). "" keeps Godot's
+# production default: full LTO with GCC and MinGW.
+TEMPLATE_LTO = ""
+
+
+def build_image_tag(
+    tag: str,
+    platform: str,
+    arch: str,
+    patchset: str,
+    *,
+    lto: str = TEMPLATE_LTO,
+    patches_dir: Path | None = None,
+) -> str:
+    """fortressgd-build:godot<tag>-<platform>-<arch>-fgd<patchset>-<inputs8>.
+
+    inputs8 hashes what the image holds besides the patched source: the template
+    image (Dockerfile.templates and the entrypoint), Dockerfile.build, the placeholder
+    the tree is compiled against, and the LTO mode. A locally built image whose
+    inputs changed gets a new tag instead of being reused.
+    """
+    root = patches_root() if patches_dir is None else Path(patches_dir)
+    digest = hashlib.sha256()
+    for part in (
+        docker_image().encode("utf-8"),
+        (docker_dir() / "Dockerfile.build").read_bytes(),
+        (root / "common" / "fortressgd_gen_placeholder.cpp").read_bytes(),
+        lto.encode("utf-8"),
+    ):
+        digest.update(len(part).to_bytes(8, "big") + part)
+    return "{0}:godot{1}-{2}-{3}-fgd{4}-{5}".format(
+        BUILD_IMAGE_REPO, tag, platform, arch, patchset, digest.hexdigest()[:8]
+    )
+
+
+def ensure_build_image(
+    tag: str,
+    platform: str,
+    *,
+    arch: str = DEFAULT_ARCH,
+    patches_dir: Path | None = None,
+    lto: str = TEMPLATE_LTO,
+) -> str:
+    """The build image for this tag, platform and arch, built locally if Docker lacks it.
+
+    Building it compiles Godot once (DESIGN.md §18.4); later template builds for any
+    project relink against it. The image holds no secret: the tree is compiled
+    against the trapping placeholder fortressgd_gen.cpp.
+    """
+    root = patches_root() if patches_dir is None else Path(patches_dir)
+    tag_dir = patch_dir_for_tag(tag, root)
+    require_series(tag_dir)
+    pset = patchset_id(template_patchset_inputs(tag_dir))
+    image = build_image_tag(tag, platform, arch, pset, lto=lto, patches_dir=root)
+    inspect = subprocess.run(["docker", "image", "inspect", image], capture_output=True, text=True)
+    if inspect.returncode == 0:
+        return image
+    ensure_docker_image()
+    print(
+        "fortressgd: building {0}; this compiles Godot once, later template builds relink".format(image),
+        file=sys.stderr,
+        flush=True,
+    )
+    with tempfile.TemporaryDirectory(prefix="fortressgd-build-image-") as tmp:
+        ctx = Path(tmp)
+        shutil.copy2(docker_dir() / "Dockerfile.build", ctx / "Dockerfile.build")
+        shutil.copytree(tag_dir, ctx / "patches")
+        shutil.copytree(root / "common", ctx / "common")
+        args = {
+            "BASE_IMAGE": docker_image(),
+            "GODOT_VERSION": godot_git_tag(tag),
+            "FGD_GODOT": tag,
+            "FGD_PLATFORM": platform,
+            "FGD_ARCH": arch,
+            "FGD_LTO": lto,
+            "FGD_PATCHSET": pset,
+        }
+        cmd = ["docker", "build", "--progress=plain", "-f", str(ctx / "Dockerfile.build"), "-t", image]
+        for key, value in args.items():
+            cmd += ["--build-arg", "{0}={1}".format(key, value)]
+        cmd.append(str(ctx))
+        # The compile takes a while; stream it (stdout to our stderr) rather than
+        # sit silent.
+        built = subprocess.run(cmd, stdout=2)
+    if built.returncode != 0:
+        raise ToolError(
+            "building the {0} build image failed (log above)".format(image),
+            templates_build_command(tag, platform),
+        )
+    return image
+
+
 def build_templates(
     *,
     godot: str,
@@ -368,10 +462,15 @@ def build_templates(
     dialect: bool = True,
     require_signature: bool = False,
     key_epoch: int = 0,
+    from_source: bool = False,
 ) -> list[Path]:
     """
-    Generate dialect.gen.h, refuse empty/failed series, run Docker template build,
-    copy artifacts into the cache. Returns cached template paths.
+    Generate fortressgd_gen.cpp, build each platform's template in Docker, scan the
+    result and copy it into the cache. Returns cached template paths.
+
+    By default the template is relinked in a build image holding a precompiled Godot
+    tree (DESIGN.md §18.4), which is built locally the first time. from_source=True,
+    or dialect off, compiles everything in a fresh container instead.
     """
     env = os.environ if environ is None else environ
     hex_secret = load_secret_hex(secret_file=secret_file, environ=env, cwd=cwd)
@@ -408,9 +507,15 @@ def build_templates(
         out_dir.mkdir()
 
         skip = skip_scons or env.get("FORTRESSGD_SKIP_SCONS") == "1"
+        # Skip-scons is a test path through the source build; a build image needs a
+        # real compile.
+        use_image = not from_source and dialect and not skip
+        if not from_source and not dialect:
+            print("fortressgd: dialect is off; building templates from source", file=sys.stderr)
         ensure_docker_image()
         produced = []
         for platform in plats:
+            image = ensure_build_image(tag, platform, patches_dir=root) if use_image else None
             run = _run_build_container(
                 {
                     "GODOT_VERSION": godot_git_tag(tag),
@@ -425,11 +530,14 @@ def build_templates(
                     "FGD_DIALECT": "1" if dialect else "0",
                     "FGD_REQUIRE_SIGNATURE": "1" if require_signature else "0",
                     "FGD_GENERATOR": str(CODEGEN_VERSION),
+                    "FGD_MODE": "relink" if image else "source",
                 },
-                patches=tag_dir,
+                # A build image carries its own patches and common files.
+                patches=None if image else tag_dir,
                 gen_cpp=gen_cpp,
-                common=root / "common",
+                common=None if image else root / "common",
                 out_dir=out_dir,
+                image=image,
             )
             if run.returncode != 0:
                 detail = redact((run.stderr or run.stdout or "").strip(), needles)
@@ -477,29 +585,33 @@ def build_templates(
 def _run_build_container(
     env: dict[str, str],
     *,
-    patches: Path,
+    patches: Path | None,
     out_dir: Path,
     header: Path | None = None,
     gen_cpp: Path | None = None,
     common: Path | None = None,
+    image: str | None = None,
 ) -> subprocess.CompletedProcess:
     """Run entrypoint.sh in the build image with the inputs read-only.
 
     Editor builds pass the fixed ``header`` (installed as core/dialect.gen.h). Template
     builds pass the generated ``gen_cpp`` and the fixed ``common`` directory (the shim
     header, its source and the API header); the entrypoint installs them in core/.
+    A relink passes the build ``image`` and only ``gen_cpp``: the image holds the
+    patched tree, its patches and common files.
     """
     cmd = ["docker", "run", "--rm"]
     for key, value in env.items():
         cmd += ["-e", "{0}={1}".format(key, value)]
-    cmd += ["-v", "{0}:/patches:ro".format(patches)]
+    if patches is not None:
+        cmd += ["-v", "{0}:/patches:ro".format(patches)]
     if header is not None:
         cmd += ["-v", "{0}:/src/dialect.gen.h:ro".format(header)]
     if gen_cpp is not None:
         cmd += ["-v", "{0}:/src/fortressgd_gen.cpp:ro".format(gen_cpp)]
     if common is not None:
         cmd += ["-v", "{0}:/common:ro".format(common)]
-    cmd += ["-v", "{0}:/out".format(out_dir), docker_image()]
+    cmd += ["-v", "{0}:/out".format(out_dir), image or docker_image()]
     return subprocess.run(cmd, capture_output=True, text=True)
 
 

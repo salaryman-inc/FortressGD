@@ -204,5 +204,136 @@ class TemplatePatchsetTests(unittest.TestCase):
             self.assertEqual(patchset_for_tag("4.6.2", root), patchset_id(template_patchset_inputs(root / "4.6.2")))
 
 
+
+RECORDING_DOCKER = """#!{python}
+import json, os, sys
+from pathlib import Path
+sys.path.insert(0, {root!r})
+from fortressgd.core.templates import manifest_dict, template_filename, write_manifest
+args = sys.argv[1:]
+log = Path(os.environ["FAKE_DOCKER_LOG"])
+with log.open("a", encoding="utf-8") as fh:
+    fh.write(json.dumps(args) + "\\n")
+built = Path(os.environ["FAKE_DOCKER_BUILT"])
+if args[:2] == ["image", "inspect"]:
+    # The template image exists; a build image exists once `docker build` made it.
+    sys.exit(0 if not args[2].startswith("fortressgd-build:") or (built / args[2].replace("/", "_")).exists() else 1)
+if args[0] == "build":
+    (built / args[args.index("-t") + 1].replace("/", "_")).write_text("built")
+    sys.exit(0)
+env, vols, i = {{}}, {{}}, 1
+while i < len(args) - 1:
+    if args[i] in ("-e", "-v"):
+        if args[i] == "-e":
+            k, v = args[i + 1].split("=", 1)
+            env[k] = v
+        else:
+            parts = args[i + 1].split(":")
+            vols[parts[1]] = parts[0]
+        i += 2
+    else:
+        i += 1
+name = template_filename(env["FGD_GODOT"], env["FGD_PLATFORM"], env["FGD_ARCH"], env["FGD_PATCHSET"], env["FGD_SECRET_HASH"])
+out = Path(vols["/out"])
+(out / name).write_bytes(b"fake template")
+write_manifest(out / (name + ".manifest.json"), manifest_dict(
+    godot=env["FGD_GODOT"], patchset=env["FGD_PATCHSET"], secrethash=env["FGD_SECRET_HASH"],
+    dialect=env["FGD_DIALECT_ID"], platform=env["FGD_PLATFORM"]))
+"""
+
+
+class HostBuildImageTests(unittest.TestCase):
+    def setUp(self) -> None:
+        holder = tempfile.TemporaryDirectory()
+        self.addCleanup(holder.cleanup)
+        self.tmp = Path(holder.name)
+        bindir = self.tmp / "bin"
+        bindir.mkdir()
+        docker = bindir / "docker"
+        docker.write_text(RECORDING_DOCKER.format(python=sys.executable, root=str(PKG.parent)), encoding="utf-8")
+        docker.chmod(0o755)
+        self.log = self.tmp / "docker.jsonl"
+        self.built = self.tmp / "built"
+        self.built.mkdir()
+        self.env = {
+            "PATH": str(bindir) + os.pathsep + os.environ.get("PATH", ""),
+            "FAKE_DOCKER_LOG": str(self.log),
+            "FAKE_DOCKER_BUILT": str(self.built),
+        }
+
+    def _build(self, secret_hex: str, **kwargs) -> list[list[str]]:
+        from unittest import mock
+
+        from fortressgd.core.secret import write_secret_file
+        from fortressgd.core.templates import build_templates
+
+        secret_file = self.tmp / ("secret-" + secret_hex[:6])
+        write_secret_file(secret_file, secret_hex)
+        if self.log.exists():
+            self.log.unlink()
+        with mock.patch.dict(os.environ, self.env):
+            build_templates(godot="4.6.2", platforms=["linux"], secret_file=str(secret_file),
+                            environ={}, cwd=self.tmp, cache_dir=self.tmp / "cache", **kwargs)
+        return [json.loads(line) for line in self.log.read_text().splitlines()]
+
+    @staticmethod
+    def _runs(calls: list[list[str]]) -> list[list[str]]:
+        return [c for c in calls if c and c[0] == "run"]
+
+    @staticmethod
+    def _mounts(call: list[str]) -> list[str]:
+        return [call[i + 1].split(":")[1] for i, a in enumerate(call) if a == "-v"]
+
+    def test_default_builds_the_image_once_then_relinks(self) -> None:
+        from fortressgd.core.secret import generate_secret_hex
+        from fortressgd.core.templates import patchset_for_tag
+
+        first = self._build(generate_secret_hex())
+        builds = [c for c in first if c[0] == "build"]
+        self.assertEqual(len(builds), 1)
+        build = builds[0]
+        self.assertTrue(build[build.index("-t") + 1].startswith("fortressgd-build:godot4.6.2-linux-x86_64-fgd"))
+        self.assertIn("FGD_PATCHSET=" + patchset_for_tag("4.6.2"), build)
+        self.assertIn("FGD_PLATFORM=linux", build)
+        (run,) = self._runs(first)
+        self.assertEqual(run[-1], build[build.index("-t") + 1])
+        self.assertEqual(sorted(self._mounts(run)), ["/out", "/src/fortressgd_gen.cpp"])
+        self.assertIn("FGD_MODE=relink", run)
+        # A second project reuses the image: no docker build.
+        second = self._build(generate_secret_hex())
+        self.assertEqual([c for c in second if c[0] == "build"], [])
+        self.assertEqual(len(self._runs(second)), 1)
+
+    def test_no_secret_reaches_docker(self) -> None:
+        from fortressgd.core.secret import generate_secret_hex
+
+        secret_hex = generate_secret_hex()
+        calls = self._build(secret_hex)
+        flat = " ".join(" ".join(c) for c in calls)
+        self.assertNotIn(secret_hex, flat)
+
+    def test_from_source_and_dialect_off_skip_the_build_image(self) -> None:
+        from fortressgd.core.secret import generate_secret_hex
+        from fortressgd.core.templates import docker_image
+
+        for kwargs in ({"from_source": True}, {"dialect": False}):
+            with self.subTest(**kwargs):
+                calls = self._build(generate_secret_hex(), **kwargs)
+                self.assertEqual([c for c in calls if c[0] == "build"], [])
+                (run,) = self._runs(calls)
+                self.assertEqual(run[-1], docker_image())
+                self.assertIn("/patches", self._mounts(run))
+                self.assertIn("/common", self._mounts(run))
+                self.assertIn("FGD_MODE=source", run)
+
+    def test_image_tag_changes_with_its_inputs(self) -> None:
+        from fortressgd.core.templates import build_image_tag
+
+        base = build_image_tag("4.6.2", "linux", "x86_64", "a" * 12)
+        self.assertNotEqual(base, build_image_tag("4.6.2", "linux", "x86_64", "b" * 12))
+        self.assertNotEqual(base, build_image_tag("4.6.2", "linux", "x86_64", "a" * 12, lto="none"))
+        self.assertNotEqual(base, build_image_tag("4.6.2", "windows", "x86_64", "a" * 12))
+
+
 if __name__ == "__main__":
     unittest.main()

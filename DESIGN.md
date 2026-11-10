@@ -681,6 +681,15 @@ Images:
 
 Naming and cache: template names and the CI cache key gain the generator version, `-g2`. A template from generator v2 never reuses a v1 cache entry, and the reverse also holds.
 
+**Implementation (step 3).**
+
+- `fortressgd/docker/Dockerfile.build` layers the build image on the template image. Its context is the tag's patches and `patches/common`; it runs the entrypoint with `FGD_MODE=prebuild` and defaults to `FGD_MODE=relink`.
+- Prebuild compiles the tree against `common/fortressgd_gen_placeholder.cpp`, whose functions trap, so a template linked against it by mistake dies at startup. It records in `/work/godot/.fortressgd` what a relink must match (patchset, tag, platform, arch, defines, LTO mode, build-deps flags), then deletes the placeholder-linked binary.
+- Relink refuses the placeholder and any file the generator did not write, and checks that state against the request. It installs the project's `fortressgd_gen.cpp`, replays the prebuild's exact SCons arguments with no network, and fails unless SCons recompiled `core/fortressgd_gen.cpp`.
+- `sign_packs` reaches only `core/io/file_access_pack.cpp`, through `core/fortressgd_variant.h`, which the build writes per template. It is still a compile-time `#define`, but switching it recompiles that one file instead of the tree a global define would invalidate. Dialect on or off changes `file_access_pack.h`, which is included widely, so images are built with the dialect on and dialect-off templates are built from source.
+- Until the release workflow publishes images (step 4), `templates build` builds the image locally the first time, tagged `fortressgd-build:godot<tag>-<platform>-<arch>-fgd<patchset>-<h8>`. `h8` hashes the template image, `Dockerfile.build`, the placeholder and the LTO mode, so a stale local image is never reused. `--from-source` keeps the full compile in a fresh container.
+- The template patchset id also covers the fixed common files every template compiles (`fortressgd_gen_api.h`, `fortressgd_gen_shim.h`, `fortressgd_gen_shim.cpp`). The shared editor's id does not.
+
 ### 18.5 Export side
 
 Status: implemented (§8.3), except that the editor is built by `templates build --editor` and cached; it moves into the build image with §18.4.
