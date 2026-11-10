@@ -80,6 +80,12 @@ export const SECTIONS = [
 				description: 'How to report a vulnerability, and what to do if a project secret leaks.',
 			},
 			{
+				source: 'docs/releasing.md',
+				slug: 'project/releasing',
+				label: 'Releases',
+				description: 'Installing and verifying a release, and how maintainers cut one.',
+			},
+			{
 				source: 'CONTRIBUTING.md',
 				slug: 'project/contributing',
 				label: 'Contributing',
