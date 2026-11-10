@@ -253,9 +253,16 @@ jobs:
         # Needs no secret: the editor holds nothing project-specific.
         run: fortressgd templates build --editor --godot "${{ matrix.godot }}"
 
-      - name: Build the dialect Linux template in Docker
+      # A dialect template takes the build image path (DESIGN.md §18.4): the first
+      # build compiles the image, then relinks this project's template in it.
+      - name: Build the dialect Linux template (build image, then relink)
         working-directory: ${{ env.PROJ }}
-        run: fortressgd templates build --godot "${{ matrix.godot }}" --platform linux
+        run: |
+          set -euo pipefail
+          start=$(date +%s)
+          fortressgd templates build --godot "${{ matrix.godot }}" --platform linux
+          secs=$(( $(date +%s) - start ))
+          echo "Godot ${{ matrix.godot }} Linux: cold template build (build image + relink) took ${secs}s" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Get the official Godot editor
         id: godot
@@ -307,6 +314,20 @@ jobs:
           [ "$code" -eq 2 ] || { echo "error: the editor exited $code, not 2" >&2; exit 1; }
           printf '%s\n' "$out" | grep -q "FORTRESSGD_PACK_PARAMS is malformed"
           [ ! -e "$RUNNER_TEMP/bad.pck" ] || { echo "error: the editor wrote a pack anyway" >&2; exit 1; }
+
+      # Last, so the second template does not match the template globs above. It
+      # measures goal 2 of #51 on this runner: with the build image already built,
+      # another project's template recompiles fortressgd_gen.cpp and relinks.
+      - name: Warm relink of a second project's template
+        working-directory: ${{ env.PROJ }}
+        run: |
+          set -euo pipefail
+          fortressgd secret generate --secret-file "$RUNNER_TEMP/second.secret"
+          start=$(date +%s)
+          fortressgd templates build --godot "${{ matrix.godot }}" --platform linux --secret-file "$RUNNER_TEMP/second.secret"
+          secs=$(( $(date +%s) - start ))
+          echo "Godot ${{ matrix.godot }} Linux: warm relink for a second project took ${secs}s (goal: under 600s)" | tee -a "$GITHUB_STEP_SUMMARY"
+          docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}' | grep '^fortressgd-build:' | tee -a "$GITHUB_STEP_SUMMARY"
 
   keydot:
     name: KeyDot regression (Godot ${{ matrix.godot }})
