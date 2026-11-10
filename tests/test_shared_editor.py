@@ -41,12 +41,10 @@ from fortressgd.generator.dialect import (
     render_dialect_header,
     write_dialect_header,
 )
-from fortressgd.generator.generate import (
-    render_gen_header,
-)
 from tests.support import PKG, ROOT, seed_mini_godot_tree
 
 HEADER = editor_header_path()
+SHIM_HEADER = HEADER.parent / "fortressgd_gen_shim.h"
 
 # Two translation units that use the header the way the patches do. Both include
 # it, so a definition that breaks the one-definition rule fails to link.
@@ -240,7 +238,9 @@ class EditorHeaderTests(unittest.TestCase):
 
 class EditorHeaderContentTests(unittest.TestCase):
     def test_defines_every_name_the_patches_take_from_a_generated_header(self) -> None:
-        generated = render_gen_header(_secrets(1)[0], "4.6.2")
+        # The patches reference the FGD_* names from the fixed shim header
+        # (template dialect.gen.h); the editor header must define the same ones.
+        generated = SHIM_HEADER.read_text(encoding="utf-8")
         names = set(re.findall(r"\b(FGD_[A-Z_]+)\b", generated))
         editor = HEADER.read_text(encoding="utf-8")
         # The editor is built without FORTRESSGD_OPCODE_MAP: packs carry tokens.
@@ -310,6 +310,9 @@ class EditorEntrypointTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             env = _entrypoint_env(Path(tmp), HEADER, target="template_release")
             env["FGD_SECRET_HASH"] = "0123456789abcdef"
+            # The editor header wrongly supplied as the generated fortressgd_gen.cpp.
+            env["FORTRESSGD_GEN_CPP"] = str(HEADER)
+            env["FORTRESSGD_COMMON"] = str(PKG / "patches" / "common")
             run = _entrypoint(env)
             self.assertEqual(run.returncode, 3, run.stdout + run.stderr)
             self.assertIn("not the editor header", run.stderr)

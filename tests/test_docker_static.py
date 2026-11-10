@@ -21,8 +21,8 @@ from fortressgd.core.templates import (
     template_filename,
     write_manifest,
 )
-from fortressgd.generator.dialect import dialect_material, write_dialect_header
-from fortressgd.generator.generate import render_gen_header
+from fortressgd.generator.dialect import dialect_material
+from fortressgd.generator.generate import render_gen_cpp
 from tests.support import PKG, ROOT, seed_mini_godot_tree
 
 
@@ -185,7 +185,7 @@ class DockerStaticTests(unittest.TestCase):
         _salt, _masks, _shards, did = dialect_material(secret, "4.6.2")
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            header = tmp_path / "dialect.gen.h"
+            gen_cpp = tmp_path / "fortressgd_gen.cpp"
             out_dir = tmp_path / "out"
             out_dir.mkdir()
             godot_src = seed_mini_godot_tree("4.6.2", tmp_path / "godot")
@@ -195,13 +195,14 @@ class DockerStaticTests(unittest.TestCase):
                 "FGD_ARCH": "x86_64", "FGD_DIALECT_ID": did, "FGD_PATCHSET": pset,
                 "FGD_SECRET_HASH": secret_hash(secret), "FORTRESSGD_SKIP_SCONS": "1",
                 "FGD_DIALECT": "1", "FGD_REQUIRE_SIGNATURE": "1",
-                "PATCHES_DIR": str(PKG / "patches" / "4.6.2"), "DIALECT_HEADER": str(header),
+                "PATCHES_DIR": str(PKG / "patches" / "4.6.2"),
+                "FORTRESSGD_GEN_CPP": str(gen_cpp), "FORTRESSGD_COMMON": str(PKG / "patches" / "common"),
                 "OUT_DIR": str(out_dir), "GODOT_SRC": str(godot_src), "GIT_TERMINAL_PROMPT": "0",
             })
             # Generator v2: require_signature is a compile-time flag
             # (FGD_REQUIRE_SIGNATURE=1 -> -DFGD_REQUIRE_PACK_SIGNATURE=1), not a
-            # value in the generated header, so the header content does not gate it.
-            header.write_text(render_gen_header(secret, "4.6.2"), encoding="utf-8")
+            # value in the generated file, so its content does not gate it.
+            gen_cpp.write_text(render_gen_cpp(secret, "4.6.2"), encoding="utf-8")
             run = subprocess.run(["sh", str(PKG / "docker" / "entrypoint.sh")], capture_output=True, text=True, env=env, timeout=180)
             self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
             name = template_filename("4.6.2", "linux", "x86_64", pset, secret_hash(secret), require_signature=True)
@@ -225,8 +226,8 @@ class DockerStaticTests(unittest.TestCase):
         log_path = Path(log_raw) if log_raw else None
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            header = tmp_path / "dialect.gen.h"
-            write_dialect_header(header, secret, "4.6.2")
+            gen_cpp = tmp_path / "fortressgd_gen.cpp"
+            gen_cpp.write_text(render_gen_cpp(secret, "4.6.2"), encoding="utf-8")
             out_dir = tmp_path / "out"
             out_dir.mkdir()
             godot_src = seed_mini_godot_tree("4.6.2", tmp_path / "godot")
@@ -243,7 +244,8 @@ class DockerStaticTests(unittest.TestCase):
                     "FORTRESSGD_SKIP_SCONS": "1",
                     "FGD_DIALECT": "1",
                     "PATCHES_DIR": str(PKG / "patches" / "4.6.2"),
-                    "DIALECT_HEADER": str(header),
+                    "FORTRESSGD_GEN_CPP": str(gen_cpp),
+                    "FORTRESSGD_COMMON": str(PKG / "patches" / "common"),
                     "OUT_DIR": str(out_dir),
                     "GODOT_SRC": str(godot_src),
                     "GIT_TERMINAL_PROMPT": "0",

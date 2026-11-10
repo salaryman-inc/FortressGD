@@ -62,13 +62,22 @@ if [ "$FGD_TARGET" != "editor" ] && [ "$FGD_REQUIRE_SIGNATURE" = "1" ]; then
     FGD_DEFINES="$FGD_DEFINES FGD_REQUIRE_PACK_SIGNATURE=1"
 fi
 [ -d "$PATCHES_DIR" ] || err "patches directory missing at $PATCHES_DIR"
-[ -f "$HEADER_SRC" ] || err "dialect.gen.h missing at $HEADER_SRC"
 if [ "$FGD_TARGET" = "editor" ]; then
+    [ -f "$HEADER_SRC" ] || err "dialect.gen.h missing at $HEADER_SRC"
     grep -qF "$EDITOR_HEADER_MARK" "$HEADER_SRC" \
         || err "FGD_TARGET=editor needs the fixed fortressgd_editor_dialect.h, not a generated header"
-elif grep -qF "$EDITOR_HEADER_MARK" "$HEADER_SRC"; then
-    # A template with the editor header would hold no key and stock values.
-    err "a template needs the generated dialect.gen.h, not the editor header"
+else
+    # Template (generator v2): the per-build routines (fortressgd_gen.cpp) plus the
+    # fixed common headers. Godot's objects include only the fixed shim header, so a
+    # new project recompiles just fortressgd_gen.cpp and relinks (§18.4).
+    GEN_CPP="${FORTRESSGD_GEN_CPP:-/src/fortressgd_gen.cpp}"
+    COMMON_DIR="${FORTRESSGD_COMMON:-/common}"
+    [ -f "$GEN_CPP" ] || err "fortressgd_gen.cpp missing at $GEN_CPP"
+    for f in fortressgd_gen_api.h fortressgd_gen_shim.h fortressgd_gen_shim.cpp; do
+        [ -f "$COMMON_DIR/$f" ] || err "$COMMON_DIR/$f missing"
+    done
+    ! grep -qF "$EDITOR_HEADER_MARK" "$GEN_CPP" \
+        || err "a template needs the generated fortressgd_gen.cpp, not the editor header"
 fi
 printf '%s\n' "$FGD_KEY_EPOCH" | grep -Eq '^(0|[1-9][0-9]{0,9})$' || err "FGD_KEY_EPOCH must be a non-negative integer"
 mkdir -p "$OUT_DIR"
@@ -134,7 +143,19 @@ apply_series() {
         git apply --check "$PATCHES_DIR/$patch" || err "git apply --check failed for $patch"
         git apply "$PATCHES_DIR/$patch" || err "git apply failed for $patch"
     done
-    cp "$HEADER_SRC" "$GODOT_SRC/core/dialect.gen.h"
+    if [ "$FGD_TARGET" = "editor" ]; then
+        cp "$HEADER_SRC" "$GODOT_SRC/core/dialect.gen.h"
+    else
+        # The patches include dialect.gen.h; for a template that is the fixed shim
+        # header (extern decls). The generated routines and the shim definitions are
+        # their own TUs, compiled by core's SCsub glob. fortressgd_gen_shim.cpp
+        # includes fortressgd_gen_shim.h, so install it under both names.
+        cp "$COMMON_DIR/fortressgd_gen_shim.h" "$GODOT_SRC/core/dialect.gen.h"
+        cp "$COMMON_DIR/fortressgd_gen_shim.h" "$GODOT_SRC/core/fortressgd_gen_shim.h"
+        cp "$COMMON_DIR/fortressgd_gen_api.h" "$GODOT_SRC/core/fortressgd_gen_api.h"
+        cp "$COMMON_DIR/fortressgd_gen_shim.cpp" "$GODOT_SRC/core/fortressgd_gen_shim.cpp"
+        cp "$GEN_CPP" "$GODOT_SRC/core/fortressgd_gen.cpp"
+    fi
     [ -f "$GODOT_SRC/core/fortressgd_kdf.cpp" ] || err "patched sources missing fortressgd_kdf.cpp"
     [ -f "$GODOT_SRC/core/dialect.gen.h" ] || err "dialect.gen.h was not installed"
 }

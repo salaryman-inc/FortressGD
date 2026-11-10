@@ -19,7 +19,7 @@ from fortressgd.core.paths import default_cache_dir, docker_dir, patches_root
 from fortressgd.core.secret import load_secret_hex, secret_bytes_from_hex
 from fortressgd.core.version import concrete_godot_tag  # noqa: F401  (re-exported)
 from fortressgd.generator.dialect import GENERATOR_VERSION, dialect_material
-from fortressgd.generator.generate import render_gen_header
+from fortressgd.generator.generate import render_gen_cpp
 
 KDF_NAME = "FGD-KDF-1"
 SUPPORTED_PLATFORMS = ("linux", "windows")
@@ -372,13 +372,15 @@ def build_templates(
 
     with tempfile.TemporaryDirectory(prefix="fortressgd-tmpl-") as tmp:
         tmp_path = Path(tmp)
-        header = tmp_path / "dialect.gen.h"
-        # Generator v2 (DESIGN.md §18.3): the header decodes the pack key and the
-        # public dialect values at runtime. The project secret is never written
-        # here or passed to the container, and the raw key never appears in the
-        # file. require_signature is a compile-time flag (FGD_REQUIRE_SIGNATURE in
-        # the container env), not a value in the header.
-        header.write_text(render_gen_header(secret, tag, key_epoch=key_epoch), encoding="utf-8")
+        gen_cpp = tmp_path / "fortressgd_gen.cpp"
+        # Generator v2 (DESIGN.md §18.3): a separate translation unit that decodes
+        # the pack key and the public dialect values at runtime. The container
+        # also gets the fixed common/ headers; Godot's own objects include only
+        # the fixed shim header, so a new project recompiles just this file
+        # (§18.4). The project secret is never written here or passed to the
+        # container, and the raw key never appears in the file. require_signature
+        # is a compile-time flag (FGD_REQUIRE_SIGNATURE), not a value in the file.
+        gen_cpp.write_text(render_gen_cpp(secret, tag, key_epoch=key_epoch), encoding="utf-8")
         out_dir = tmp_path / "out"
         out_dir.mkdir()
 
@@ -401,7 +403,8 @@ def build_templates(
                     "FGD_REQUIRE_SIGNATURE": "1" if require_signature else "0",
                 },
                 patches=tag_dir,
-                header=header,
+                gen_cpp=gen_cpp,
+                common=root / "common",
                 out_dir=out_dir,
             )
             if run.returncode != 0:
@@ -448,21 +451,31 @@ def build_templates(
 
 
 def _run_build_container(
-    env: dict[str, str], *, patches: Path, header: Path, out_dir: Path
+    env: dict[str, str],
+    *,
+    patches: Path,
+    out_dir: Path,
+    header: Path | None = None,
+    gen_cpp: Path | None = None,
+    common: Path | None = None,
 ) -> subprocess.CompletedProcess:
-    """Run entrypoint.sh in the build image with the patches and header read-only."""
+    """Run entrypoint.sh in the build image with the inputs read-only.
+
+    Editor builds pass the fixed ``header`` (installed as core/dialect.gen.h). Template
+    builds pass the generated ``gen_cpp`` and the fixed ``common`` directory (the shim
+    header, its source and the API header); the entrypoint installs them in core/.
+    """
     cmd = ["docker", "run", "--rm"]
     for key, value in env.items():
         cmd += ["-e", "{0}={1}".format(key, value)]
-    cmd += [
-        "-v",
-        "{0}:/patches:ro".format(patches),
-        "-v",
-        "{0}:/src/dialect.gen.h:ro".format(header),
-        "-v",
-        "{0}:/out".format(out_dir),
-        docker_image(),
-    ]
+    cmd += ["-v", "{0}:/patches:ro".format(patches)]
+    if header is not None:
+        cmd += ["-v", "{0}:/src/dialect.gen.h:ro".format(header)]
+    if gen_cpp is not None:
+        cmd += ["-v", "{0}:/src/fortressgd_gen.cpp:ro".format(gen_cpp)]
+    if common is not None:
+        cmd += ["-v", "{0}:/common:ro".format(common)]
+    cmd += ["-v", "{0}:/out".format(out_dir), docker_image()]
     return subprocess.run(cmd, capture_output=True, text=True)
 
 
