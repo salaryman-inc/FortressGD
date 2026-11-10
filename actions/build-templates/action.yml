@@ -103,6 +103,49 @@ runs:
         path: ~/.cache/fortressgd/templates
         key: fgd-templates-${{ steps.meta.outputs.godot }}-${{ steps.meta.outputs.patchset }}-${{ steps.meta.outputs.secret_hash }}${{ steps.meta.outputs.generator }}-${{ inputs.platforms }}-e${{ inputs.key_epoch }}${{ inputs.sign_packs == 'true' && '-sig' || '' }}
 
+    # A release's build image digests ship in its wheel and as a release asset,
+    # not in the git tag this action runs from (DESIGN.md §18.4). At a release
+    # tag, fetch the asset, check that this repository's release workflow attested
+    # it for that tag, and put it where the CLI looks. On any other ref, templates
+    # build compiles the build image on the runner instead, which takes far longer.
+    - name: Fetch the release's pinned build images
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        ACTION_REF: ${{ github.action_ref }}
+        ACTION_REPO: ${{ github.action_repository }}
+      working-directory: ${{ github.action_path }}/../..
+      run: |
+        set -euo pipefail
+        semver='^v[0-9]+\.[0-9]+\.[0-9]+$'
+        tag="" sha=""
+        if printf '%s\n' "$ACTION_REF" | grep -Eq "$semver"; then
+          tag="$ACTION_REF"
+        elif printf '%s\n' "$ACTION_REF" | grep -Eq '^[0-9a-f]{40}$'; then
+          # Pinned by commit SHA: use the release tag on that commit, if any.
+          sha="$ACTION_REF"
+          tag="$(gh api --paginate "repos/$ACTION_REPO/tags" --jq ".[] | select(.commit.sha == \"$sha\") | .name" \
+            | grep -E "$semver" | head -n 1 || true)"
+        fi
+        if [ -z "$tag" ]; then
+          echo "::notice::build-templates@$ACTION_REF is not a release; the build image is compiled on this runner"
+          exit 0
+        fi
+        dir="$RUNNER_TEMP/fortressgd-pins"
+        mkdir -p "$dir"
+        if ! gh release download "$tag" --repo "$ACTION_REPO" --pattern images.lock.json --dir "$dir" --clobber; then
+          echo "::notice::release $tag has no images.lock.json; the build image is compiled on this runner"
+          exit 0
+        fi
+        verify=(--repo "$ACTION_REPO" --signer-workflow "$ACTION_REPO/.github/workflows/release.yml"
+          --source-ref "refs/tags/$tag" --deny-self-hosted-runners)
+        if [ -n "$sha" ]; then
+          verify+=(--source-digest "$sha")
+        fi
+        gh attestation verify "$dir/images.lock.json" "${verify[@]}"
+        cp "$dir/images.lock.json" fortressgd/images.lock.json
+        echo "Pinned build images from release $tag" >> "$GITHUB_STEP_SUMMARY"
+
     - name: Build templates
       shell: bash
       env:
