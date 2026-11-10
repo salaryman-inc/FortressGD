@@ -517,15 +517,16 @@ diff --git a/core/io/file_access_pack.cpp b/core/io/file_access_pack.cpp
 index 11fc950..8b06bb9 100644
 --- a/core/io/file_access_pack.cpp
 +++ b/core/io/file_access_pack.cpp
-@@ -36,2 +36,7 @@
+@@ -36,2 +36,8 @@
  #include "core/os/os.h"
 +#ifdef FORTRESSGD_SIGN_PACKS
 +#include "core/dialect.gen.h"
++#include "core/fortressgd_variant.h"
 +#include "core/fortressgd_ed25519.h"
 +#include <cstring>
 +#endif
  #include "core/version.h"
-@@ -310,2 +315,9 @@ bool PackedSourcePCK::try_open_pack(const String &p_path, bool p_replace_files,
+@@ -310,2 +316,9 @@ bool PackedSourcePCK::try_open_pack(const String &p_path, bool p_replace_files,
  
 +#ifdef FORTRESSGD_SIGN_PACKS
 +	// Index signature: 64 bytes in the reserved area at header offset 40 (V3/V4).
@@ -535,7 +536,7 @@ index 11fc950..8b06bb9 100644
 +	Ref<FileAccess> fgd_raw = f;
 +#endif
  	if (version == PACK_FORMAT_VERSION_V3 || version == PACK_FORMAT_VERSION_V4) {
-@@ -318,2 +330,12 @@ bool PackedSourcePCK::try_open_pack(const String &p_path, bool p_replace_files,
+@@ -318,2 +331,12 @@ bool PackedSourcePCK::try_open_pack(const String &p_path, bool p_replace_files,
  		}
 +#ifdef FORTRESSGD_SIGN_PACKS
 +		if (sparse_bundle && enc_directory && version == PACK_FORMAT_VERSION_V4) {
@@ -548,7 +549,7 @@ index 11fc950..8b06bb9 100644
 +		}
 +#endif
  		f->seek(dir_offset);
-@@ -343,2 +365,12 @@ bool PackedSourcePCK::try_open_pack(const String &p_path, bool p_replace_files,
+@@ -343,2 +366,12 @@ bool PackedSourcePCK::try_open_pack(const String &p_path, bool p_replace_files,
  
 +#ifdef FORTRESSGD_SIGN_PACKS
 +	struct FGDPackEntry {
@@ -561,7 +562,7 @@ index 11fc950..8b06bb9 100644
 +	Vector<FGDPackEntry> fgd_entries;
 +#endif
  	for (int i = 0; i < file_count; i++) {
-@@ -380,2 +412,12 @@ bool PackedSourcePCK::try_open_pack(const String &p_path, bool p_replace_files,
+@@ -380,2 +413,12 @@ bool PackedSourcePCK::try_open_pack(const String &p_path, bool p_replace_files,
  
 +#ifdef FORTRESSGD_SIGN_PACKS
 +		// Register nothing until the index signature is verified below.
@@ -574,7 +575,7 @@ index 11fc950..8b06bb9 100644
 +		fgd_entries.push_back(fgd_entry);
 +#else
  		if (flags & PACK_FILE_REMOVAL) { // The file was removed.
-@@ -385,3 +427,50 @@ bool PackedSourcePCK::try_open_pack(const String &p_path, bool p_replace_files,
+@@ -385,3 +428,50 @@ bool PackedSourcePCK::try_open_pack(const String &p_path, bool p_replace_files,
  		}
 +#endif
 +	}

@@ -517,15 +517,16 @@ diff --git a/core/io/file_access_pack.cpp b/core/io/file_access_pack.cpp
 index 04aa767..ca88c22 100644
 --- a/core/io/file_access_pack.cpp
 +++ b/core/io/file_access_pack.cpp
-@@ -36,2 +36,7 @@
+@@ -36,2 +36,8 @@
  #include "core/os/os.h"
 +#ifdef FORTRESSGD_SIGN_PACKS
 +#include "core/dialect.gen.h"
++#include "core/fortressgd_variant.h"
 +#include "core/fortressgd_ed25519.h"
 +#include <cstring>
 +#endif
  #include "core/version.h"
-@@ -308,2 +313,9 @@ bool PackedSourcePCK::try_open_pack(const String &p_path, bool p_replace_files,
+@@ -308,2 +314,9 @@ bool PackedSourcePCK::try_open_pack(const String &p_path, bool p_replace_files,
  
 +#ifdef FORTRESSGD_SIGN_PACKS
 +	// Index signature: 64 bytes in the reserved area at header offset 40 (V3).
@@ -535,14 +536,14 @@ index 04aa767..ca88c22 100644
 +	Ref<FileAccess> fgd_raw = f;
 +#endif
  	if (version == PACK_FORMAT_VERSION_V3) {
-@@ -311,2 +323,6 @@ bool PackedSourcePCK::try_open_pack(const String &p_path, bool p_replace_files,
+@@ -311,2 +324,6 @@ bool PackedSourcePCK::try_open_pack(const String &p_path, bool p_replace_files,
  		uint64_t dir_offset = f->get_64() + pck_start_pos;
 +#ifdef FORTRESSGD_SIGN_PACKS
 +		f->get_buffer(fgd_sig, 64);
 +		fgd_dir_abs = (int64_t)dir_offset;
 +#endif
  		f->seek(dir_offset);
-@@ -336,2 +352,12 @@ bool PackedSourcePCK::try_open_pack(const String &p_path, bool p_replace_files,
+@@ -336,2 +353,12 @@ bool PackedSourcePCK::try_open_pack(const String &p_path, bool p_replace_files,
  
 +#ifdef FORTRESSGD_SIGN_PACKS
 +	struct FGDPackEntry {
@@ -555,7 +556,7 @@ index 04aa767..ca88c22 100644
 +	Vector<FGDPackEntry> fgd_entries;
 +#endif
  	for (int i = 0; i < file_count; i++) {
-@@ -373,2 +399,12 @@ bool PackedSourcePCK::try_open_pack(const String &p_path, bool p_replace_files,
+@@ -373,2 +400,12 @@ bool PackedSourcePCK::try_open_pack(const String &p_path, bool p_replace_files,
  
 +#ifdef FORTRESSGD_SIGN_PACKS
 +		// Register nothing until the index signature is verified below.
@@ -568,7 +569,7 @@ index 04aa767..ca88c22 100644
 +		fgd_entries.push_back(fgd_entry);
 +#else
  		if (flags & PACK_FILE_REMOVAL) { // The file was removed.
-@@ -378,3 +414,50 @@ bool PackedSourcePCK::try_open_pack(const String &p_path, bool p_replace_files,
+@@ -378,3 +415,50 @@ bool PackedSourcePCK::try_open_pack(const String &p_path, bool p_replace_files,
  		}
 +#endif
  	}

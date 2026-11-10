@@ -26,9 +26,9 @@ OUT_DIR="${OUT_DIR:-/out}"
 SKIP_SCONS="${FORTRESSGD_SKIP_SCONS:-0}"
 GODOT_SRC="${GODOT_SRC:-/work/godot}"
 FGD_DIALECT="${FGD_DIALECT:-1}"
-# 1 when [production].sign_packs is true: the template is compiled with
-# -DFGD_REQUIRE_PACK_SIGNATURE=1 (a flag, not a value in the generated header),
-# refuses unsigned packs, and its name gets the -sig suffix.
+# 1 when [production].sign_packs is true: core/fortressgd_variant.h defines
+# FGD_REQUIRE_PACK_SIGNATURE 1 (a compile-time flag, not a value in the generated
+# code), the template refuses unsigned packs, and its name gets the -sig suffix.
 FGD_REQUIRE_SIGNATURE="${FGD_REQUIRE_SIGNATURE:-0}"
 # [production].key_epoch: the pack key in dialect.gen.h is for this epoch; non-zero
 # epochs get a -e<N> suffix so each release line has its own cached template.
@@ -59,10 +59,6 @@ if [ "$FGD_TARGET" = "editor" ]; then
     [ "$FGD_PLATFORM" = "linux" ] || err "the shared editor is built for linux only"
 else
     printf '%s\n' "$SECRET_HASH" | grep -Eq '^[0-9a-f]{16}$' || err "FGD_SECRET_HASH must be the 16-hex secret_hash"
-fi
-if [ "$FGD_TARGET" != "editor" ] && [ "$FGD_REQUIRE_SIGNATURE" = "1" ]; then
-    # Compile-time flag, never a value in the generated header (generator v2 §18.3).
-    FGD_DEFINES="$FGD_DEFINES FGD_REQUIRE_PACK_SIGNATURE=1"
 fi
 [ -d "$PATCHES_DIR" ] || err "patches directory missing at $PATCHES_DIR"
 if [ "$FGD_TARGET" = "editor" ]; then
@@ -141,6 +137,18 @@ clone_godot() {
         || err "git clone of Godot $GODOT_VERSION failed"
 }
 
+# FGD_REQUIRE_PACK_SIGNATURE as a compile-time flag (never a stored value, §18.3).
+# Only core/io/file_access_pack.cpp includes this header, so switching sign_packs
+# recompiles that one file instead of the whole tree (§18.4).
+write_variant_header() {
+    case "$FGD_REQUIRE_SIGNATURE" in
+        0|1) ;;
+        *) err "FGD_REQUIRE_SIGNATURE must be 0 or 1" ;;
+    esac
+    printf '/* written by the FortressGD build; do not edit */\n#pragma once\n#define FGD_REQUIRE_PACK_SIGNATURE %s\n' \
+        "$FGD_REQUIRE_SIGNATURE" > "$GODOT_SRC/core/fortressgd_variant.h"
+}
+
 apply_series() {
     cd "$GODOT_SRC"
     for patch in "$@"; do
@@ -159,6 +167,7 @@ apply_series() {
         cp "$COMMON_DIR/fortressgd_gen_api.h" "$GODOT_SRC/core/fortressgd_gen_api.h"
         cp "$COMMON_DIR/fortressgd_gen_shim.cpp" "$GODOT_SRC/core/fortressgd_gen_shim.cpp"
         cp "$GEN_CPP" "$GODOT_SRC/core/fortressgd_gen.cpp"
+        write_variant_header
     fi
     [ -f "$GODOT_SRC/core/fortressgd_kdf.cpp" ] || err "patched sources missing fortressgd_kdf.cpp"
     [ -f "$GODOT_SRC/core/dialect.gen.h" ] || err "dialect.gen.h was not installed"

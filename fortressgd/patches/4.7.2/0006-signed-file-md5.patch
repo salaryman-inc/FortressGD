@@ -8,7 +8,7 @@ index 8b06bb9..e64866d 100644
 +#include "core/crypto/crypto_core.h"
 +#endif
  #include "core/object/script_language.h"
-@@ -658,2 +661,39 @@ FileAccessPack::FileAccessPack(const String &p_path, const PackedData::PackedFil
+@@ -659,2 +662,39 @@ FileAccessPack::FileAccessPack(const String &p_path, const PackedData::PackedFil
  
 +#ifdef FORTRESSGD_SIGN_PACKS
 +	// A -sig template verified the index signature when it opened the pack, so
