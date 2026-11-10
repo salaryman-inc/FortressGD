@@ -138,9 +138,10 @@ for patch in "$@"; do
 done
 
 # Patchset id from the mounted patches; the host's value is cross-checked below.
-PATCHSET_ID="$(python3 - "$PATCHES_DIR" <<'PY'
+PATCHSET_ID="$(python3 - "$PATCHES_DIR" "${COMMON_DIR:-}" <<'PY'
 import hashlib, pathlib, sys
 patches = pathlib.Path(sys.argv[1])
+common = sys.argv[2]
 names = []
 for line in (patches / "series").read_text(encoding="utf-8").splitlines():
     name = line.split("#", 1)[0].strip()
@@ -150,7 +151,11 @@ for line in (patches / "series").read_text(encoding="utf-8").splitlines():
 deps = patches / "build-deps.sh"
 if deps.is_file():
     names.append("build-deps.sh")
-blob = b"".join((patches / n).read_bytes() for n in names)
+paths = [patches / n for n in names]
+# Templates (COMMON_DIR set): fortressgd/core/patches.py TEMPLATE_COMMON_FILES too.
+if common:
+    paths += [pathlib.Path(common) / n for n in ("fortressgd_gen_api.h", "fortressgd_gen_shim.h", "fortressgd_gen_shim.cpp")]
+blob = b"".join(p.read_bytes() for p in paths)
 print(hashlib.sha256(blob).hexdigest()[:12])
 PY
 )"

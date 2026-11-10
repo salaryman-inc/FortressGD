@@ -13,7 +13,13 @@ from typing import Any
 
 from fortressgd.core.errors import NEXT_TEMPLATES, ToolError, UserError
 from fortressgd.core.kdf import secret_hash
-from fortressgd.core.patches import patch_dir_for_tag, patchset_id, patchset_inputs, require_series
+from fortressgd.core.patches import (
+    patch_dir_for_tag,
+    patchset_id,
+    patchset_inputs,
+    require_series,
+    template_patchset_inputs,
+)
 from fortressgd.core.leakscan import format_leaks, redact, scan_paths, secret_needles
 from fortressgd.core.paths import default_cache_dir, docker_dir, patches_root
 from fortressgd.core.secret import load_secret_hex, secret_bytes_from_hex
@@ -150,7 +156,7 @@ def find_cached_editor(
 ) -> Path | None:
     """The cached shared editor for this tag and FortressGD version, if built."""
     tag = concrete_godot_tag(godot)
-    name = editor_filename(tag, arch, patchset_for_tag(tag, patches_dir), editor_header_id(patches_dir))
+    name = editor_filename(tag, arch, editor_patchset_for_tag(tag, patches_dir), editor_header_id(patches_dir))
     path = templates_cache_dir(cache_dir) / name
     return path if path.is_file() else None
 
@@ -281,6 +287,15 @@ def normalize_platform(platform: str) -> str:
 
 
 def patchset_for_tag(godot: str, patches_dir: Path | None = None) -> str:
+    """The patchset id in template names: series patches, build-deps.sh and the
+    template's fixed common files."""
+    tag = concrete_godot_tag(godot)
+    root = patches_root() if patches_dir is None else Path(patches_dir)
+    return patchset_id(template_patchset_inputs(patch_dir_for_tag(tag, root)))
+
+
+def editor_patchset_for_tag(godot: str, patches_dir: Path | None = None) -> str:
+    """The patchset id in the shared editor's name: series patches and build-deps.sh."""
     tag = concrete_godot_tag(godot)
     root = patches_root() if patches_dir is None else Path(patches_dir)
     return patchset_id(patchset_inputs(patch_dir_for_tag(tag, root)))
@@ -370,7 +385,7 @@ def build_templates(
     root = patches_root() if patches_dir is None else Path(patches_dir)
     tag_dir = patch_dir_for_tag(tag, root)
     require_series(tag_dir)
-    pset = patchset_id(patchset_inputs(tag_dir))
+    pset = patchset_id(template_patchset_inputs(tag_dir))
 
     _salt, _masks, _shards, did = dialect_material(secret, tag, key_epoch=key_epoch)
     needles = secret_needles(secret, tag, key_epoch=key_epoch)

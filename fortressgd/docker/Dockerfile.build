@@ -1,0 +1,50 @@
+# FortressGD build image: a precompiled Godot tree for one Godot tag, platform and
+# arch (DESIGN.md §18.4). It holds the patched Godot source, every object file of a
+# template_release build compiled against the placeholder fortressgd_gen.cpp, and
+# the build dependencies. `fortressgd templates build` runs it in FGD_MODE=relink
+# with the project's generated fortressgd_gen.cpp mounted at /src/fortressgd_gen.cpp:
+# the container recompiles that file and relinks. No secret or key is in the image.
+#
+# Built by `fortressgd templates build` (or the release workflow) with this
+# directory layout as the context:
+#   Dockerfile.build
+#   patches/   the tag's series, patches and build-deps.sh
+#   common/    fortressgd/patches/common
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+ARG GODOT_VERSION
+ARG FGD_GODOT
+ARG FGD_PLATFORM
+ARG FGD_ARCH=x86_64
+ARG FGD_LTO=
+ARG FGD_PATCHSET
+
+COPY patches/ /patches/
+COPY common/ /common/
+
+# One layer: clone, patch, fetch build-deps and compile everything. The prebuild
+# refuses a patchset that differs from FGD_PATCHSET and deletes the
+# placeholder-linked binary when it is done.
+RUN FGD_MODE=prebuild GODOT_VERSION="${GODOT_VERSION}" FGD_GODOT="${FGD_GODOT}" \
+        FGD_PLATFORM="${FGD_PLATFORM}" FGD_ARCH="${FGD_ARCH}" FGD_LTO="${FGD_LTO}" \
+        FGD_PATCHSET="${FGD_PATCHSET}" PATCHES_DIR=/patches FORTRESSGD_COMMON=/common \
+        GODOT_SRC=/work/godot OUT_DIR=/tmp/fortressgd-prebuild-out \
+        /usr/local/bin/fortressgd-templates-entrypoint \
+    && rm -rf /tmp/fortressgd-prebuild-out
+
+ENV FGD_MODE=relink \
+    GODOT_VERSION=${GODOT_VERSION} \
+    FGD_GODOT=${FGD_GODOT} \
+    FGD_PLATFORM=${FGD_PLATFORM} \
+    FGD_ARCH=${FGD_ARCH} \
+    PATCHES_DIR=/patches \
+    FORTRESSGD_COMMON=/common \
+    GODOT_SRC=/work/godot
+
+LABEL org.fortressgd.image="build" \
+      org.fortressgd.godot="${FGD_GODOT}" \
+      org.fortressgd.platform="${FGD_PLATFORM}" \
+      org.fortressgd.arch="${FGD_ARCH}" \
+      org.fortressgd.patchset="${FGD_PATCHSET}" \
+      org.fortressgd.lto="${FGD_LTO}"

@@ -183,5 +183,26 @@ class BuildImageModeTests(unittest.TestCase):
         self.assertIn("FGD_MODE=source only", run.stderr)
 
 
+
+class TemplatePatchsetTests(unittest.TestCase):
+    def test_template_id_covers_the_fixed_common_files(self) -> None:
+        from fortressgd.core.patches import TEMPLATE_COMMON_FILES, patchset_id, template_patchset_inputs
+        from fortressgd.core.templates import editor_patchset_for_tag, patchset_for_tag
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "patches"
+            shutil.copytree(PKG / "patches", root)
+            inputs = template_patchset_inputs(root / "4.6.2")
+            self.assertEqual([p.name for p in inputs[-3:]], list(TEMPLATE_COMMON_FILES))
+            before = patchset_for_tag("4.6.2", root)
+            editor_before = editor_patchset_for_tag("4.6.2", root)
+            self.assertNotEqual(before, editor_before)
+            shim = root / "common" / "fortressgd_gen_shim.cpp"
+            shim.write_text(shim.read_text() + "\n// changed\n")
+            self.assertNotEqual(patchset_for_tag("4.6.2", root), before)
+            self.assertEqual(editor_patchset_for_tag("4.6.2", root), editor_before)
+            self.assertEqual(patchset_for_tag("4.6.2", root), patchset_id(template_patchset_inputs(root / "4.6.2")))
+
+
 if __name__ == "__main__":
     unittest.main()
