@@ -665,13 +665,27 @@ Release CI publishes `ghcr.io/salaryman-inc/fortressgd-build:<fgd-version>-godot
 
 The project secret never enters the container. When the CLI itself runs inside a FortressGD container, the compile and link run as a separate unprivileged user that can read neither `.fortressgd.secret` nor the CLI's environment.
 
-**Link-time optimization is the open question.** `production=yes` enables it, which makes the relink redo optimization across the whole program. The first implementation measures warm relink time per platform and picks the first option that meets goal 2:
+**Link-time optimization.** `production=yes` enables it, which makes the relink redo optimization across the whole program. The first implementation measures warm relink time per platform and picks the first option that meets goal 2:
 
 1. Keep full LTO, if the relink fits.
 2. Switch to ThinLTO with a link cache (clang on Linux, llvm-mingw on Windows), so a relink reoptimizes only what changed.
 3. Turn LTO off for templates, documenting the measured size and speed cost.
 
-The result is recorded here.
+**Result: full LTO stays (option 1).** Each warm relink recompiled one file, `core/fortressgd_gen.cpp`.
+
+| Where | Platform | LTO | Warm relink | Template size |
+|---|---|---|---|---|
+| GitHub-hosted `ubuntu-latest` (e2e run 42823510068) | Linux, 4.6.2 | full | 552 s | |
+| GitHub-hosted `ubuntu-latest` (e2e run 42823510068) | Linux, 4.7.2 | full | 560 s | |
+| Local, 4 cores | Linux | full | 252 s | 71.8 MB |
+| Local, 16 cores | Linux | full | 164–169 s | 71.8 MB |
+| Local, 16 cores | Linux | thin, clang + lld + cache | 7–8 s | 79.2 MB |
+| Local, 16 cores | Linux | none | 7–8 s | 83.7 MB |
+| Local, 4 and 16 cores | Windows (MinGW-GCC) | full | 9 s | 99.8 MB |
+
+- **Linux** meets goal 2 on a hosted runner with full LTO, but with only 40–50 s to spare. A full-LTO relink reoptimizes the whole program, so it gains little from more cores: 252 s on 4 local cores, about 165 s on 16. If runner variance pushes it over 600 s, switch to option 2: ThinLTO with an lld cache, which relinks in seconds at about 10% more size.
+- **Windows** needs no change. Godot links MinGW-GCC with `-fno-use-linker-plugin -fwhole-program`, so LTO adds nothing to a relink. The e2e job does not build Windows; these times are local.
+- **On CI, the first build compiles the image**: 1942 s (4.7.2) and 2040 s (4.6.2), including that build's own relink. The image is about 6.7 GB unpacked. Prebuilt images (step 4) remove this cost.
 
 Images:
 
