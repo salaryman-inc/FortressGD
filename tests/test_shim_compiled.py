@@ -70,5 +70,35 @@ class ShimCompiledTests(unittest.TestCase):
                     self.assertEqual(lines[4], v["pubkey"].hex())
 
 
+class PlaceholderTests(unittest.TestCase):
+    """The build image's stand-in for fortressgd_gen.cpp (DESIGN.md §18.4)."""
+
+    def test_holds_no_values(self) -> None:
+        code = (_COMMON / "fortressgd_gen_placeholder.cpp").read_text(encoding="utf-8")
+        self.assertNotRegex(code, r"0x[0-9a-fA-F]{2}")
+        self.assertEqual(code.count("__builtin_trap();"), 5)
+
+    def test_template_linked_with_it_stops_at_startup(self) -> None:
+        if not _COMPILERS:
+            self.skipTest("no C++ compiler on PATH")
+        main = '#include "fortressgd_gen_shim.h"\n#include <cstdio>\nint main() { puts("ran"); return 0; }\n'
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            for name in ("fortressgd_gen_api.h", "fortressgd_gen_shim.h", "fortressgd_gen_shim.cpp", "fortressgd_gen_placeholder.cpp"):
+                shutil.copy(_COMMON / name, work / name)
+            (work / "main.cpp").write_text(main, encoding="utf-8")
+            for cxx in _COMPILERS:
+                with self.subTest(compiler=cxx):
+                    exe = work / "run"
+                    subprocess.run(
+                        [cxx, "-O2", "-Wall", "-Werror", "main.cpp", "fortressgd_gen_shim.cpp",
+                         "fortressgd_gen_placeholder.cpp", "-o", str(exe)],
+                        cwd=work, check=True, capture_output=True, timeout=180,
+                    )
+                    run = subprocess.run([str(exe)], capture_output=True, text=True, timeout=30)
+                    self.assertNotEqual(run.returncode, 0)
+                    self.assertNotIn("ran", run.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
