@@ -1,3 +1,4 @@
+# check=skip=InvalidDefaultArgInFrom
 # FortressGD build image: a precompiled Godot tree for one Godot tag, platform and
 # arch (DESIGN.md §18.4). It holds the patched Godot source, every object file of a
 # template_release build compiled against the placeholder fortressgd_gen.cpp, and
@@ -10,6 +11,7 @@
 #   Dockerfile.build
 #   patches/   the tag's series, patches and build-deps.sh
 #   common/    fortressgd/patches/common
+# BASE_IMAGE is the template image; `fortressgd templates build` always passes it.
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
