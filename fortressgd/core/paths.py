@@ -46,5 +46,11 @@ def docker_dir() -> Path:
     return package_root() / "docker"
 
 
+def images_lock_path() -> Path:
+    """The build image digests a release pins (DESIGN.md §18.4). The release
+    workflow writes it; a source checkout has none."""
+    return package_root() / "images.lock.json"
+
+
 def default_cache_dir() -> Path:
     return Path("~/.cache/fortressgd").expanduser()

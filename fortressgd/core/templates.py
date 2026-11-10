@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -22,7 +23,7 @@ from fortressgd.core.patches import (
     template_patchset_inputs,
 )
 from fortressgd.core.leakscan import format_leaks, redact, scan_paths, secret_needles
-from fortressgd.core.paths import default_cache_dir, docker_dir, patches_root
+from fortressgd.core.paths import default_cache_dir, docker_dir, images_lock_path, patches_root
 from fortressgd.core.secret import load_secret_hex, secret_bytes_from_hex
 from fortressgd.core.version import concrete_godot_tag  # noqa: F401  (re-exported)
 from fortressgd.generator.codeseed import CODEGEN_VERSION
@@ -392,28 +393,33 @@ def build_image_tag(
     )
 
 
-def ensure_build_image(
+def _build_image_inputs(
+    tag: str, platform: str, arch: str, root: Path, lto: str
+) -> tuple[Path, str, str]:
+    """(tag dir, template patchset id, local build image tag) for these inputs."""
+    tag_dir = patch_dir_for_tag(tag, root)
+    require_series(tag_dir)
+    pset = patchset_id(template_patchset_inputs(tag_dir))
+    return tag_dir, pset, build_image_tag(tag, platform, arch, pset, lto=lto, patches_dir=root)
+
+
+def build_build_image(
     tag: str,
     platform: str,
     *,
     arch: str = DEFAULT_ARCH,
     patches_dir: Path | None = None,
     lto: str = TEMPLATE_LTO,
+    extra_tags: tuple[str, ...] = (),
+    labels: dict[str, str] | None = None,
 ) -> str:
-    """The build image for this tag, platform and arch, built locally if Docker lacks it.
+    """docker build the build image (DESIGN.md §18.4); returns its local tag.
 
-    Building it compiles Godot once (DESIGN.md §18.4); later template builds for any
-    project relink against it. The image holds no secret: the tree is compiled
-    against the trapping placeholder fortressgd_gen.cpp.
+    The release workflow adds its registry tags and OCI labels through extra_tags
+    and labels; `templates build` uses neither.
     """
     root = patches_root() if patches_dir is None else Path(patches_dir)
-    tag_dir = patch_dir_for_tag(tag, root)
-    require_series(tag_dir)
-    pset = patchset_id(template_patchset_inputs(tag_dir))
-    image = build_image_tag(tag, platform, arch, pset, lto=lto, patches_dir=root)
-    inspect = subprocess.run(["docker", "image", "inspect", image], capture_output=True, text=True)
-    if inspect.returncode == 0:
-        return image
+    tag_dir, pset, image = _build_image_inputs(tag, platform, arch, root, lto)
     ensure_docker_image()
     print(
         "fortressgd: building {0}; this compiles Godot once, later template builds relink".format(image),
@@ -435,8 +441,12 @@ def ensure_build_image(
             "FGD_PATCHSET": pset,
         }
         cmd = ["docker", "build", "--progress=plain", "-f", str(ctx / "Dockerfile.build"), "-t", image]
+        for extra in extra_tags:
+            cmd += ["-t", extra]
         for key, value in args.items():
             cmd += ["--build-arg", "{0}={1}".format(key, value)]
+        for key, value in sorted((labels or {}).items()):
+            cmd += ["--label", "{0}={1}".format(key, value)]
         cmd.append(str(ctx))
         # The compile takes a while; stream it (stdout to our stderr) rather than
         # sit silent.
@@ -447,6 +457,160 @@ def ensure_build_image(
             templates_build_command(tag, platform),
         )
     return image
+
+
+def ensure_build_image(
+    tag: str,
+    platform: str,
+    *,
+    arch: str = DEFAULT_ARCH,
+    patches_dir: Path | None = None,
+    lto: str = TEMPLATE_LTO,
+) -> str:
+    """The locally built build image for this tag, platform and arch, built if Docker lacks it.
+
+    Building it compiles Godot once (DESIGN.md §18.4); later template builds for any
+    project relink against it. The image holds no secret: the tree is compiled
+    against the trapping placeholder fortressgd_gen.cpp.
+    """
+    root = patches_root() if patches_dir is None else Path(patches_dir)
+    _tag_dir, _pset, image = _build_image_inputs(tag, platform, arch, root, lto)
+    inspect = subprocess.run(["docker", "image", "inspect", image], capture_output=True, text=True)
+    if inspect.returncode == 0:
+        return image
+    return build_build_image(tag, platform, arch=arch, patches_dir=root, lto=lto)
+
+
+# images.lock.json (DESIGN.md §18.4): the release workflow writes it into the
+# wheel and sdist of each release. A source checkout has none.
+IMAGE_LOCK_SCHEMA = 1
+_DIGEST_REF = re.compile(r"^[a-z0-9][a-z0-9._/:-]*@sha256:[0-9a-f]{64}$")
+
+
+def load_image_pins(path: Path | None = None) -> list[dict[str, str]]:
+    """The pinned build images this CLI release ships with; [] when it has none."""
+    lock = images_lock_path() if path is None else Path(path)
+    if not lock.is_file():
+        return []
+    try:
+        data = json.loads(lock.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ToolError(
+            "{0} is unreadable: {1}".format(lock.name, exc),
+            "reinstall FortressGD from its release, then: fortressgd doctor",
+        )
+    images = data.get("images") if isinstance(data, dict) else None
+    if not isinstance(data, dict) or data.get("schema") != IMAGE_LOCK_SCHEMA or not isinstance(images, list):
+        raise ToolError(
+            "{0} is not a schema {1} image lock".format(lock.name, IMAGE_LOCK_SCHEMA),
+            "reinstall FortressGD from its release, then: fortressgd doctor",
+        )
+    pins = []
+    for entry in images:
+        fields = ("godot", "platform", "arch", "tag", "ref")
+        if not isinstance(entry, dict) or not all(isinstance(entry.get(k), str) for k in fields):
+            raise ToolError(
+                "{0} has a malformed entry".format(lock.name),
+                "reinstall FortressGD from its release, then: fortressgd doctor",
+            )
+        if not _DIGEST_REF.match(entry["ref"]):
+            raise ToolError(
+                "{0} pins {1}, which is not a <repository>@sha256:<digest> reference".format(lock.name, entry["ref"]),
+                "reinstall FortressGD from its release, then: fortressgd doctor",
+            )
+        pins.append({k: entry[k] for k in fields})
+    return pins
+
+
+def pinned_build_image(tag: str, platform: str, arch: str = DEFAULT_ARCH, pins: list[dict[str, str]] | None = None) -> dict[str, str] | None:
+    for pin in load_image_pins() if pins is None else pins:
+        if (pin["godot"], pin["platform"], pin["arch"]) == (tag, platform, arch):
+            return pin
+    return None
+
+
+def _image_present(ref: str) -> bool:
+    return subprocess.run(["docker", "image", "inspect", ref], capture_output=True, text=True).returncode == 0
+
+
+def _pull_image(ref: str, tag: str, platform: str) -> None:
+    print("fortressgd: pulling {0}".format(ref), file=sys.stderr, flush=True)
+    pulled = subprocess.run(["docker", "pull", ref], stdout=2)
+    if pulled.returncode != 0:
+        raise ToolError(
+            "could not pull {0} (log above)".format(ref),
+            "check your network and registry access, or compile it here: "
+            + templates_build_command(tag, platform) + " --from-source",
+        )
+
+
+def resolve_build_image(
+    tag: str,
+    platform: str,
+    *,
+    arch: str = DEFAULT_ARCH,
+    patches_dir: Path | None = None,
+    lto: str = TEMPLATE_LTO,
+    image: str | None = None,
+) -> str:
+    """The build image a relink runs in (DESIGN.md §18.4).
+
+    1. image (--image): used as given, pulled if Docker lacks it. The relink still
+       checks the image's recorded patchset, tag, platform and LTO mode.
+    2. The image pinned by digest in this release's images.lock.json, pulled by
+       that digest. Docker verifies the content against it, so no other image
+       can stand in for it.
+    3. No pin (a source checkout, or --patches-dir): built locally.
+    """
+    if image:
+        if not _image_present(image):
+            _pull_image(image, tag, platform)
+        print("fortressgd: using --image {0} instead of a pinned build image".format(image), file=sys.stderr)
+        return image
+    if patches_dir is not None:
+        return ensure_build_image(tag, platform, arch=arch, patches_dir=patches_dir, lto=lto)
+    pin = pinned_build_image(tag, platform, arch)
+    if pin is None:
+        return ensure_build_image(tag, platform, arch=arch, lto=lto)
+    _tag_dir, _pset, expected = _build_image_inputs(tag, platform, arch, patches_root(), lto)
+    if pin["tag"] != expected:
+        raise ToolError(
+            "the pinned {0} {1} build image was built from other inputs ({2}) than this "
+            "install's patches and Docker files ({3})".format(tag, platform, pin["tag"], expected),
+            "reinstall FortressGD from its release, or compile it here: "
+            + templates_build_command(tag, platform) + " --from-source",
+        )
+    if not _image_present(pin["ref"]):
+        _pull_image(pin["ref"], tag, platform)
+    return pin["ref"]
+
+
+def build_image_status(tag: str, platforms: list[str], arch: str = DEFAULT_ARCH) -> list[str]:
+    """doctor lines: is each platform's pinned build image pinned and pulled?"""
+    try:
+        pins = load_image_pins()
+    except ToolError as exc:
+        return ["warning: {0}\nRun: {1}".format(exc, exc.next_command)]
+    if not pins:
+        return [
+            "note: this install pins no build images (a source checkout); "
+            "templates build compiles them locally the first time"
+        ]
+    docker = _docker_available()
+    lines = []
+    for platform in platforms:
+        pin = pinned_build_image(tag, platform, arch, pins)
+        if pin is None:
+            lines.append("warning: no pinned build image for godot {0} {1}".format(tag, platform))
+        elif docker and _image_present(pin["ref"]):
+            lines.append("ok: pinned build image for {0} {1} is pulled ({2})".format(tag, platform, pin["ref"]))
+        else:
+            lines.append(
+                "note: pinned build image for {0} {1} is not pulled yet; templates build pulls {2}".format(
+                    tag, platform, pin["ref"]
+                )
+            )
+    return lines
 
 
 def build_templates(
@@ -463,14 +627,16 @@ def build_templates(
     require_signature: bool = False,
     key_epoch: int = 0,
     from_source: bool = False,
+    image: str | None = None,
 ) -> list[Path]:
     """
     Generate fortressgd_gen.cpp, build each platform's template in Docker, scan the
     result and copy it into the cache. Returns cached template paths.
 
     By default the template is relinked in a build image holding a precompiled Godot
-    tree (DESIGN.md §18.4), which is built locally the first time. from_source=True,
-    or dialect off, compiles everything in a fresh container instead.
+    tree (DESIGN.md §18.4): `image` if given, else the one this release pins by
+    digest, else one built locally the first time. from_source=True, or dialect off,
+    compiles everything in a fresh container instead.
     """
     env = os.environ if environ is None else environ
     hex_secret = load_secret_hex(secret_file=secret_file, environ=env, cwd=cwd)
@@ -480,6 +646,16 @@ def build_templates(
     plats = [normalize_platform(p) for p in platforms]
     if not plats:
         raise UserError("no platforms to build", NEXT_TEMPLATES)
+    if image and (from_source or not dialect):
+        raise UserError(
+            "--image is a build image to relink in; it cannot be used with --from-source or dialect = false",
+            templates_build_command(tag, plats[0]),
+        )
+    if image and len(plats) != 1:
+        raise UserError(
+            "--image is one platform's build image; build one --platform at a time with it",
+            templates_build_command(tag, plats[0]) + " --image " + image,
+        )
 
     root = patches_root() if patches_dir is None else Path(patches_dir)
     tag_dir = patch_dir_for_tag(tag, root)
@@ -512,10 +688,18 @@ def build_templates(
         use_image = not from_source and dialect and not skip
         if not from_source and not dialect:
             print("fortressgd: dialect is off; building templates from source", file=sys.stderr)
-        ensure_docker_image()
+        if not _docker_available():
+            raise ToolError(
+                "docker is required to build templates",
+                "install Docker, then: fortressgd templates build",
+            )
+        if not use_image:
+            ensure_docker_image()
         produced = []
         for platform in plats:
-            image = ensure_build_image(tag, platform, patches_dir=root) if use_image else None
+            build_image = (
+                resolve_build_image(tag, platform, patches_dir=patches_dir, image=image) if use_image else None
+            )
             run = _run_build_container(
                 {
                     "GODOT_VERSION": godot_git_tag(tag),
@@ -530,14 +714,14 @@ def build_templates(
                     "FGD_DIALECT": "1" if dialect else "0",
                     "FGD_REQUIRE_SIGNATURE": "1" if require_signature else "0",
                     "FGD_GENERATOR": str(CODEGEN_VERSION),
-                    "FGD_MODE": "relink" if image else "source",
+                    "FGD_MODE": "relink" if build_image else "source",
                 },
                 # A build image carries its own patches and common files.
-                patches=None if image else tag_dir,
+                patches=None if build_image else tag_dir,
                 gen_cpp=gen_cpp,
-                common=None if image else root / "common",
+                common=None if build_image else root / "common",
                 out_dir=out_dir,
-                image=image,
+                image=build_image,
             )
             if run.returncode != 0:
                 detail = redact((run.stderr or run.stdout or "").strip(), needles)

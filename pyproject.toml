@@ -50,4 +50,6 @@ fortressgd = [
   "plugin/addons/fortressgd/*",
   "patches/*/*",
   "docker/*",
+  # Written by the release workflow; absent in a source checkout.
+  "images.lock.json",
 ]

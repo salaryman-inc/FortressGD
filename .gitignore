@@ -11,3 +11,6 @@ build/
 dialect.gen.h
 *.manifest.json
 .cache/
+
+# Written by the release workflow into the wheel and sdist only.
+fortressgd/images.lock.json

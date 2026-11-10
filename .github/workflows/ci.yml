@@ -160,6 +160,7 @@ jobs:
           assert (patches_root() / "common" / "fortressgd_kdf.cpp").is_file()
           assert (patches_root() / "common" / "fortressgd_editor_dialect.h").is_file()
           assert (docker_dir() / "Dockerfile.templates").is_file()
+          assert (docker_dir() / "Dockerfile.build").is_file()
           assert (docker_dir() / "entrypoint.sh").is_file()
           assert (plugin_source_dir() / "plugin.cfg").is_file()
           assert example_toml_path().is_file()

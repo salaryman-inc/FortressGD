@@ -1,0 +1,152 @@
+name: Release
+
+# Runs only on v* tags, which only repository admins can create (the "Release
+# tags" ruleset, .github/rulesets/release-tags.json). It publishes the build images
+# to GHCR, writes their digests into the CLI's images.lock.json, builds the wheel
+# and sdist with that file inside, attests everything, and creates a draft GitHub
+# release for a maintainer to publish (DESIGN.md §18.4, docs/releasing.md).
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Tag matches the package version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - run: python -m fortressgd.release check-version --tag "$GITHUB_REF_NAME"
+
+  images:
+    name: Build image (Godot ${{ matrix.godot }}, ${{ matrix.platform }})
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    strategy:
+      # One missing image would leave the lock incomplete; stop the others.
+      fail-fast: true
+      matrix:
+        godot: ["4.6.2", "4.7.2"]
+        platform: [linux, windows]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install .
+      - name: Log in to GHCR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+      - name: Build and push the build image
+        id: push
+        env:
+          GODOT: ${{ matrix.godot }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          repository="ghcr.io/$owner/fortressgd-build"
+          # Run from outside the checkout so the installed package is the one used.
+          cd "$RUNNER_TEMP"
+          ref="$(python -m fortressgd.release build-image --godot "$GODOT" --platform "$PLATFORM" \
+            --repository "$repository" --revision "$GITHUB_SHA" --out "$RUNNER_TEMP/image-$GODOT-$PLATFORM.json")"
+          echo "name=$repository" >> "$GITHUB_OUTPUT"
+          echo "digest=${ref#*@}" >> "$GITHUB_OUTPUT"
+          echo "Godot $GODOT $PLATFORM: \`$ref\`" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ steps.push.outputs.name }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: image-${{ matrix.godot }}-${{ matrix.platform }}
+          path: ${{ runner.temp }}/image-${{ matrix.godot }}-${{ matrix.platform }}.json
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Pin the images, build and attest the CLI, draft the release
+    needs: images
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: image-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/images
+      - name: Write images.lock.json
+        run: python -m fortressgd.release write-lock --commit "$GITHUB_SHA" "$RUNNER_TEMP"/images/image-*.json
+      - name: Build the wheel and sdist
+        run: |
+          set -euo pipefail
+          python -m pip install build
+          python -m build
+          # Both must carry the lock, or the release would pin nothing.
+          python - <<'PY'
+          import glob, tarfile, zipfile
+          (whl,) = glob.glob("dist/*.whl")
+          (sdist,) = glob.glob("dist/*.tar.gz")
+          assert "fortressgd/images.lock.json" in zipfile.ZipFile(whl).namelist(), whl
+          assert any(n.endswith("/fortressgd/images.lock.json") for n in tarfile.open(sdist).getnames()), sdist
+          PY
+      - name: The wheel uses the pinned images
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install dist/*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/venv/bin/python" - <<'PY'
+          from fortressgd.core.templates import load_image_pins
+          pins = load_image_pins()
+          assert len(pins) == 4, pins
+          for pin in pins:
+              print(pin["godot"], pin["platform"], pin["ref"])
+          PY
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/*.whl
+            dist/*.tar.gz
+            fortressgd/images.lock.json
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cp fortressgd/images.lock.json dist/images.lock.json
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" \
+            --verify-tag --draft --title "FortressGD $GITHUB_REF_NAME" --generate-notes
