@@ -18,7 +18,8 @@ from fortressgd.core.leakscan import format_leaks, redact, scan_paths, secret_ne
 from fortressgd.core.paths import default_cache_dir, docker_dir, patches_root
 from fortressgd.core.secret import load_secret_hex, secret_bytes_from_hex
 from fortressgd.core.version import concrete_godot_tag  # noqa: F401  (re-exported)
-from fortressgd.generator.dialect import GENERATOR_VERSION, dialect_material, write_dialect_header
+from fortressgd.generator.dialect import GENERATOR_VERSION, dialect_material
+from fortressgd.generator.generate import render_gen_header
 
 KDF_NAME = "FGD-KDF-1"
 SUPPORTED_PLATFORMS = ("linux", "windows")
@@ -372,9 +373,12 @@ def build_templates(
     with tempfile.TemporaryDirectory(prefix="fortressgd-tmpl-") as tmp:
         tmp_path = Path(tmp)
         header = tmp_path / "dialect.gen.h"
-        # The header holds the masked pack key and public values; the project
-        # secret itself is never written here or passed to the container.
-        write_dialect_header(header, secret, tag, require_signature=require_signature, key_epoch=key_epoch)
+        # Generator v2 (DESIGN.md §18.3): the header decodes the pack key and the
+        # public dialect values at runtime. The project secret is never written
+        # here or passed to the container, and the raw key never appears in the
+        # file. require_signature is a compile-time flag (FGD_REQUIRE_SIGNATURE in
+        # the container env), not a value in the header.
+        header.write_text(render_gen_header(secret, tag, key_epoch=key_epoch), encoding="utf-8")
         out_dir = tmp_path / "out"
         out_dir.mkdir()
 

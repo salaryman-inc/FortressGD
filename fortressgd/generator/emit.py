@@ -56,14 +56,16 @@ def _emit_op(op: Op, idx: int, length: int) -> list[str]:
 
 
 def emit_decode_fn(name: str, plain: bytes, chain: list[Op]) -> str:
-    """A static C++ function ``void <name>(uint8_t out[L])`` that yields ``plain``.
+    """An inline C++ function ``void <name>(uint8_t out[L])`` that yields ``plain``.
 
     The embedded bytes are the encoded form; the body runs the chain to decode.
+    inline so the generated header can be included by many translation units with
+    one merged definition; the volatile locals still defeat constant folding.
     """
     length = len(plain)
     stored = encode_value(plain, chain)
     out: list[str] = []
-    out.append("static void {0}(uint8_t out[{1}]) {{".format(name, length))
+    out.append("inline void {0}(uint8_t out[{1}]) {{".format(name, length))
     out.append(_vol_array("enc", stored))
     out.append("\tuint8_t b[{0}];".format(length))
     out.append("\tfor (int i = 0; i < {0}; i++) b[i] = enc[i];".format(length))

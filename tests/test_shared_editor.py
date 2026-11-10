@@ -41,6 +41,9 @@ from fortressgd.generator.dialect import (
     render_dialect_header,
     write_dialect_header,
 )
+from fortressgd.generator.generate import (
+    render_gen_header,
+)
 from tests.support import PKG, ROOT, seed_mini_godot_tree
 
 HEADER = editor_header_path()
@@ -60,7 +63,7 @@ int fgd_field(int i) {
 	}
 	return -1;
 }
-int fgd_key_byte(int shard, int i) { return FGD_KEY_SHARDS[shard][i] ^ FGD_KEY_MASKS[shard][i]; }
+int fgd_key_byte(int shard, int i) { uint8_t k[32]; fgd_derive_key(k); return k[shard * 8 + i]; }
 int fgd_requires_signature() { return FGD_REQUIRE_PACK_SIGNATURE ? 1 : FGD_PACK_PUBKEY[0]; }
 """
 
@@ -237,7 +240,7 @@ class EditorHeaderTests(unittest.TestCase):
 
 class EditorHeaderContentTests(unittest.TestCase):
     def test_defines_every_name_the_patches_take_from_a_generated_header(self) -> None:
-        generated = render_dialect_header(_secrets(1)[0], "4.6.2")
+        generated = render_gen_header(_secrets(1)[0], "4.6.2")
         names = set(re.findall(r"\b(FGD_[A-Z_]+)\b", generated))
         editor = HEADER.read_text(encoding="utf-8")
         # The editor is built without FORTRESSGD_OPCODE_MAP: packs carry tokens.
@@ -252,10 +255,12 @@ class EditorHeaderContentTests(unittest.TestCase):
         )
         # The only numbers are the stock magic; the arrays are zero-initialised.
         self.assertEqual(re.findall(r"0x[0-9a-fA-F]+", code), ["0x43504447"])
-        self.assertRegex(code, r"FGD_KEY_SHARDS\[4\]\[8\] = \{\};")
-        self.assertRegex(code, r"FGD_KEY_MASKS\[4\]\[8\] = \{\};")
+        # No pack key is compiled in: fgd_derive_key zeroes the buffer.
+        self.assertIn("memset(r_key, 0, 32)", code)
+        self.assertNotIn("FGD_KEY_SHARDS", code)
+        self.assertNotIn("FGD_KEY_MASKS", code)
         self.assertRegex(code, r"FGD_PACK_PUBKEY\[32\] = \{\};")
-        self.assertIn("FGD_REQUIRE_PACK_SIGNATURE = 0;", code)
+        self.assertIn("#define FGD_REQUIRE_PACK_SIGNATURE 0", code)
 
 
 def _entrypoint_env(tmp: Path, header: Path, *, target: str, platform: str = "linux") -> dict[str, str]:

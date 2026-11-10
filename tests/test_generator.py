@@ -158,12 +158,17 @@ class TemplateKeyMaterialTests(unittest.TestCase):
     """What dialect.gen.h compiles into a template: the masked pack key and nothing
     the project secret or the pack-signing seed can be recovered from."""
 
-    def test_engine_patches_use_the_reassembly_loop_under_test(self) -> None:
+    def test_engine_patches_call_the_generated_derive_key(self) -> None:
+        # Generator v2: the engine decodes the key with fgd_derive_key() from the
+        # generated header, not the v1 masked-shard loop.
         sources = [PKG / "patches" / "common" / "fortressgd_kdf.cpp"]
         sources += sorted((PKG / "patches").glob("*/0001-key-derive.patch"))
         for source in sources:
             with self.subTest(source=source.name):
-                self.assertIn(_REASSEMBLY_LINE, source.read_text(encoding="utf-8"))
+                text = source.read_text(encoding="utf-8")
+                self.assertIn("fgd_derive_key(r_key)", text)
+                self.assertNotIn("FGD_KEY_SHARDS", text)
+                self.assertNotIn("FGD_KEY_MASKS", text)
 
     def test_header_declares_shards_and_masks_volatile(self) -> None:
         header = render_dialect_header(bytes(range(SECRET_BYTES)), "4.6.2")
@@ -221,29 +226,9 @@ class TemplateKeyMaterialTests(unittest.TestCase):
                                     "{0} bytes {1}..{2} were folded into the object".format(name, i, i + 8),
                                 )
 
-    def test_runtime_reassembly_yields_the_key_export_encrypts_with(self) -> None:
-        # Compile and run the shipped fortressgd_derive_key() against a generated
-        # header. Its output must equal FGD-KDF-1(secret, salt), the key
-        # `fortressgd export` hands Godot, or templates cannot open their packs.
-        cxx = shutil.which("g++") or shutil.which("clang++")
-        if not cxx:
-            self.skipTest("no C++ compiler on PATH")
-        secret = os.urandom(SECRET_BYTES)
-        expected = fgd_kdf_1(secret, derive_dialect_salt(secret, "4.6.2"))
-        harness = (
-            "#include <cstdio>\n#include \"dialect.gen.h\"\n"
-            + _derive_key_source()
-            + "int main() {\n\tuint8_t key[32];\n\tfortressgd_derive_key(key);\n"
-            "\tfor (int i = 0; i < 32; i++) printf(\"%02x\", key[i]);\n\treturn 0;\n}\n"
-        )
-        with tempfile.TemporaryDirectory() as tmp:
-            work = Path(tmp)
-            write_dialect_header(work / "dialect.gen.h", secret, "4.6.2")
-            (work / "main.cpp").write_text(harness, encoding="utf-8")
-            exe = work / "derive"
-            subprocess.run([cxx, "-O3", "main.cpp", "-o", str(exe)], cwd=work, check=True, capture_output=True, timeout=120)
-            out = subprocess.run([str(exe)], capture_output=True, text=True, check=True, timeout=30).stdout
-        self.assertEqual(out, expected.hex())
+    # The v2 runtime reassembly is verified end to end in tests/test_generate_compiled.py
+    # (compiled dialect.gen.h → fgd_derive_key() == FGD-KDF-1(secret, salt)).
+
 
 if __name__ == "__main__":
     unittest.main()

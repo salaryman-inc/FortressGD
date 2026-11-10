@@ -26,8 +26,9 @@ OUT_DIR="${OUT_DIR:-/out}"
 SKIP_SCONS="${FORTRESSGD_SKIP_SCONS:-0}"
 GODOT_SRC="${GODOT_SRC:-/work/godot}"
 FGD_DIALECT="${FGD_DIALECT:-1}"
-# 1 when [production].sign_packs is true: dialect.gen.h sets FGD_REQUIRE_PACK_SIGNATURE,
-# the template refuses unsigned packs, and its name gets the -sig suffix.
+# 1 when [production].sign_packs is true: the template is compiled with
+# -DFGD_REQUIRE_PACK_SIGNATURE=1 (a flag, not a value in the generated header),
+# refuses unsigned packs, and its name gets the -sig suffix.
 FGD_REQUIRE_SIGNATURE="${FGD_REQUIRE_SIGNATURE:-0}"
 # [production].key_epoch: the pack key in dialect.gen.h is for this epoch; non-zero
 # epochs get a -e<N> suffix so each release line has its own cached template.
@@ -55,6 +56,10 @@ if [ "$FGD_TARGET" = "editor" ]; then
     [ "$FGD_PLATFORM" = "linux" ] || err "the shared editor is built for linux only"
 else
     printf '%s\n' "$SECRET_HASH" | grep -Eq '^[0-9a-f]{16}$' || err "FGD_SECRET_HASH must be the 16-hex secret_hash"
+fi
+if [ "$FGD_TARGET" != "editor" ] && [ "$FGD_REQUIRE_SIGNATURE" = "1" ]; then
+    # Compile-time flag, never a value in the generated header (generator v2 §18.3).
+    FGD_DEFINES="$FGD_DEFINES FGD_REQUIRE_PACK_SIGNATURE=1"
 fi
 [ -d "$PATCHES_DIR" ] || err "patches directory missing at $PATCHES_DIR"
 [ -f "$HEADER_SRC" ] || err "dialect.gen.h missing at $HEADER_SRC"
@@ -112,7 +117,6 @@ if [ "$FGD_TARGET" != "editor" ] && [ "$FGD_KEY_EPOCH" != "0" ]; then
 fi
 if [ "$FGD_TARGET" != "editor" ] && [ "$FGD_REQUIRE_SIGNATURE" = "1" ]; then
     NAME="${NAME}-sig"
-    grep -q "FGD_REQUIRE_PACK_SIGNATURE = 1;" "$HEADER_SRC" || err "FGD_REQUIRE_SIGNATURE=1 but dialect.gen.h does not require signatures"
 fi
 DIALECT_ID="${FGD_DIALECT_ID:-}"
 

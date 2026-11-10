@@ -75,7 +75,8 @@ class EmitCompiledTests(unittest.TestCase):
         plain = bytes((i * 101 + 7) & 0xFF for i in range(32))
         chain = build_chain(CodeStream(self.seed, b"fold"), 32)
         fn = emit_decode_fn("fgd_decode_test", plain, chain)
-        tu = "#include <cstdint>\n" + fn + "\n"
+        # Force the inline function to be emitted so the object is non-empty.
+        tu = "#include <cstdint>\n" + fn + "\nvoid fgd_use(uint8_t *o) { fgd_decode_test(o); }\n"
         with tempfile.TemporaryDirectory() as tmp:
             work = Path(tmp)
             (work / "t.cpp").write_text(tu, encoding="utf-8")
