@@ -365,6 +365,7 @@ Do not put the raw secret or `aes_key` in the manifest.
 ### 7.3 Cache
 
 `~/.cache/fortressgd/templates/<filename>`.  
+`~/.cache/fortressgd/editor-cache/<editor>-<key>/`: the shared export editor's own Godot cache (§18.5). It is safe to delete.  
 CI: restore cache key `fgd-templates-{godot}-{patchset}-{secret_hash}-{platforms}-e{key_epoch}`, with `-sig` appended for the signature-required variant.
 
 ---
@@ -690,7 +691,7 @@ The machine that exports is trusted: it already holds the secret. So the export 
 - At export, the CLI passes the per-project values to it in environment variables for the length of one export: `FORTRESSGD_PACK_PARAMS` (magic and index permutation) and `GODOT_SCRIPT_ENCRYPTION_KEY` (the AES key). They are never written to disk, never passed as arguments, and never logged.
 - The editor needs no opcode tables. A pack carries GDScript as tokens, and the template compiles them to bytecode with its own table, so the editor's bytecode never reaches a pack.
 - Pack signing stays in the CLI (`fortressgd/core/pack_sign.py`). The editor never sees the signing seed.
-- On 4.7.2, patch `0007-editor-shutdown-doc-cache.patch` fixes an upstream crash at the end of a headless export. EditorFileSystem can emit `sources_changed` after EditorNode is freed. `EditorNode::is_cmdline_mode()` then returns false, so EditorHelp starts regenerating the script doc cache, and its thread walks the freed file system. The editor wrote the pack but died with SIGABRT, and Godot's crash handler printed nothing because the OS singleton was already gone. The official 4.7.2 editor has the same bug: it hit it during `--import` when editor settings from an earlier run were present. The patch touches only `editor/`, so it is not compiled into templates.
+- The editor gets its own Godot cache directory: `fortressgd export` sets `XDG_CACHE_HOME` to `<cache_dir>/editor-cache/<editor file name>-<key>`, where the key hashes the binary's resolved path, size and mtime. This works around an upstream Godot 4.7 crash. Godot names its class-doc cache by minor version only (`editor_doc_cache-4.7.res`) but checks it against a hash of the exact build. When a different 4.7 build wrote it (the user's official editor, or 4.7.1 before an upgrade to 4.7.2), the editor rebuilds it through deferred calls that finish after a headless export has freed the editor. `EditorNode::is_cmdline_mode()` then returns false, the script-doc regeneration thread walks the freed file system, and the process dies with SIGABRT after writing the pack. Godot's crash handler prints nothing, because the OS singleton is already gone. Official binaries alone reproduce it: import with 4.7.1, then `--export-pack` with 4.7.2. 4.6 is not affected. With its own directory, only one build ever writes the shared editor's cache, and the editor no longer rewrites the cache of the user's own editor. The workaround needs no Godot patch.
 
 That removes the per-project editor build, which the dialect path needed in 0.1.
 

@@ -45,6 +45,32 @@ def templates_cache_dir(cache_dir: str | Path | None = None) -> Path:
     return base / "templates"
 
 
+def editor_cache_home(binary: str | Path, cache_dir: str | Path | None = None) -> Path:
+    """
+    `{cache_dir}/editor-cache/<editor name>-<key>`: XDG_CACHE_HOME for one export editor.
+
+    Godot names its class-doc cache by minor version only (editor_doc_cache-4.7.res)
+    but checks it against a hash of the exact build. When two 4.7 builds share the
+    cache, each rebuilds it on its next run, and on 4.7 that rebuild ends after a
+    headless export has freed the editor, which then dies with SIGABRT (DESIGN.md
+    §18.5). Each editor binary gets its own directory, so only one build ever writes
+    it, and the user's own editor cache is left alone.
+
+    The key covers the resolved path, size and mtime, so a binary rebuilt in place
+    gets a fresh directory too.
+    """
+    path = Path(binary).expanduser()
+    try:
+        resolved = path.resolve()
+        st = resolved.stat()
+        identity = "{0}\0{1}\0{2}".format(resolved, st.st_size, st.st_mtime_ns)
+    except OSError:
+        identity = str(path)
+    key = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12]
+    base = Path(cache_dir).expanduser() if cache_dir else default_cache_dir()
+    return base / "editor-cache" / "{0}-{1}".format(path.name, key)
+
+
 SIGNATURE_SUFFIX = "-sig"
 
 

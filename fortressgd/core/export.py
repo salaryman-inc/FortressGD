@@ -39,6 +39,7 @@ from fortressgd.core.templates import (
     DEFAULT_ARCH,
     concrete_godot_tag,
     editor_build_command,
+    editor_cache_home,
     find_cached_editor,
     find_cached_template,
     missing_template_error,
@@ -458,6 +459,10 @@ def export_preset(
         # (DESIGN.md §18.5). The key is GODOT_SCRIPT_ENCRYPTION_KEY, as above.
         dialect_magic, dialect_perm, _key = dialect_params_for_secret(secret, godot_ver, key_epoch=epoch)
         child_env[PACK_PARAMS_ENV] = format_pack_params(dialect_magic, dialect_perm)
+        # Its own Godot cache, so it never shares editor_doc_cache-<major.minor>.res
+        # with another build of the same Godot version (DESIGN.md §18.5). Godot reads
+        # XDG_CACHE_HOME on Linux, the only platform the shared editor is built for.
+        child_env["XDG_CACHE_HOME"] = str(editor_cache_home(binary, cache))
 
     mangle_on = _production_mangle(cfg)
     warnings: list[str] = []

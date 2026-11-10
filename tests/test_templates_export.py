@@ -54,6 +54,7 @@ def _write_godot_stub_bin(directory: Path, log_path: Path) -> Path:
         "    'GODOT_SCRIPT_ENCRYPTION_KEY': os.environ.get('GODOT_SCRIPT_ENCRYPTION_KEY'),\n"
         "    'FORTRESSGD_SECRET': os.environ.get('FORTRESSGD_SECRET'),\n"
         "    'FORTRESSGD_PACK_PARAMS': os.environ.get('FORTRESSGD_PACK_PARAMS'),\n"
+        "    'XDG_CACHE_HOME': os.environ.get('XDG_CACHE_HOME'),\n"
         "    'presets': (Path(sys.argv[sys.argv.index('--path') + 1]) / 'export_presets.cfg')"
         ".read_text(encoding='utf-8') if '--path' in sys.argv else None,\n"
         "}}\n"
@@ -239,6 +240,7 @@ class TemplatesExportCliTests(unittest.TestCase):
             name = template_filename("4.6.2", "linux", "x86_64", pset, sh)
             (cache / name).write_bytes(b"stub-template")
 
+            editor_caches = []
             for i in range(2):
                 bindir = root / "bin-dialect-{0}".format(i)
                 log = root / "godot-dialect-{0}.json".format(i)
@@ -255,10 +257,21 @@ class TemplatesExportCliTests(unittest.TestCase):
                 self.assertIsNone(data["FORTRESSGD_SECRET"])
                 magic, perm, _key = dialect_params_for_secret(secret, "4.6.2")
                 self.assertEqual(data["FORTRESSGD_PACK_PARAMS"], format_pack_params(magic, perm))
+                # The editor gets its own Godot cache under the FortressGD cache dir,
+                # never the user's ~/.cache/godot (DESIGN.md §18.5).
+                editor_cache = Path(data["XDG_CACHE_HOME"]).resolve()
+                self.assertTrue(
+                    editor_cache.is_relative_to((root / "cache" / "editor-cache").resolve()),
+                    editor_cache,
+                )
+                self.assertTrue(editor_cache.name.startswith("godot-"), editor_cache)
+                editor_caches.append(editor_cache)
                 argv_join = " ".join(data["argv"])
                 self.assertNotIn("pack.py", argv_join)
                 self.assertNotIn("python -m", argv_join)
 
+            # Two editor binaries never share a cache.
+            self.assertNotEqual(editor_caches[0], editor_caches[1])
             presets = (root / "export_presets.cfg").read_text(encoding="utf-8")
             self.assertNotIn(derived, presets)
             self.assertNotIn(secret_hex, presets)
@@ -269,10 +282,14 @@ class TemplatesExportCliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = self._project(tmp)
             self._set_dialect(root, False)
-            proc = self._export_with_stub(root, FORTRESSGD_PACK_PARAMS="1:9f3c1a77:2013")
+            proc = self._export_with_stub(
+                root, FORTRESSGD_PACK_PARAMS="1:9f3c1a77:2013", XDG_CACHE_HOME="/users/own/cache"
+            )
             self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
             data = json.loads((root / "godot-env.json").read_text(encoding="utf-8"))
             self.assertIsNone(data["FORTRESSGD_PACK_PARAMS"])
+            # A stock export runs the user's own editor with their own cache.
+            self.assertEqual(data["XDG_CACHE_HOME"], "/users/own/cache")
 
     def test_dialect_export_fails_when_the_editor_writes_a_stock_pack(self) -> None:
         # An official editor ignores FORTRESSGD_PACK_PARAMS and writes GDPC, which

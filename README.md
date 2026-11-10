@@ -405,7 +405,7 @@ fortressgd export --preset "Windows Desktop"
 fortressgd verify build/my_game.x86_64
 ```
 
-Godot binary resolution for `export`: `FORTRESSGD_GODOT`, then `GODOT`, then `GODOT_BIN`, then `godot` / `godot4` on `PATH`. With `dialect = true`, `FORTRESSGD_EDITOR` comes first, then the cached export editor (on Linux), then the same list.
+Godot binary resolution for `export`: `FORTRESSGD_GODOT`, then `GODOT`, then `GODOT_BIN`, then `godot` / `godot4` on `PATH`. With `dialect = true`, `FORTRESSGD_EDITOR` comes first, then the cached export editor (on Linux), then the same list. That editor runs with its own Godot cache under `<cache_dir>/editor-cache/`, so it never shares one with your own Godot editor.
 
 ---
 

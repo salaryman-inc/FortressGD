@@ -26,6 +26,7 @@ from unittest import mock
 from fortressgd.core.pack_dialect import PACK_PARAMS_ENV, format_pack_params, parse_pack_params
 from fortressgd.core.templates import (
     build_editor,
+    editor_cache_home,
     editor_filename,
     editor_header_id,
     editor_header_path,
@@ -450,6 +451,41 @@ class CliEditorFlagTests(unittest.TestCase):
                     proc = run_fortressgd("templates", "build", "--editor", "--godot", "4.6.2", *extra, cwd=Path(tmp))
                     self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
                     self.assertIn("--editor builds only the shared editor", proc.stderr)
+
+
+class EditorCacheHomeTests(unittest.TestCase):
+    """XDG_CACHE_HOME for the shared editor: one directory per editor binary."""
+
+    def test_under_the_fortressgd_cache_and_named_after_the_editor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            editor = Path(tmp) / "godot-4.7.2-editor-linux-x86_64-fgdabc-p1234"
+            editor.write_bytes(b"editor")
+            home = editor_cache_home(editor, Path(tmp) / "cache")
+            self.assertEqual(home.parent, Path(tmp) / "cache" / "editor-cache")
+            self.assertRegex(home.name, r"^godot-4\.7\.2-editor-linux-x86_64-fgdabc-p1234-[0-9a-f]{12}$")
+            self.assertEqual(home, editor_cache_home(editor, Path(tmp) / "cache"))
+
+    def test_each_binary_gets_its_own_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            a = Path(tmp) / "a" / "godot"
+            b = Path(tmp) / "b" / "godot"
+            for path in (a, b):
+                path.parent.mkdir()
+                path.write_bytes(b"editor")
+            self.assertNotEqual(editor_cache_home(a, tmp), editor_cache_home(b, tmp))
+
+    def test_a_binary_rebuilt_in_place_gets_a_new_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            editor = Path(tmp) / "godot"
+            editor.write_bytes(b"editor build 1")
+            before = editor_cache_home(editor, tmp)
+            editor.write_bytes(b"editor build 2, longer")
+            self.assertNotEqual(before, editor_cache_home(editor, tmp))
+
+    def test_a_missing_binary_still_gets_a_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = editor_cache_home(Path(tmp) / "nope" / "godot", tmp)
+            self.assertEqual(home.parent, Path(tmp) / "editor-cache")
 
 
 if __name__ == "__main__":

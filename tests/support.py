@@ -47,7 +47,6 @@ UPSTREAM_FILES = (
     "core/io/file_access_pack.cpp",
     "core/io/file_access_pack.h",
     "core/io/pck_packer.cpp",
-    "editor/doc/editor_help.cpp",
     "editor/export/editor_export_platform.cpp",
     "modules/gdscript/gdscript_tokenizer_buffer.cpp",
     "modules/gdscript/gdscript_byte_codegen.h",
