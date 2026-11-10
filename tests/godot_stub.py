@@ -19,6 +19,7 @@ Environment switches (set by the test before running `fortressgd export`):
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 from fortressgd.core.config import key_epoch, load_path
@@ -62,9 +63,12 @@ def write_artifact(argv: list[str]) -> None:
     root = Path.cwd()
     if not out.is_absolute():
         out = root / out
+    if not out.parent.is_dir():
+        # Real Godot does not create the output folder; fail the way it does.
+        sys.stderr.write("ERROR: Prepare Template: The given export path doesn't exist.\n")
+        raise SystemExit(1)
     files = [f for f in os.environ.get("FGD_STUB_FILES", "main.tscn,main.gdc").split(",") if f]
     pack = build_pack(root, files)
-    out.parent.mkdir(parents=True, exist_ok=True)
     if os.environ.get("FGD_STUB_SIBLING") == "1":
         out.write_bytes(b"\x7fELF stub executable without an embedded pack")
         out.with_suffix(".pck").write_bytes(pack)

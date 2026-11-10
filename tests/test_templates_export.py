@@ -163,6 +163,21 @@ class TemplatesExportCliTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
         return json.loads(log.read_text(encoding="utf-8"))["presets"]
 
+    def test_export_creates_missing_output_folder(self) -> None:
+        # Godot refuses an output folder that does not exist (the stub does too),
+        # so export must create build/linux/ before running it.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            self._set_dialect(root, False)
+            (root / "export_presets.cfg").write_text(
+                PRESETS.replace('export_path="build/game.x86_64"', 'export_path="build/linux/game.x86_64"'),
+                encoding="utf-8",
+            )
+            self._cache_linux_template(root)
+            self.assertFalse((root / "build").exists())
+            self._export_and_read_presets_seen_by_godot(root)
+            self.assertTrue((root / "build" / "linux" / "game.x86_64").is_file())
+
     def test_export_encrypts_every_file_body_by_default(self) -> None:
         # Godot encrypts a body only when it matches encryption_include_filters;
         # empty encrypts none. export sets "*" for its run and restores the file.
