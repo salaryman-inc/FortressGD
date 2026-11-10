@@ -498,3 +498,42 @@ def dialect_params_for_secret(
     perm = derive_index_perm(secret, godot_tag, dialect_seed)
     key = dialect_key_for_secret(secret, godot_tag, dialect_seed, key_epoch)
     return magic, perm, key
+
+
+# The shared export editor reads the dialect from this variable for one export
+# (DESIGN.md §18.5, patches/common/fortressgd_editor_dialect.h).
+PACK_PARAMS_ENV = "FORTRESSGD_PACK_PARAMS"
+PACK_PARAMS_VERSION = "1"
+
+
+def format_pack_params(magic: int, perm: Sequence[int]) -> str:
+    """``1:<magic, 8 lowercase hex>:<field order, 4 digits>`` for FORTRESSGD_PACK_PARAMS."""
+    try:
+        order = _validate_perm(perm)
+    except PackError as exc:
+        raise ValueError(str(exc)) from None
+    if not 0 < magic <= 0xFFFFFFFF or magic == STOCK_PACK_MAGIC:
+        raise ValueError("dialect pack magic must be a non-zero u32 other than GDPC")
+    return "{0}:{1:08x}:{2}".format(PACK_PARAMS_VERSION, magic, "".join(str(f) for f in order))
+
+
+def parse_pack_params(text: str | None) -> tuple[int, tuple[int, int, int, int]]:
+    """Inverse of format_pack_params, with the editor's rules: unset or empty is stock."""
+    if not text:
+        return STOCK_PACK_MAGIC, STOCK_INDEX_PERM
+    parts = text.split(":")
+    if (
+        len(parts) != 3
+        or parts[0] != PACK_PARAMS_VERSION
+        or len(parts[1]) != 8
+        or any(c not in "0123456789abcdef" for c in parts[1])
+        or len(parts[2]) != INDEX_FIELD_COUNT
+        or any(c not in "0123" for c in parts[2])
+    ):
+        raise ValueError("malformed {0}".format(PACK_PARAMS_ENV))
+    magic = int(parts[1], 16)
+    if len(set(parts[2])) != INDEX_FIELD_COUNT or magic == 0 or magic == STOCK_PACK_MAGIC:
+        raise ValueError("malformed {0}".format(PACK_PARAMS_ENV))
+    f = [int(c) for c in parts[2]]
+    return magic, (f[0], f[1], f[2], f[3])
+

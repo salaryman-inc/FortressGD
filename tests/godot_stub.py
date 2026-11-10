@@ -6,7 +6,13 @@ that `verify` can read, like a real export would:
 
 - dialect = false: stock GDPC with an encrypted directory (export always sets
   encrypt_directory), keyed with the derived AES key.
-- dialect = true: FortressGD dialect pack, encrypted directory.
+- dialect = true: what the shared FortressGD export editor writes. It takes the
+  magic and index field order from FORTRESSGD_PACK_PARAMS, which `fortressgd
+  export` sets, and writes a stock pack when the variable is unset.
+- FGD_STUB_BAKED_DIALECT=1: a patched editor built for this project, which
+  ignores FORTRESSGD_PACK_PARAMS and uses the project's own values.
+- FGD_STUB_IGNORE_PARAMS=1: an official editor, which ignores the variable and
+  writes a stock pack.
 
 Environment switches (set by the test before running `fortressgd export`):
 
@@ -24,7 +30,14 @@ from pathlib import Path
 
 from fortressgd.core.config import key_epoch, load_path
 from fortressgd.core.pack import PACK_DIR_ENCRYPTED
-from fortressgd.core.pack_dialect import dialect_key_for_secret, dialect_params_for_secret, encode_dialect_index
+from fortressgd.core.pack_dialect import (
+    PACK_PARAMS_ENV,
+    dialect_key_for_secret,
+    dialect_params_for_secret,
+    encode_dialect_index,
+    parse_pack_params,
+)
+from fortressgd.generator.dialect import STOCK_PACK_MAGIC
 from fortressgd.core.secret import read_secret_file, secret_bytes_from_hex
 from fortressgd.core.templates import concrete_godot_tag
 from tests.gdpc_fixture import make_gdpc
@@ -49,8 +62,14 @@ def build_pack(root: Path, files: list[str]) -> bytes:
     env_key = os.environ.get("GODOT_SCRIPT_ENCRYPTION_KEY", "")
     key = bytes.fromhex(env_key) if env_key else dialect_key_for_secret(secret, tag, key_epoch=epoch)
     if (cfg.get("production") or {}).get("dialect", False):
-        magic, perm, _derived = dialect_params_for_secret(secret, tag, key_epoch=epoch)
-        return encode_dialect_index(files, magic=magic, perm=perm, flags=PACK_DIR_ENCRYPTED, aes_key=key)
+        if os.environ.get("FGD_STUB_BAKED_DIALECT") == "1":
+            magic, perm, _derived = dialect_params_for_secret(secret, tag, key_epoch=epoch)
+        elif os.environ.get("FGD_STUB_IGNORE_PARAMS") == "1":
+            magic, perm = STOCK_PACK_MAGIC, ()
+        else:
+            magic, perm = parse_pack_params(os.environ.get(PACK_PARAMS_ENV))
+        if magic != STOCK_PACK_MAGIC:
+            return encode_dialect_index(files, magic=magic, perm=perm, flags=PACK_DIR_ENCRYPTED, aes_key=key)
     return make_gdpc(files, flags=PACK_DIR_ENCRYPTED, aes_key=key)
 
 

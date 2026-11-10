@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import os
 import shutil
+import signal
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +38,9 @@ from fortressgd.core.secret import load_secret_hex, secret_bytes_from_hex
 from fortressgd.core.templates import (
     DEFAULT_ARCH,
     concrete_godot_tag,
+    editor_build_command,
+    editor_cache_home,
+    find_cached_editor,
     find_cached_template,
     missing_template_error,
     patchset_for_tag,
@@ -62,6 +67,67 @@ def find_godot_bin(environ: dict[str, str] | None = None) -> str:
     raise UserError(
         "godot editor not found on PATH (set GODOT or FORTRESSGD_GODOT)",
         NEXT_EXPORT,
+    )
+
+
+def describe_exit(returncode: int) -> str:
+    """Say how a child process ended: "exit code 1" or "killed by SIGSEGV"."""
+    if returncode < 0:
+        try:
+            name = signal.Signals(-returncode).name
+        except ValueError:
+            name = "signal {0}".format(-returncode)
+        return "killed by {0}".format(name)
+    return "exit code {0}".format(returncode)
+
+
+def find_dialect_editor(
+    godot_tag: str,
+    *,
+    environ: dict[str, str] | None = None,
+    cache_dir: str | Path | None = None,
+) -> str:
+    """The editor that writes dialect packs (DESIGN.md §18.5), in this order:
+
+    1. FORTRESSGD_EDITOR, an explicit path;
+    2. the cached shared editor from `fortressgd templates build --editor`, on Linux,
+       which is the only platform it is built for;
+    3. the usual Godot lookup (FORTRESSGD_GODOT, GODOT, PATH), for a patched editor
+       built by hand.
+
+    `export_preset` checks afterwards that the pack really is in the dialect, so an
+    official editor found in step 3 fails the export instead of shipping a stock pack.
+    """
+    env = os.environ if environ is None else environ
+    explicit = env.get("FORTRESSGD_EDITOR")
+    if explicit:
+        return explicit
+    if sys.platform.startswith("linux"):
+        cached = find_cached_editor(godot=godot_tag, cache_dir=cache_dir)
+        if cached is not None:
+            return str(cached)
+    try:
+        return find_godot_bin(env)
+    except UserError:
+        raise UserError(
+            "no FortressGD export editor for Godot {0}; dialect = true needs one".format(godot_tag),
+            editor_build_command(godot_tag),
+        ) from None
+
+
+def _require_dialect_pack(artifact: Path, magic: int, binary: str, godot_tag: str) -> None:
+    """Fail when the editor wrote a stock pack instead of the project's dialect."""
+    from fortressgd.core.pack_dialect import find_dialect_offset
+
+    if artifact.suffix.lower() == ".zip":
+        return
+    for candidate in (artifact, artifact.with_suffix(".pck")):
+        if candidate.is_file() and find_dialect_offset(candidate.read_bytes(), magic) is not None:
+            return
+    raise UserError(
+        "{0} did not write a dialect pack; with dialect = true, export needs the "
+        "FortressGD export editor, which reads FORTRESSGD_PACK_PARAMS".format(Path(binary).name),
+        editor_build_command(godot_tag),
     )
 
 
@@ -363,16 +429,12 @@ def export_preset(
     cred_existed = cred_path.is_file()
     cred_backup = cred_path.read_bytes() if cred_existed else None
 
-    try:
-        binary = godot_bin if godot_bin else find_godot_bin(env)
-    except UserError:
-        if use_dialect:
-            raise UserError(
-                "FortressGD patched editor not found on PATH "
-                "(set FORTRESSGD_GODOT to the headless editor built with the same patches, target=editor)",
-                templates_build_command(godot_ver, platform),
-            )
-        raise
+    if godot_bin:
+        binary = godot_bin
+    elif use_dialect:
+        binary = find_dialect_editor(godot_ver, environ=env, cache_dir=cache)
+    else:
+        binary = find_godot_bin(env)
     export_path = preset.get("export_path") or ""
     if use_dialect:
         out_path = _pack_output_path(export_path)
@@ -385,9 +447,22 @@ def export_preset(
         output_file = Path(out_path) if Path(out_path).is_absolute() else root / out_path
         cmd.append(str(output_file))
 
+    from fortressgd.core.pack_dialect import PACK_PARAMS_ENV, dialect_params_for_secret, format_pack_params
+
     child_env = dict(env)
     child_env["GODOT_SCRIPT_ENCRYPTION_KEY"] = derived_hex
     child_env.pop("FORTRESSGD_SECRET", None)
+    child_env.pop(PACK_PARAMS_ENV, None)
+    dialect_magic = 0
+    if use_dialect:
+        # The shared editor's magic and index field order, for this export only
+        # (DESIGN.md §18.5). The key is GODOT_SCRIPT_ENCRYPTION_KEY, as above.
+        dialect_magic, dialect_perm, _key = dialect_params_for_secret(secret, godot_ver, key_epoch=epoch)
+        child_env[PACK_PARAMS_ENV] = format_pack_params(dialect_magic, dialect_perm)
+        # Its own Godot cache, so it never shares editor_doc_cache-<major.minor>.res
+        # with another build of the same Godot version (DESIGN.md §18.5). Godot reads
+        # XDG_CACHE_HOME on Linux, the only platform the shared editor is built for.
+        child_env["XDG_CACHE_HOME"] = str(editor_cache_home(binary, cache))
 
     mangle_on = _production_mangle(cfg)
     warnings: list[str] = []
@@ -433,7 +508,7 @@ def export_preset(
         if proc.returncode != 0:
             detail = (proc.stderr or proc.stdout or "").strip()
             raise UserError(
-                "godot export failed: {0}".format(detail),
+                "godot export failed ({0}): {1}".format(describe_exit(proc.returncode), detail),
                 NEXT_EXPORT,
             )
     finally:
@@ -469,6 +544,8 @@ def export_preset(
             ),
             NEXT_EXPORT,
         )
+    if use_dialect:
+        _require_dialect_pack(artifact, dialect_magic, binary, godot_ver)
     mangle_summary = ""
     if mangle_on:
         from fortressgd.core.mangle_report import analyze_project, summary_line

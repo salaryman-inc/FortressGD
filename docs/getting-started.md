@@ -83,7 +83,7 @@ Set `[production].dialect = false` to stay on that Phase 2 path.
 
 ## 6. Optional: pack dialect (Phase 3)
 
-With `[production].dialect = true` (the example default), `fortressgd export` drives a **FortressGD-patched headless editor** (`target=editor`, same patches as the templates) with `--export-pack`. Point `FORTRESSGD_GODOT` at that binary. Designers keep using the official editor day-to-day.
+With `[production].dialect = true` (the example default), `fortressgd export` drives the **FortressGD export editor** with `--export-pack`. Build it once per Godot tag with `fortressgd templates build --editor --godot 4.6.2`. It runs on Linux and holds nothing project-specific: `export` passes each project's dialect to it in `FORTRESSGD_PACK_PARAMS`. Designers keep using the official editor day-to-day.
 
 `fortressgd verify` then parses the artifact with the dialect magic + index permutation and the derived AES key. A stock GDPC listing of that pack must fail.
 

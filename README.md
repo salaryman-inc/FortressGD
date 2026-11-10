@@ -33,7 +33,7 @@ Start with leak checks on the official editor — no Docker, no custom templates
 
 - Pack magic and index field order come from the project secret
 - Stock GDPC parsers cannot list the pack; `verify` requires that they fail
-- Export uses a FortressGD-patched headless editor (`--export-pack`); designers still use the official editor day-to-day
+- Export uses the shared FortressGD export editor (`--export-pack`), built once per Godot tag; designers still use the official editor day-to-day
 
 **GDScript mangling** (optional, on by default in the example config)
 
@@ -248,14 +248,18 @@ sign_packs = false
 
 ```bash
 export FORTRESSGD_SECRET="$(cat .fortressgd.secret)"
-export FORTRESSGD_GODOT=/path/to/fortressgd-headless-editor   # patched, target=editor
 
+fortressgd templates build --editor --godot 4.6.2      # once per Godot tag; needs no secret
 fortressgd templates build --godot 4.6.2 --platform linux
 fortressgd export --preset Linux      # verifies the artifact when verify_on_export = true
 fortressgd verify build/game.pck      # the same check, for CI or a copied artifact
 ```
 
-`templates build` produces `template_release` binaries (the runtime). Dialect **packing** needs a separate FortressGD-patched **headless editor** (`scons target=editor`, same patches and `dialect.gen.h`). Point `FORTRESSGD_GODOT` at that binary. `export` then runs `--export-pack`. A stock GDPC listing of the resulting pack must fail; `verify` checks that.
+`templates build` produces `template_release` binaries (the runtime). Dialect **packing** needs the FortressGD **export editor**: a headless Godot editor with the same patches. `templates build --editor` builds it in Docker for Linux and caches it as `godot-<ver>-editor-linux-x86_64-fgd<patchset>-p<id>`. It is the same for every project. `export` passes the project's pack magic and index field order to it in `FORTRESSGD_PACK_PARAMS`, for that one export only, and runs `--export-pack`. The pack key goes in `GODOT_SCRIPT_ENCRYPTION_KEY`, as for a stock export.
+
+`export` fails if the pack it gets back is not in the project's dialect, for example when it ran the official editor. A stock GDPC listing of the pack must fail; `verify` checks that. `--export-pack` writes only the pack: ship the cached template as the game's executable, with the pack next to it under the same name ending in `.pck`.
+
+On a host other than Linux, build or point at a patched editor yourself with `FORTRESSGD_EDITOR`.
 
 With mangling on, unmarked string `call` / `rpc` / `set` fail the export. Use Callables, or mark a required string API:
 
@@ -401,7 +405,7 @@ fortressgd export --preset "Windows Desktop"
 fortressgd verify build/my_game.x86_64
 ```
 
-Godot binary resolution for `export`: `FORTRESSGD_GODOT`, then `GODOT`, then `GODOT_BIN`, then `godot` / `godot4` on `PATH`.
+Godot binary resolution for `export`: `FORTRESSGD_GODOT`, then `GODOT`, then `GODOT_BIN`, then `godot` / `godot4` on `PATH`. With `dialect = true`, `FORTRESSGD_EDITOR` comes first, then the cached export editor (on Linux), then the same list. That editor runs with its own Godot cache under `<cache_dir>/editor-cache/`, so it never shares one with your own Godot editor.
 
 ---
 

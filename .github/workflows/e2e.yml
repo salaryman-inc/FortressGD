@@ -15,6 +15,7 @@ on:
       - "fortressgd/docker/**"
       - "fortressgd/generator/**"
       - "fortressgd/core/export.py"
+      - "fortressgd/core/pack_dialect.py"
       - "fortressgd/core/templates.py"
       - "testdata/**"
       - ".github/workflows/e2e.yml"
@@ -211,6 +212,101 @@ jobs:
           path: ${{ runner.temp }}/protected-windows/
           if-no-files-found: error
           retention-days: 3
+
+  # dialect = true: the shared export editor (DESIGN.md §18.5) writes the pack with
+  # the project's magic and index order, passed in FORTRESSGD_PACK_PARAMS. The
+  # official editor is also on FORTRESSGD_GODOT, for the import step, so this
+  # also checks that export picks the shared editor over it.
+  dialect:
+    name: Shared editor, dialect export (Godot ${{ matrix.godot }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        godot: ["4.6.2", "4.7.2"]
+    env:
+      PROJ: ${{ github.workspace }}/../proj
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install ".[fast]"
+
+      - name: Prepare the sample project
+        run: |
+          set -euo pipefail
+          cp -r testdata/sample_project "$PROJ"
+          cp testdata/e2e/export_presets.cfg "$PROJ/"
+          cd "$PROJ"
+          fortressgd init
+          sed -i 's/^godot = .*/godot = "${{ matrix.godot }}"/; s/^dialect = false/dialect = true/' .fortressgd.toml
+          grep -q '^dialect = true' .fortressgd.toml
+          fortressgd secret generate
+          fortressgd doctor
+
+      - name: Build the shared editor in Docker
+        working-directory: ${{ env.PROJ }}
+        # Needs no secret: the editor holds nothing project-specific.
+        run: fortressgd templates build --editor --godot "${{ matrix.godot }}"
+
+      - name: Build the dialect Linux template in Docker
+        working-directory: ${{ env.PROJ }}
+        run: fortressgd templates build --godot "${{ matrix.godot }}" --platform linux
+
+      - name: Get the official Godot editor
+        id: godot
+        uses: ./.github/actions/godot-editor
+        with:
+          version: ${{ matrix.godot }}
+      - run: echo "FORTRESSGD_GODOT=${{ steps.godot.outputs.path }}" >> "$GITHUB_ENV"
+
+      - name: Export and verify
+        working-directory: ${{ env.PROJ }}
+        run: |
+          set -euo pipefail
+          "$FORTRESSGD_GODOT" --headless --path . --import
+          # export fails unless the pack has the project's dialect magic, and
+          # verify_on_export reads it with the dialect values.
+          fortressgd export --preset Linux
+          fortressgd verify build/linux/game.pck
+          python3 - build/linux/game.pck <<'PY'
+          import sys
+          from fortressgd.core.pack import find_gdpc_offset
+          data = open(sys.argv[1], "rb").read()
+          if find_gdpc_offset(data) is not None:
+              sys.exit("error: the dialect export wrote a stock GDPC pack")
+          PY
+
+      - name: The dialect template runs the dialect pack
+        working-directory: ${{ env.PROJ }}
+        run: |
+          set -euo pipefail
+          # --export-pack writes only the pack; the game is the template next to it.
+          template="$(find ~/.cache/fortressgd/templates -maxdepth 1 -name 'godot-${{ matrix.godot }}-template_release-linux-x86_64-*' ! -name '*.manifest.json')"
+          cp "$template" build/linux/game.x86_64
+          chmod +x build/linux/game.x86_64
+          out="$(cd build/linux && timeout 120 ./game.x86_64 --headless --quit-after 30 2>&1 || true)"
+          printf '%s\n' "$out"
+          printf '%s\n' "$out" | grep -q "FortressGD sample project"
+
+      - name: The shared editor refuses a malformed FORTRESSGD_PACK_PARAMS
+        working-directory: ${{ env.PROJ }}
+        run: |
+          set -euo pipefail
+          editor="$(find ~/.cache/fortressgd/templates -maxdepth 1 -name 'godot-${{ matrix.godot }}-editor-linux-x86_64-*' ! -name '*.manifest.json')"
+          set +e
+          out="$(FORTRESSGD_PACK_PARAMS=1:zzzz:0123 timeout 300 "$editor" --headless --path . --export-pack Linux "$RUNNER_TEMP/bad.pck" 2>&1)"
+          code=$?
+          set -e
+          printf '%s\n' "$out" | tail -20
+          # It exits at startup with status 2, before it opens the project.
+          [ "$code" -eq 2 ] || { echo "error: the editor exited $code, not 2" >&2; exit 1; }
+          printf '%s\n' "$out" | grep -q "FORTRESSGD_PACK_PARAMS is malformed"
+          [ ! -e "$RUNNER_TEMP/bad.pck" ] || { echo "error: the editor wrote a pack anyway" >&2; exit 1; }
 
   keydot:
     name: KeyDot regression (Godot ${{ matrix.godot }})

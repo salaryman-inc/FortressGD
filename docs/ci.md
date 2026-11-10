@@ -50,6 +50,8 @@ FORTRESSGD_SECRET="$SECRET" python3 -m fortressgd.core.leakscan --godot 4.6.2 bu
 
 Set `FORTRESSGD_SKIP_SCONS=1` only when a full scons cannot finish (local smoke). The entrypoint still applies the series, installs the generated header, and writes the §7 filename plus `manifest.json` with `"kdf": "FGD-KDF-1"`.
 
+`fortressgd templates build --editor` runs the same entrypoint with `FGD_TARGET=editor`. It mounts the fixed `fortressgd/patches/common/fortressgd_editor_dialect.h` as `dialect.gen.h` instead of a generated header and passes no secret hash, so the editor holds nothing project-specific. It builds `scons platform=linuxbsd target=editor debug_symbols=no` with only `FORTRESSGD_DIALECT`, without LTO, since the editor is never shipped. The entrypoint refuses a generated header for the editor and the editor header for a template, and checks that the editor binary reads `FORTRESSGD_PACK_PARAMS`. `fortressgd export` sets that variable to `1:<magic hex>:<field order>` for the one export it runs.
+
 ## Windows-x86_64
 
 The image installs MinGW and runs `scons platform=windows use_mingw=yes` when `--platform windows` is requested.
@@ -94,7 +96,7 @@ See [`tests/mangle_corpus/README.md`](../tests/mangle_corpus/README.md) for addi
 - `python3 tests/run.py` on Python 3.9 (in the official `python:3.9` image, since `setup-python` no longer ships it for current runners), 3.11, 3.13 and 3.14, plus once with `cryptography` installed. This includes `git apply --check` of every patch series against the upstream Godot tag.
 - A wheel and sdist build, installed outside the checkout, that must run `init`, `secret generate` and `doctor` and ship the plugin, patches and Docker files.
 - The GDScript mangler under the official Godot 4.6.2 and 4.7.2 editors against `tests/mangle_corpus/`.
-- The shard reassembly from the engine patch compiled with g++, clang++ and MinGW at `-O2` and `-O3`; the job fails if any bytes of the pack key or the secret reach an object file (DESIGN.md §5.2).
+- The shard reassembly from the engine patch compiled with g++, clang++ and MinGW at `-O2` and `-O3`; the job fails if any bytes of the pack key or the secret reach an object file (DESIGN.md §5.2). The same job compiles the engine's Ed25519 verifier and the shared export editor's `FORTRESSGD_PACK_PARAMS` reader and checks them against the Python side.
 
 `.github/workflows/e2e.yml` compiles Godot, so it runs weekly, on demand, and on pushes to `main` that touch the patches, the Docker build, the generator or the export code. For each supported tag it:
 
@@ -103,8 +105,9 @@ See [`tests/mangle_corpus/README.md`](../tests/mangle_corpus/README.md) for addi
 3. checks `export_presets.cfg` is restored, and runs the exported Linux game headless,
 4. runs the **latest** GDRE Tools release (gdsdecomp) with `--recover` on the protected Linux pack and fails if any script contents come back. A control run first lists a plain pack, so a GDRE that cannot run on the runner fails the job instead of passing it. The version tested is in the job summary.
 5. turns on `sign_packs`, builds the `-sig` Linux template, exports a signed pack and runs it, then checks the same template refuses the earlier unsigned pack and a copy with a corrupted signature,
-6. runs the pinned KeyDot against the protected Windows build on a Windows runner.
+6. runs the pinned KeyDot against the protected Windows build on a Windows runner,
+7. in a separate job with `dialect = true` (and mangling), builds the shared export editor and a dialect Linux template, exports with the official editor also on `FORTRESSGD_GODOT`, checks the pack is not stock GDPC, runs it with the template, and checks the editor exits on a malformed `FORTRESSGD_PACK_PARAMS` without writing a pack.
 
 GDRE is deliberately unpinned: the point is to notice when a new release learns to read FortressGD builds. KeyDot stays pinned by sha256 in `unpackers.lock.json`.
 
-Not covered yet: the dialect path (it needs a patched headless editor build), key epochs above 0, gdke and GodotPCKExplorer.
+Not covered yet: key epochs above 0, signed packs with the dialect, gdke and GodotPCKExplorer.
