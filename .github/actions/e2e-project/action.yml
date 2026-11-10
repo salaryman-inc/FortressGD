@@ -1,0 +1,67 @@
+name: "e2e sample project"
+description: "Install FortressGD, unpack the run's sample project for one Godot version into $PROJ, set its dialect and sign_packs, and unpack built templates into the template cache."
+inputs:
+  godot:
+    description: "Godot version, e.g. 4.6.2"
+    required: true
+  dialect:
+    description: "[production].dialect for this job: true or false"
+    required: true
+  sign-packs:
+    description: "[production].sign_packs for this job: true or false"
+    required: false
+    default: "false"
+  templates:
+    description: "Artifact name pattern of built templates to unpack into ~/.cache/fortressgd, or empty for none"
+    required: false
+    default: ""
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      with:
+        python-version: "3.12"
+    - shell: bash
+      run: python -m pip install ".[fast]"
+
+    # The prepare job made one project and one throwaway secret per Godot version.
+    # Every job of the run uses the same one, because the secret is part of every
+    # template's name and key.
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: project-${{ inputs.godot }}
+        path: ${{ runner.temp }}/project-artifact
+    - name: Unpack and configure the sample project
+      shell: bash
+      env:
+        DIALECT: ${{ inputs.dialect }}
+        SIGN_PACKS: ${{ inputs.sign-packs }}
+      run: |
+        set -euo pipefail
+        case "$DIALECT" in true|false) ;; *) echo "error: dialect must be true or false" >&2; exit 1 ;; esac
+        case "$SIGN_PACKS" in true|false) ;; *) echo "error: sign-packs must be true or false" >&2; exit 1 ;; esac
+        # tar keeps the hidden .fortressgd.secret and file modes.
+        tar -C "$(dirname "$PROJ")" -xf "$RUNNER_TEMP/project-artifact/project.tar"
+        cd "$PROJ"
+        sed -i "s/^dialect = .*/dialect = $DIALECT/; s/^sign_packs = .*/sign_packs = $SIGN_PACKS/" .fortressgd.toml
+        grep -q "^dialect = $DIALECT\$" .fortressgd.toml
+        grep -q "^sign_packs = $SIGN_PACKS\$" .fortressgd.toml
+        fortressgd doctor
+
+    - if: inputs.templates != ''
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        pattern: ${{ inputs.templates }}
+        merge-multiple: true
+        path: ${{ runner.temp }}/built-artifacts
+    - if: inputs.templates != ''
+      name: Unpack the built templates into the template cache
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "$HOME/.cache/fortressgd"
+        shopt -s nullglob
+        tars=("$RUNNER_TEMP"/built-artifacts/*.tar)
+        [ "${#tars[@]}" -gt 0 ] || { echo "error: no built templates were downloaded" >&2; exit 1; }
+        for t in "${tars[@]}"; do tar -C "$HOME/.cache/fortressgd" -xf "$t"; done
+        ls -l "$HOME/.cache/fortressgd/templates"

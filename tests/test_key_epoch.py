@@ -109,6 +109,16 @@ class KeyEpochDerivationTests(unittest.TestCase):
         self.assertIn(key, needles)
         self.assertIn(key.hex().encode("ascii"), needles)
 
+    def test_template_names_carry_the_generator_version(self) -> None:
+        from fortressgd.core.templates import GENERATOR_SUFFIX
+        from fortressgd.generator.codeseed import CODEGEN_VERSION
+
+        self.assertEqual(GENERATOR_SUFFIX, "-g{0}".format(CODEGEN_VERSION))
+        name = template_filename("4.6.2", "linux", "x86_64", "a" * 12, "b" * 16)
+        self.assertTrue(name.endswith("-" + "b" * 16 + GENERATOR_SUFFIX), name)
+        signed = template_filename("4.6.2", "linux", "x86_64", "a" * 12, "b" * 16, key_epoch=2, require_signature=True)
+        self.assertTrue(signed.endswith(GENERATOR_SUFFIX + "-e2-sig"), signed)
+
     def test_template_names_mark_non_zero_epochs(self) -> None:
         base = template_filename("4.6.2", "linux", "x86_64", "a" * 12, "b" * 16)
         self.assertEqual(template_filename("4.6.2", "linux", "x86_64", "a" * 12, "b" * 16, key_epoch=0), base)

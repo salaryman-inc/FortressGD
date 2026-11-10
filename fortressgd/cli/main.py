@@ -115,6 +115,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="build only the shared headless editor that dialect exports use (linux; needs no secret)",
     )
+    build.add_argument(
+        "--from-source",
+        action="store_true",
+        help="compile all of Godot in a fresh container instead of relinking in a build image",
+    )
     tmpl_sub.add_parser("list", help="list cached templates")
 
     exp = sub.add_parser("export", help="production export with derived AES key")
@@ -222,9 +227,9 @@ def cmd_templates_build(args: argparse.Namespace) -> int:
     cache = resolve_cache_dir_from_config(cfg) if cfg else None
     patches_dir = Path(args.patches_dir) if args.patches_dir else None
     if args.editor:
-        if args.platforms or args.require_signature or args.key_epoch is not None:
+        if args.platforms or args.require_signature or args.key_epoch is not None or args.from_source:
             raise UserError(
-                "--editor builds only the shared editor; drop --platform, --require-signature and --key-epoch",
+                "--editor builds only the shared editor; drop --platform, --require-signature, --key-epoch and --from-source",
                 NEXT_HELP,
             )
         editor = build_editor(godot=godot, environ=os.environ, cache_dir=cache, patches_dir=patches_dir)
@@ -259,6 +264,7 @@ def cmd_templates_build(args: argparse.Namespace) -> int:
         dialect=dialect,
         require_signature=require_signature,
         key_epoch=epoch,
+        from_source=bool(args.from_source),
     )
     for path in produced:
         sys.stdout.write(path.name + "\n")

@@ -29,11 +29,11 @@ extern uint16_t FGD_OPCODE_MAP[FGD_OPCODE_COUNT];
 extern uint16_t FGD_OPCODE_UNMAP[FGD_OPCODE_COUNT];
 extern uint8_t FGD_PACK_PUBKEY[32];
 
-/* Whether the template refuses unsigned packs. A compile-time flag, never a
- * stored value: in data one flipped byte would turn the check off (§18.3). The
- * build passes -DFGD_REQUIRE_PACK_SIGNATURE=1 for a signing template. */
-#ifndef FGD_REQUIRE_PACK_SIGNATURE
-#define FGD_REQUIRE_PACK_SIGNATURE 0
-#endif
+/* FGD_REQUIRE_PACK_SIGNATURE (whether the template refuses unsigned packs) is
+ * not defined here. It is a compile-time flag, never a stored value: in data one
+ * flipped byte would turn the check off (§18.3). The build writes it into
+ * core/fortressgd_variant.h, which only core/io/file_access_pack.cpp includes, so
+ * turning sign_packs on or off recompiles that one file, not every file that
+ * includes this header (§18.4). */
 
 #endif /* FORTRESSGD_DIALECT_GEN_H */

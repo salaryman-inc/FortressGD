@@ -4,6 +4,11 @@ name: End-to-end
 # editor, verifies the artifacts, runs the exported game, and runs the pinned
 # KeyDot against the protected Windows build. It compiles Godot, so it runs
 # weekly, on demand, and when the engine-facing parts change on main.
+#
+# Every Godot build is its own job, so they run in parallel: prepare makes the
+# project and secret, the build jobs upload what they compile, and the test jobs
+# download it into the template cache. A run takes about as long as its slowest
+# build.
 on:
   workflow_dispatch:
   schedule:
@@ -28,10 +33,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  export:
-    name: Templates, export, verify (Godot ${{ matrix.godot }})
+  # One sample project and one throwaway secret per Godot version, shared by every
+  # job of this run: the secret is part of each template's name and key. The
+  # artifact is public like the run, and the secret exists only for this run.
+  prepare:
+    name: Prepare the sample project (Godot ${{ matrix.godot }})
     runs-on: ubuntu-latest
-    timeout-minutes: 240
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -46,24 +54,170 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install ".[fast]"
-
-      - name: Prepare the sample project
+      - name: Create the sample project and its secret
         run: |
           set -euo pipefail
           cp -r testdata/sample_project "$PROJ"
           cp testdata/e2e/export_presets.cfg "$PROJ/"
           cd "$PROJ"
           fortressgd init
-          # Derived key + mangling with the official editor. The dialect path
-          # needs a patched headless editor and is not covered here.
-          sed -i 's/^godot = .*/godot = "${{ matrix.godot }}"/; s/^dialect = true/dialect = false/' .fortressgd.toml
-          # A throwaway secret that exists only for this run.
+          sed -i 's/^godot = .*/godot = "${{ matrix.godot }}"/' .fortressgd.toml
           fortressgd secret generate
-          fortressgd doctor
+          tar -C "$(dirname "$PROJ")" -cf "$RUNNER_TEMP/project.tar" proj
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: project-${{ matrix.godot }}
+          path: ${{ runner.temp }}/project.tar
+          if-no-files-found: error
+          retention-days: 1
 
-      - name: Build templates in Docker (linux, windows)
+  # dialect = false: the derived key and mangling, exported with the official editor.
+  stock-templates:
+    name: Build the ${{ matrix.target }} template (Godot ${{ matrix.godot }})
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        godot: ["4.6.2", "4.7.2"]
+        target: [linux, windows, linux-sig]
+    env:
+      PROJ: ${{ github.workspace }}/../proj
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/e2e-project
+        with:
+          godot: ${{ matrix.godot }}
+          dialect: "false"
+          sign-packs: ${{ matrix.target == 'linux-sig' && 'true' || 'false' }}
+      - name: Build the template in Docker
         working-directory: ${{ env.PROJ }}
-        run: fortressgd templates build --godot "${{ matrix.godot }}" --platform linux --platform windows
+        run: fortressgd templates build --godot "${{ matrix.godot }}" --platform "${{ matrix.target == 'windows' && 'windows' || 'linux' }}"
+      # tar keeps file modes, which artifacts drop.
+      - name: Pack the built template
+        run: tar -C "$HOME/.cache/fortressgd" -cf "$RUNNER_TEMP/built-${{ matrix.target }}.tar" templates
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: stock-${{ matrix.godot }}-${{ matrix.target }}
+          path: ${{ runner.temp }}/built-${{ matrix.target }}.tar
+          if-no-files-found: error
+          retention-days: 1
+
+  # The shared export editor (DESIGN.md §18.5). It holds nothing project-specific.
+  editor:
+    name: Build the shared editor (Godot ${{ matrix.godot }})
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        godot: ["4.6.2", "4.7.2"]
+    env:
+      PROJ: ${{ github.workspace }}/../proj
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/e2e-project
+        with:
+          godot: ${{ matrix.godot }}
+          dialect: "true"
+      - name: Build the shared editor in Docker
+        working-directory: ${{ env.PROJ }}
+        run: fortressgd templates build --editor --godot "${{ matrix.godot }}"
+      # tar keeps file modes, which artifacts drop.
+      - name: Pack the built editor
+        run: tar -C "$HOME/.cache/fortressgd" -cf "$RUNNER_TEMP/built-editor.tar" templates
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dialect-${{ matrix.godot }}-editor
+          path: ${{ runner.temp }}/built-editor.tar
+          if-no-files-found: error
+          retention-days: 1
+
+  # A dialect template takes the build image path (DESIGN.md §18.4): the first
+  # build compiles the image, then relinks this project's template in it.
+  dialect-template:
+    name: Build the dialect Linux template (Godot ${{ matrix.godot }})
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        godot: ["4.6.2", "4.7.2"]
+        include:
+          # Goal 2 of #51 is measured on one Godot version; both relink alike.
+          - godot: "4.7.2"
+            measure_relink: true
+    env:
+      PROJ: ${{ github.workspace }}/../proj
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/e2e-project
+        with:
+          godot: ${{ matrix.godot }}
+          dialect: "true"
+      - name: Build the template (build image, then relink)
+        working-directory: ${{ env.PROJ }}
+        run: |
+          set -euo pipefail
+          start=$(date +%s)
+          fortressgd templates build --godot "${{ matrix.godot }}" --platform linux
+          secs=$(( $(date +%s) - start ))
+          echo "Godot ${{ matrix.godot }} Linux: cold template build (build image + relink) took ${secs}s" | tee -a "$GITHUB_STEP_SUMMARY"
+      # tar keeps file modes, which artifacts drop.
+      - name: Pack the built template
+        run: tar -C "$HOME/.cache/fortressgd" -cf "$RUNNER_TEMP/built-linux.tar" templates
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dialect-${{ matrix.godot }}-linux
+          path: ${{ runner.temp }}/built-linux.tar
+          if-no-files-found: error
+          retention-days: 1
+
+      # After the upload, so the test job never sees this second template. With the
+      # build image built, another project's template recompiles fortressgd_gen.cpp
+      # and relinks.
+      - name: Warm relink of a second project's template
+        if: matrix.measure_relink
+        working-directory: ${{ env.PROJ }}
+        run: |
+          set -euo pipefail
+          fortressgd secret generate --secret-file "$RUNNER_TEMP/second.secret"
+          start=$(date +%s)
+          fortressgd templates build --godot "${{ matrix.godot }}" --platform linux --secret-file "$RUNNER_TEMP/second.secret"
+          secs=$(( $(date +%s) - start ))
+          echo "Godot ${{ matrix.godot }} Linux: warm relink for a second project took ${secs}s (goal: under 600s)" | tee -a "$GITHUB_STEP_SUMMARY"
+          docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}' | grep '^fortressgd-build:' | tee -a "$GITHUB_STEP_SUMMARY"
+
+  export:
+    name: Templates, export, verify (Godot ${{ matrix.godot }})
+    needs: stock-templates
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        godot: ["4.6.2", "4.7.2"]
+    env:
+      PROJ: ${{ github.workspace }}/../proj
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Derived key + mangling with the official editor.
+      - uses: ./.github/actions/e2e-project
+        with:
+          godot: ${{ matrix.godot }}
+          dialect: "false"
+          templates: stock-${{ matrix.godot }}-*
 
       - name: Get the official Godot editor
         id: godot
@@ -158,7 +312,6 @@ jobs:
           cp build/linux/game.pck "$RUNNER_TEMP/unsigned.pck"
           sed -i 's/^sign_packs = false/sign_packs = true/' .fortressgd.toml
           grep -q '^sign_packs = true' .fortressgd.toml
-          fortressgd templates build --godot "${{ matrix.godot }}" --platform linux
           # export signs the pack; verify_on_export then checks the signature.
           fortressgd export --preset Linux
           fortressgd verify build/linux/game.pck
@@ -219,8 +372,9 @@ jobs:
   # also checks that export picks the shared editor over it.
   dialect:
     name: Shared editor, dialect export (Godot ${{ matrix.godot }})
+    needs: [editor, dialect-template]
     runs-on: ubuntu-latest
-    timeout-minutes: 240
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -231,31 +385,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      - uses: ./.github/actions/e2e-project
         with:
-          python-version: "3.12"
-      - run: python -m pip install ".[fast]"
-
-      - name: Prepare the sample project
-        run: |
-          set -euo pipefail
-          cp -r testdata/sample_project "$PROJ"
-          cp testdata/e2e/export_presets.cfg "$PROJ/"
-          cd "$PROJ"
-          fortressgd init
-          sed -i 's/^godot = .*/godot = "${{ matrix.godot }}"/; s/^dialect = false/dialect = true/' .fortressgd.toml
-          grep -q '^dialect = true' .fortressgd.toml
-          fortressgd secret generate
-          fortressgd doctor
-
-      - name: Build the shared editor in Docker
-        working-directory: ${{ env.PROJ }}
-        # Needs no secret: the editor holds nothing project-specific.
-        run: fortressgd templates build --editor --godot "${{ matrix.godot }}"
-
-      - name: Build the dialect Linux template in Docker
-        working-directory: ${{ env.PROJ }}
-        run: fortressgd templates build --godot "${{ matrix.godot }}" --platform linux
+          godot: ${{ matrix.godot }}
+          dialect: "true"
+          templates: dialect-${{ matrix.godot }}-*
 
       - name: Get the official Godot editor
         id: godot

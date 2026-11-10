@@ -31,6 +31,7 @@ from fortressgd.core.templates import (
     editor_header_id,
     editor_header_path,
     find_cached_editor,
+    editor_patchset_for_tag,
     patchset_for_tag,
 )
 from fortressgd.generator.dialect import (
@@ -268,7 +269,9 @@ def _entrypoint_env(tmp: Path, header: Path, *, target: str, platform: str = "li
     env.pop("FGD_SECRET_HASH", None)
     env.update({
         "GODOT_VERSION": "4.6.2-stable", "FGD_GODOT": "4.6.2", "FGD_PLATFORM": platform,
-        "FGD_ARCH": "x86_64", "FGD_PATCHSET": patchset_for_tag("4.6.2"), "FGD_TARGET": target,
+        "FGD_ARCH": "x86_64",
+        "FGD_PATCHSET": editor_patchset_for_tag("4.6.2") if target == "editor" else patchset_for_tag("4.6.2"),
+        "FGD_TARGET": target,
         "FORTRESSGD_SKIP_SCONS": "1", "PATCHES_DIR": str(PKG / "patches" / "4.6.2"),
         "DIALECT_HEADER": str(header), "OUT_DIR": str(tmp / "out"), "GODOT_SRC": str(tmp / "godot"),
         "GIT_TERMINAL_PROMPT": "0",
@@ -287,13 +290,13 @@ class EditorEntrypointTests(unittest.TestCase):
             godot_src = seed_mini_godot_tree("4.6.2", tmp_path / "godot")
             run = _entrypoint(_entrypoint_env(tmp_path, HEADER, target="editor"))
             self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
-            name = editor_filename("4.6.2", "x86_64", patchset_for_tag("4.6.2"), editor_header_id())
+            name = editor_filename("4.6.2", "x86_64", editor_patchset_for_tag("4.6.2"), editor_header_id())
             out = tmp_path / "out"
             self.assertTrue((out / name).is_file(), sorted(p.name for p in out.iterdir()))
             manifest = json.loads((out / (name + ".manifest.json")).read_text(encoding="utf-8"))
             self.assertEqual(manifest["target"], "editor")
             self.assertEqual(manifest["editor_header_id"], editor_header_id())
-            self.assertEqual(manifest["patchset_id"], patchset_for_tag("4.6.2"))
+            self.assertEqual(manifest["patchset_id"], editor_patchset_for_tag("4.6.2"))
             for key in ("secret_hash", "dialect_id", "key_epoch", "require_signature"):
                 self.assertNotIn(key, manifest)
             self.assertEqual((godot_src / "core" / "dialect.gen.h").read_bytes(), HEADER.read_bytes())
@@ -408,7 +411,7 @@ class BuildEditorTests(unittest.TestCase):
 
 class FindDialectEditorTests(unittest.TestCase):
     def _cache_editor(self, cache: Path) -> Path:
-        name = editor_filename("4.6.2", "x86_64", patchset_for_tag("4.6.2"), editor_header_id())
+        name = editor_filename("4.6.2", "x86_64", editor_patchset_for_tag("4.6.2"), editor_header_id())
         path = cache / "templates" / name
         path.parent.mkdir(parents=True)
         path.write_bytes(b"\x7fELF shared editor")

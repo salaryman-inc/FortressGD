@@ -103,12 +103,18 @@ class DockerStaticTests(unittest.TestCase):
         self.assertIn('FGD_REQUIRE_SIGNATURE="${FGD_REQUIRE_SIGNATURE:-0}"', entry)
         self.assertIn('NAME="${NAME}-sig"', entry)
         self.assertIn('"require_signature": require_sig == "1"', entry)
-        # Generator v2: the flag is a compile define, not a value in the header.
-        self.assertIn('FGD_DEFINES="$FGD_DEFINES FGD_REQUIRE_PACK_SIGNATURE=1"', entry)
+        # The flag is a compile-time #define in core/fortressgd_variant.h, which only
+        # file_access_pack.cpp includes; it is never a global define (that would
+        # recompile the whole tree) nor a value in the generated code.
+        self.assertIn("write_variant_header", entry)
+        self.assertIn("core/fortressgd_variant.h", entry)
+        self.assertNotIn("FGD_REQUIRE_PACK_SIGNATURE=1", entry)
         templates = (PKG / "core" / "templates.py").read_text(encoding="utf-8")
         self.assertIn('"FGD_REQUIRE_SIGNATURE": "1" if require_signature else "0"', templates)
         action = (ROOT / "actions" / "build-templates" / "action.yml").read_text(encoding="utf-8")
         self.assertIn("--require-signature", action)
+        self.assertIn("steps.meta.outputs.generator", action)
+        self.assertIn("print(GENERATOR_SUFFIX)", action)
         self.assertIn("'-sig'", action)
         self.assertTrue(
             template_filename("4.6.2", "linux", "x86_64", "a" * 12, "b" * 16, require_signature=True).endswith("-sig")
@@ -209,6 +215,8 @@ class DockerStaticTests(unittest.TestCase):
             self.assertTrue((out_dir / name).is_file(), sorted(p.name for p in out_dir.iterdir()))
             manifest = json.loads((out_dir / (name + ".manifest.json")).read_text(encoding="utf-8"))
             self.assertIs(manifest["require_signature"], True)
+            variant = (godot_src / "core" / "fortressgd_variant.h").read_text(encoding="utf-8")
+            self.assertIn("#define FGD_REQUIRE_PACK_SIGNATURE 1", variant)
 
     def test_shipped_entrypoint_skip_scons_applies_series_and_manifest(self) -> None:
         """Drive fortressgd/docker/entrypoint.sh (the shipped template-build entry) far enough

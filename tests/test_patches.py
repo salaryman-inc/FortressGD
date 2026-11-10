@@ -55,6 +55,13 @@ class PatchTests(unittest.TestCase):
             self.assertIn("FORTRESSGD_SIGN_PACKS", sig)
             self.assertIn("fortressgd_ed25519", sig)
             self.assertIn("FGD_PACK_PUBKEY", sig)
+            # sign_packs reaches one file only, through a per-build header, so a
+            # precompiled tree serves signing and non-signing templates (§18.4).
+            self.assertEqual(sig.count('#include "core/fortressgd_variant.h"'), 1)
+            for other in names:
+                if other != "0005-pack-signatures.patch":
+                    text = (tag_dir / other).read_text(encoding="utf-8")
+                    self.assertNotIn("fortressgd_variant.h", text, msg=other)
 
     def test_apply_check_on_upstream_tag(self) -> None:
         log_lines = []

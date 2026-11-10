@@ -74,6 +74,22 @@ def patchset_inputs(tag_dir: Path) -> list[Path]:
     return files
 
 
+# Fixed files in patches/common that every template build compiles (generator v2,
+# DESIGN.md §18.3). They are part of a template's patchset id, so changing one
+# renames templates and never reuses a stale cached build. The editor uses none of
+# them; its name carries the editor header's own hash.
+TEMPLATE_COMMON_FILES = ("fortressgd_gen_api.h", "fortressgd_gen_shim.h", "fortressgd_gen_shim.cpp")
+
+
+def template_patchset_inputs(tag_dir: Path) -> list[Path]:
+    """patchset_inputs plus TEMPLATE_COMMON_FILES from the sibling common/ directory.
+
+    The entrypoint computes the same id for template builds; keep the order.
+    """
+    common = Path(tag_dir).parent / "common"
+    return patchset_inputs(tag_dir) + [common / name for name in TEMPLATE_COMMON_FILES]
+
+
 def patchset_id(patch_paths: list[Path]) -> str:
     """SHA256 of the concatenation of applied patch bytes, hex truncated to 12."""
     import hashlib

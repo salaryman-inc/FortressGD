@@ -665,13 +665,27 @@ Release CI publishes `ghcr.io/salaryman-inc/fortressgd-build:<fgd-version>-godot
 
 The project secret never enters the container. When the CLI itself runs inside a FortressGD container, the compile and link run as a separate unprivileged user that can read neither `.fortressgd.secret` nor the CLI's environment.
 
-**Link-time optimization is the open question.** `production=yes` enables it, which makes the relink redo optimization across the whole program. The first implementation measures warm relink time per platform and picks the first option that meets goal 2:
+**Link-time optimization.** `production=yes` enables it, which makes the relink redo optimization across the whole program. The first implementation measures warm relink time per platform and picks the first option that meets goal 2:
 
 1. Keep full LTO, if the relink fits.
 2. Switch to ThinLTO with a link cache (clang on Linux, llvm-mingw on Windows), so a relink reoptimizes only what changed.
 3. Turn LTO off for templates, documenting the measured size and speed cost.
 
-The result is recorded here.
+**Result: full LTO stays (option 1).** Each warm relink recompiled one file, `core/fortressgd_gen.cpp`.
+
+| Where | Platform | LTO | Warm relink | Template size |
+|---|---|---|---|---|
+| GitHub-hosted `ubuntu-latest` (e2e run 42823510068) | Linux, 4.6.2 | full | 552 s | |
+| GitHub-hosted `ubuntu-latest` (e2e run 42823510068) | Linux, 4.7.2 | full | 560 s | |
+| Local, 4 cores | Linux | full | 252 s | 71.8 MB |
+| Local, 16 cores | Linux | full | 164–169 s | 71.8 MB |
+| Local, 16 cores | Linux | thin, clang + lld + cache | 7–8 s | 79.2 MB |
+| Local, 16 cores | Linux | none | 7–8 s | 83.7 MB |
+| Local, 4 and 16 cores | Windows (MinGW-GCC) | full | 9 s | 99.8 MB |
+
+- **Linux** meets goal 2 on a hosted runner with full LTO, but with only 40–50 s to spare. A full-LTO relink reoptimizes the whole program, so it gains little from more cores: 252 s on 4 local cores, about 165 s on 16. If runner variance pushes it over 600 s, switch to option 2: ThinLTO with an lld cache, which relinks in seconds at about 10% more size.
+- **Windows** needs no change. Godot links MinGW-GCC with `-fno-use-linker-plugin -fwhole-program`, so LTO adds nothing to a relink. The e2e job does not build Windows; these times are local.
+- **On CI, the first build compiles the image**: 1942 s (4.7.2) and 2040 s (4.6.2), including that build's own relink. The image is about 6.7 GB unpacked. Prebuilt images (step 4) remove this cost.
 
 Images:
 
@@ -680,6 +694,15 @@ Images:
 - Building the image from source with the same Dockerfile stays supported (`templates build --from-source`), for users who will not run prebuilt toolchains.
 
 Naming and cache: template names and the CI cache key gain the generator version, `-g2`. A template from generator v2 never reuses a v1 cache entry, and the reverse also holds.
+
+**Implementation (step 3).**
+
+- `fortressgd/docker/Dockerfile.build` layers the build image on the template image. Its context is the tag's patches and `patches/common`; it runs the entrypoint with `FGD_MODE=prebuild` and defaults to `FGD_MODE=relink`.
+- Prebuild compiles the tree against `common/fortressgd_gen_placeholder.cpp`, whose functions trap, so a template linked against it by mistake dies at startup. It records in `/work/godot/.fortressgd` what a relink must match (patchset, tag, platform, arch, defines, LTO mode, build-deps flags), then deletes the placeholder-linked binary.
+- Relink refuses the placeholder and any file the generator did not write, and checks that state against the request. It installs the project's `fortressgd_gen.cpp`, replays the prebuild's exact SCons arguments with no network, and fails unless SCons recompiled `core/fortressgd_gen.cpp`.
+- `sign_packs` reaches only `core/io/file_access_pack.cpp`, through `core/fortressgd_variant.h`, which the build writes per template. It is still a compile-time `#define`, but switching it recompiles that one file instead of the tree a global define would invalidate. Dialect on or off changes `file_access_pack.h`, which is included widely, so images are built with the dialect on and dialect-off templates are built from source.
+- Until the release workflow publishes images (step 4), `templates build` builds the image locally the first time, tagged `fortressgd-build:godot<tag>-<platform>-<arch>-fgd<patchset>-<h8>`. `h8` hashes the template image, `Dockerfile.build`, the placeholder and the LTO mode, so a stale local image is never reused. `--from-source` keeps the full compile in a fresh container.
+- The template patchset id also covers the fixed common files every template compiles (`fortressgd_gen_api.h`, `fortressgd_gen_shim.h`, `fortressgd_gen_shim.cpp`). The shared editor's id does not.
 
 ### 18.5 Export side
 
