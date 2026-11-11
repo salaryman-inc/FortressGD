@@ -1,0 +1,73 @@
+name: "e2e toolchain image"
+description: "Cache fortressgd-templates:<hash> (Dockerfile.templates) with actions/cache, so apt and the base image pull run only when the Dockerfile changes."
+inputs:
+  mode:
+    description: "fill: build and save the image if the cache lacks it. load: load it from the cache into Docker for templates build."
+    required: true
+runs:
+  using: "composite"
+  steps:
+    # Each e2e build job needs this image. Built from scratch, it takes about two
+    # minutes, and once took 56 when a runner's downloads stalled. Loaded from the
+    # cache it has the same tag, so templates build finds it and skips its own
+    # docker build. The repository allows only GitHub's and its own actions, so
+    # this uses actions/cache and docker save rather than a buildx layer cache.
+    - name: Compute the toolchain image tag
+      id: tag
+      shell: bash
+      env:
+        MODE: ${{ inputs.mode }}
+      run: |
+        set -euo pipefail
+        case "$MODE" in fill|load) ;; *) echo "error: mode must be fill or load" >&2; exit 1 ;; esac
+        image="$(python3 -c 'import sys; sys.path.insert(0, "."); from fortressgd.core.templates import docker_image; print(docker_image())')"
+        echo "image=$image" >> "$GITHUB_OUTPUT"
+        echo "key=fortressgd-templates-${image#*:}-${RUNNER_OS}-${RUNNER_ARCH}" >> "$GITHUB_OUTPUT"
+
+    - if: inputs.mode == 'fill'
+      id: probe
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/toolchain-image
+        key: ${{ steps.tag.outputs.key }}
+        lookup-only: true
+
+    # The same code templates build runs, so the cached image is the one it would build.
+    - if: inputs.mode == 'fill' && steps.probe.outputs.cache-hit != 'true'
+      name: Build and save the toolchain image
+      shell: bash
+      env:
+        IMAGE: ${{ steps.tag.outputs.image }}
+      run: |
+        set -euo pipefail
+        python3 -c 'import sys; sys.path.insert(0, "."); from fortressgd.core.templates import ensure_docker_image; ensure_docker_image()'
+        mkdir -p "$RUNNER_TEMP/toolchain-image"
+        docker save -o "$RUNNER_TEMP/toolchain-image/image.tar" "$IMAGE"
+        ls -l "$RUNNER_TEMP/toolchain-image"
+    - if: inputs.mode == 'fill' && steps.probe.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/toolchain-image
+        key: ${{ steps.tag.outputs.key }}
+
+    - if: inputs.mode == 'load'
+      id: restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/toolchain-image
+        key: ${{ steps.tag.outputs.key }}
+    - if: inputs.mode == 'load'
+      name: Load the toolchain image
+      shell: bash
+      env:
+        HIT: ${{ steps.restore.outputs.cache-hit }}
+        IMAGE: ${{ steps.tag.outputs.image }}
+      run: |
+        set -euo pipefail
+        if [ "$HIT" != "true" ]; then
+          echo "::notice::no cached $IMAGE; templates build builds it on this runner"
+          exit 0
+        fi
+        docker load -i "$RUNNER_TEMP/toolchain-image/image.tar"
+        rm -rf "$RUNNER_TEMP/toolchain-image"
+        docker image inspect --format '{{.Id}} {{.Size}}' "$IMAGE"
