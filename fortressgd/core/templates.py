@@ -356,7 +356,7 @@ BUILD_IMAGE_REPO = "fortressgd-build"
 TEMPLATE_LTO = ""
 
 
-def build_image_tag(
+def build_image_inputs_id(
     tag: str,
     platform: str,
     arch: str,
@@ -365,35 +365,59 @@ def build_image_tag(
     lto: str = TEMPLATE_LTO,
     patches_dir: Path | None = None,
 ) -> str:
-    """fortressgd-build:godot<tag>-<platform>-<arch>-fgd<patchset>-<inputs8>.
+    """12 hex digits naming everything a build image is built from (DESIGN.md §18.4).
 
-    inputs8 hashes what the image holds besides the patched source: the template
-    image (Dockerfile.templates and the entrypoint), Dockerfile.build, the placeholder
-    the tree is compiled against, and the LTO mode. A locally built image whose
-    inputs changed gets a new tag instead of being reused.
+    It covers the Godot tag, the platform and arch, the template patchset, the
+    template image (Dockerfile.templates and the entrypoint), Dockerfile.build, the
+    placeholder the tree is compiled against, and the LTO mode. A locally built image
+    whose inputs changed gets a new name instead of being reused, and a release's
+    lock records it so `templates build` can tell whether a pinned image matches
+    this install.
     """
     root = patches_root() if patches_dir is None else Path(patches_dir)
     digest = hashlib.sha256()
     for part in (
+        tag.encode("utf-8"),
+        platform.encode("utf-8"),
+        arch.encode("utf-8"),
+        patchset.encode("utf-8"),
         docker_image().encode("utf-8"),
         (docker_dir() / "Dockerfile.build").read_bytes(),
         (root / "common" / "fortressgd_gen_placeholder.cpp").read_bytes(),
         lto.encode("utf-8"),
     ):
         digest.update(len(part).to_bytes(8, "big") + part)
-    return "{0}:godot{1}-{2}-{3}-fgd{4}-{5}".format(
-        BUILD_IMAGE_REPO, tag, platform, arch, patchset, digest.hexdigest()[:8]
-    )
+    return digest.hexdigest()[:12]
+
+
+def _platform_arch(platform: str, arch: str) -> str:
+    """The platform, with the arch appended unless it is the default (x86_64)."""
+    return platform if arch == DEFAULT_ARCH else "{0}-{1}".format(platform, arch)
+
+
+def build_image_tag(tag: str, platform: str, arch: str, inputs_id: str) -> str:
+    """The local name of a build image: fortressgd-build:godot<tag>-<platform>-<inputs id>."""
+    return "{0}:godot{1}-{2}-{3}".format(BUILD_IMAGE_REPO, tag, _platform_arch(platform, arch), inputs_id)
+
+
+def published_build_image_tag(repository: str, version: str, tag: str, platform: str, arch: str = DEFAULT_ARCH) -> str:
+    """A release's name for a build image: <repository>:<fortressgd version>-godot<tag>-<platform>."""
+    return "{0}:{1}-godot{2}-{3}".format(repository, version, tag, _platform_arch(platform, arch))
 
 
 def _build_image_inputs(
     tag: str, platform: str, arch: str, root: Path, lto: str
 ) -> tuple[Path, str, str]:
-    """(tag dir, template patchset id, local build image tag) for these inputs."""
+    """(tag dir, template patchset id, build image inputs id) for these inputs."""
     tag_dir = patch_dir_for_tag(tag, root)
     require_series(tag_dir)
     pset = patchset_id(template_patchset_inputs(tag_dir))
-    return tag_dir, pset, build_image_tag(tag, platform, arch, pset, lto=lto, patches_dir=root)
+    return tag_dir, pset, build_image_inputs_id(tag, platform, arch, pset, lto=lto, patches_dir=root)
+
+
+def installed_build_image_inputs(tag: str, platform: str, *, arch: str = DEFAULT_ARCH, lto: str = TEMPLATE_LTO) -> str:
+    """The build image inputs id of this install's patches and Docker files."""
+    return _build_image_inputs(tag, platform, arch, patches_root(), lto)[2]
 
 
 def build_build_image(
@@ -412,7 +436,8 @@ def build_build_image(
     and labels; `templates build` uses neither.
     """
     root = patches_root() if patches_dir is None else Path(patches_dir)
-    tag_dir, pset, image = _build_image_inputs(tag, platform, arch, root, lto)
+    tag_dir, pset, inputs_id = _build_image_inputs(tag, platform, arch, root, lto)
+    image = build_image_tag(tag, platform, arch, inputs_id)
     ensure_docker_image()
     print(
         "fortressgd: building {0}; this compiles Godot once, later template builds relink".format(image),
@@ -467,7 +492,8 @@ def ensure_build_image(
     against the trapping placeholder fortressgd_gen.cpp.
     """
     root = patches_root() if patches_dir is None else Path(patches_dir)
-    _tag_dir, _pset, image = _build_image_inputs(tag, platform, arch, root, lto)
+    _tag_dir, _pset, inputs_id = _build_image_inputs(tag, platform, arch, root, lto)
+    image = build_image_tag(tag, platform, arch, inputs_id)
     inspect = subprocess.run(["docker", "image", "inspect", image], capture_output=True, text=True)
     if inspect.returncode == 0:
         return image
@@ -500,7 +526,7 @@ def load_image_pins(path: Path | None = None) -> list[dict[str, str]]:
         )
     pins = []
     for entry in images:
-        fields = ("godot", "platform", "arch", "tag", "ref")
+        fields = ("godot", "platform", "arch", "inputs", "ref")
         if not isinstance(entry, dict) or not all(isinstance(entry.get(k), str) for k in fields):
             raise ToolError(
                 "{0} has a malformed entry".format(lock.name),
@@ -565,11 +591,11 @@ def resolve_build_image(
     pin = pinned_build_image(tag, platform, arch)
     if pin is None:
         return ensure_build_image(tag, platform, arch=arch, lto=lto)
-    _tag_dir, _pset, expected = _build_image_inputs(tag, platform, arch, patches_root(), lto)
-    if pin["tag"] != expected:
+    expected = installed_build_image_inputs(tag, platform, arch=arch, lto=lto)
+    if pin["inputs"] != expected:
         raise ToolError(
             "the pinned {0} {1} build image was built from other inputs ({2}) than this "
-            "install's patches and Docker files ({3})".format(tag, platform, pin["tag"], expected),
+            "install's patches and Docker files ({3})".format(tag, platform, pin["inputs"], expected),
             "reinstall FortressGD from its release, or compile it here: "
             + templates_build_command(tag, platform) + " --from-source",
         )

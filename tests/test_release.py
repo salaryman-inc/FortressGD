@@ -69,14 +69,14 @@ write_manifest(out / (name + ".manifest.json"), manifest_dict(
 
 
 def _entries(ref_digest: str = DIGEST) -> list[dict[str, str]]:
-    from fortressgd.core.templates import build_image_tag, patchset_for_tag
+    from fortressgd.core.templates import installed_build_image_inputs
 
     return [
         {
             "godot": g,
             "platform": p,
             "arch": "x86_64",
-            "tag": build_image_tag(g, p, "x86_64", patchset_for_tag(g)),
+            "inputs": installed_build_image_inputs(g, p),
             "ref": "ghcr.io/example/fortressgd-build@" + ref_digest,
         }
         for g in ("4.6.2", "4.7.2")
@@ -211,7 +211,7 @@ class PinnedImageTests(_FakeDocker):
 
         entries = _entries()
         for e in entries:
-            e["tag"] = e["tag"][:-8] + "00000000"
+            e["inputs"] = "0" * 12
         self._pin(entries)
         with self.assertRaises(ToolError) as ctx:
             self._build()
@@ -270,26 +270,29 @@ class PinnedImageTests(_FakeDocker):
 
 class ReleaseBuildImageTests(_FakeDocker):
     def test_build_and_push(self) -> None:
-        from fortressgd.core.templates import build_image_tag, patchset_for_tag
+        from fortressgd.core.templates import build_image_tag, installed_build_image_inputs
         from fortressgd.core.version import __version__
-        from fortressgd.release import build_and_push
+        from fortressgd.release import INPUTS_LABEL, build_and_push
 
         repo = "ghcr.io/example/fortressgd-build"
         env = dict(self.env, FAKE_REPO_DIGESTS="{0}@{1} other.example/x@sha256:{2}".format(repo, DIGEST, "0" * 64))
         with mock.patch.dict(os.environ, env):
             entry = build_and_push("4.7.2", "windows", repo, revision="c0ffee")
-        local = build_image_tag("4.7.2", "windows", "x86_64", patchset_for_tag("4.7.2"))
+        inputs = installed_build_image_inputs("4.7.2", "windows")
+        self.assertRegex(inputs, r"^[0-9a-f]{12}$")
         self.assertEqual(entry, {"godot": "4.7.2", "platform": "windows", "arch": "x86_64",
-                                 "tag": local, "ref": repo + "@" + DIGEST})
+                                 "inputs": inputs, "ref": repo + "@" + DIGEST})
         calls = self._calls()
         (build,) = [c for c in calls if c[0] == "build"]
-        release_tag = "{0}:v{1}-godot4.7.2-windows-x86_64".format(repo, __version__)
+        # One clean tag per image: version, Godot version, platform.
+        release_tag = "{0}:{1}-godot4.7.2-windows".format(repo, __version__)
         self.assertIn(release_tag, build)
+        self.assertIn(build_image_tag("4.7.2", "windows", "x86_64", inputs), build)
+        self.assertIn("{0}={1}".format(INPUTS_LABEL, inputs), build)
         self.assertIn("org.opencontainers.image.revision=c0ffee", build)
         self.assertIn("org.opencontainers.image.source=https://github.com/salaryman-inc/FortressGD", build)
-        content_tag = repo + ":" + local.split(":", 1)[1]
-        self.assertIn(["tag", local, content_tag], calls)
-        self.assertEqual(sorted(c[1] for c in calls if c[0] == "push"), sorted([content_tag, release_tag]))
+        self.assertEqual([c[1] for c in calls if c[0] == "push"], [release_tag])
+        self.assertEqual([c for c in calls if c[0] == "tag"], [])
 
     def test_refuses_an_uppercase_repository(self) -> None:
         from fortressgd.core.errors import UserError
