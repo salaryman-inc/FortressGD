@@ -8,8 +8,8 @@ name: End-to-end
 # Every Godot build is its own job, so they run in parallel: prepare makes the
 # project and secret, the build jobs upload what they compile, and the test jobs
 # download it into the template cache. A run takes about as long as its slowest
-# build. The toolchain image every build job needs comes from the Actions layer
-# cache (.github/actions/toolchain-image), which prepare fills.
+# build. The toolchain image every build job needs comes from the Actions cache
+# (.github/actions/toolchain-image), which prepare fills.
 on:
   workflow_dispatch:
   schedule:
@@ -60,7 +60,7 @@ jobs:
       - if: matrix.godot == '4.7.2'
         uses: ./.github/actions/toolchain-image
         with:
-          load: "false"
+          mode: fill
       - name: Create the sample project and its secret
         run: |
           set -euo pipefail
@@ -102,7 +102,7 @@ jobs:
           sign-packs: ${{ matrix.target == 'linux-sig' && 'true' || 'false' }}
       - uses: ./.github/actions/toolchain-image
         with:
-          load: "true"
+          mode: load
       - name: Build the template in Docker
         working-directory: ${{ env.PROJ }}
         run: fortressgd templates build --godot "${{ matrix.godot }}" --platform "${{ matrix.target == 'windows' && 'windows' || 'linux' }}"
@@ -138,7 +138,7 @@ jobs:
           dialect: "true"
       - uses: ./.github/actions/toolchain-image
         with:
-          load: "true"
+          mode: load
       - name: Build the shared editor in Docker
         working-directory: ${{ env.PROJ }}
         run: fortressgd templates build --editor --godot "${{ matrix.godot }}"
@@ -179,7 +179,7 @@ jobs:
           dialect: "true"
       - uses: ./.github/actions/toolchain-image
         with:
-          load: "true"
+          mode: load
       - name: Build the template (build image, then relink)
         working-directory: ${{ env.PROJ }}
         run: |
