@@ -240,6 +240,7 @@ def doctor_project(
         warnings.append(
             "warning: secret missing\nRun: {0}".format(NEXT_SECRET)
         )
+    images = _build_image_lines(cfg, version)
     return {
         "root": str(root),
         "config": cfg,
@@ -249,7 +250,20 @@ def doctor_project(
         "secret": secret,
         "godot": version,
         "warnings": warnings,
+        "build_images": images,
     }
+
+
+def _build_image_lines(cfg: dict, version: str) -> list[str]:
+    """The pinned build images a dialect project's templates relink in (DESIGN.md §18.4)."""
+    from fortressgd.core.templates import SUPPORTED_PLATFORMS, build_image_status, concrete_godot_tag
+
+    production = cfg.get("production") or {}
+    if not production.get("dialect", True):
+        return []
+    listed = (cfg.get("platforms") or {}).get("build")
+    platforms = [str(p) for p in listed] if isinstance(listed, list) and listed else list(SUPPORTED_PLATFORMS)
+    return build_image_status(concrete_godot_tag(version), [p for p in platforms if p in SUPPORTED_PLATFORMS])
 
 
 def _check_secret_hygiene(
@@ -295,6 +309,7 @@ def format_doctor_ok(result: dict[str, object]) -> str:
             lines.append("ok: secret present (file)")
         else:
             lines.append("ok: secret present (environment {0})".format(secret["path"]))
+    lines.extend(result.get("build_images") or [])  # type: ignore[arg-type]
     lines.extend(result["warnings"])  # type: ignore[arg-type]
     return "\n".join(lines)
 

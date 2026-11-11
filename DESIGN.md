@@ -704,6 +704,16 @@ Naming and cache: template names and the CI cache key gain the generator version
 - Until the release workflow publishes images (step 4), `templates build` builds the image locally the first time, tagged `fortressgd-build:godot<tag>-<platform>-<arch>-fgd<patchset>-<h8>`. `h8` hashes the template image, `Dockerfile.build`, the placeholder and the LTO mode, so a stale local image is never reused. `--from-source` keeps the full compile in a fresh container.
 - The template patchset id also covers the fixed common files every template compiles (`fortressgd_gen_api.h`, `fortressgd_gen_shim.h`, `fortressgd_gen_shim.cpp`). The shared editor's id does not.
 
+**Implementation (step 4).** See `docs/releasing.md`.
+
+- `.github/workflows/release.yml` runs on `v*` tags. It checks that the tag matches `__version__` and `plugin.cfg`. Then one job per Godot tag and platform builds the image with `python -m fortressgd.release build-image`, which uses the same `Dockerfile.build` and inputs as a local build, and pushes it to `ghcr.io/<owner>/fortressgd-build`. Each image gets two tags: its content tag (the local tag's name) and `v<version>-godot<tag>-<platform>-<arch>`. Each job attests its image's digest and pushes the attestation to the registry. Only these jobs get `packages: write`.
+- The last job writes `fortressgd/images.lock.json` with `write-lock`, which requires one entry per supported tag and platform. It builds the wheel and sdist with the lock inside and checks both carry it. It attests the wheel, the sdist and the lock, and creates a draft release with all three attached.
+- The lock pins `<repository>@sha256:<digest>` together with the image's content tag. `templates build` checks that this tag matches the one it computes from the installed patches and Docker files, pulls the digest, and relinks in it, so Docker refuses any other content. The tags differ only in a modified install. That fails and names `--from-source`, and so does a failed pull.
+- `--image REF` relinks in another image for one platform. The relink's state check still refuses an image built for another patchset, tag, platform or LTO mode. `--patches-dir` ignores the lock and builds locally. A source checkout has no lock, and builds locally as in step 3.
+- A git checkout of the tag can't contain digests that exist only after the tag is built, so the lock ships in the wheel and as a release asset. The `build-templates` Action runs from the tag's checkout. At a release tag, or a commit SHA that one points at, it downloads the asset and checks it with `gh attestation verify`: signer workflow `release.yml`, source ref the tag, source digest the commit. Then it puts the lock where the CLI reads it.
+- `doctor` reports, for a dialect project's build platforms, whether each pinned image is pulled.
+- `.github/rulesets/release-tags.json` restricts creating, updating and deleting `v*` tags to repository admins. An admin applies it with `gh api`.
+
 ### 18.5 Export side
 
 Status: implemented (§8.3), except that the editor is built by `templates build --editor` and cached; it moves into the build image with §18.4.
@@ -744,6 +754,6 @@ Each step is a separate PR with its own tests:
 
 1. Shared headless editor reading values from the environment (§18.5). Done.
 2. Generator v2, its interpreter, and patches switched to the generated header (§18.3), still built from source. Done.
-3. Build images with a precompiled tree, plus the relink path and the LTO measurement (§18.4).
-4. Release workflow: tag ruleset, image publishing, provenance, and digest pinning in the CLI.
+3. Build images with a precompiled tree, plus the relink path and the LTO measurement (§18.4). Done.
+4. Release workflow: tag ruleset, image publishing, provenance, and digest pinning in the CLI. Done, except applying the ruleset (`docs/releasing.md`).
 5. Cross-build e2e and docs: README, `THREAT_MODEL.md` (removing "planned"), `docs/ci.md`.

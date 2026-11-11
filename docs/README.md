@@ -2,7 +2,7 @@
 
 The documentation website, built with [Starlight](https://starlight.astro.build/) and published to GitHub Pages at <https://salaryman-inc.github.io/FortressGD/>.
 
-The guides in this folder (`getting-started.md`, `ci.md`, `secrets.md`, `agent-rules.md`) and the Markdown at the repository root (`README.md`, `DESIGN.md`, `THREAT_MODEL.md`, `SECURITY.md`, `CONTRIBUTING.md`) are the source. They read fine on GitHub as they are. `scripts/sync-content.mjs` copies them into `src/content/docs/` before each build, adds frontmatter, and rewrites relative links to site pages or to files on GitHub. Those copies are git-ignored; edit the originals.
+The guides in this folder (`getting-started.md`, `ci.md`, `secrets.md`, `agent-rules.md`, `releasing.md`) and the Markdown at the repository root (`README.md`, `DESIGN.md`, `THREAT_MODEL.md`, `SECURITY.md`, `CONTRIBUTING.md`) are the source. They read fine on GitHub as they are. `scripts/sync-content.mjs` copies them into `src/content/docs/` before each build, adds frontmatter, and rewrites relative links to site pages or to files on GitHub. Those copies are git-ignored; edit the originals.
 
 Only the landing page, `src/content/docs/index.mdx`, is written for the site alone.
 
