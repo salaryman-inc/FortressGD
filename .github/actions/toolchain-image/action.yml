@@ -1,0 +1,56 @@
+name: "e2e toolchain image"
+description: "Build fortressgd-templates:<hash> (Dockerfile.templates) through the GitHub Actions layer cache, so apt and the base image pull run only when the Dockerfile changes."
+inputs:
+  load:
+    description: "true to load the image into the local Docker daemon for templates build; false only to fill the cache"
+    required: true
+runs:
+  using: "composite"
+  steps:
+    # Each e2e build job needs this image. Built from scratch, it takes about two
+    # minutes, and once took 56 when a runner's downloads stalled. From the cache
+    # it is the same image under the same tag, so templates build finds it and
+    # skips its own docker build.
+    - name: Compute the toolchain image tag
+      id: tag
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 - >> "$GITHUB_OUTPUT" <<'PY'
+        import sys
+        sys.path.insert(0, ".")
+        from fortressgd.core.paths import docker_dir
+        from fortressgd.core.templates import docker_image
+        print("image=" + docker_image())
+        print("context=" + str(docker_dir()))
+        PY
+
+    # use: false keeps the daemon's own builder the default. templates build runs
+    # plain docker build for the build image, FROM this image in the daemon, which
+    # a docker-container builder cannot see.
+    - id: buildx
+      uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      with:
+        use: false
+
+    - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+      env:
+        DOCKER_BUILD_SUMMARY: "false"
+        DOCKER_BUILD_RECORD_UPLOAD: "false"
+      with:
+        builder: ${{ steps.buildx.outputs.name }}
+        context: ${{ steps.tag.outputs.context }}
+        file: ${{ steps.tag.outputs.context }}/Dockerfile.templates
+        tags: ${{ steps.tag.outputs.image }}
+        load: ${{ inputs.load == 'true' }}
+        provenance: false
+        sbom: false
+        cache-from: type=gha,scope=fortressgd-templates
+        # Only the job that fills the cache writes it.
+        cache-to: ${{ inputs.load != 'true' && 'type=gha,scope=fortressgd-templates,mode=max' || '' }}
+
+    - if: inputs.load == 'true'
+      shell: bash
+      env:
+        IMAGE: ${{ steps.tag.outputs.image }}
+      run: docker image inspect --format '{{.Id}} {{.Size}}' "$IMAGE"

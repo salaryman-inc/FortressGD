@@ -6,7 +6,9 @@ updates:
   - package-ecosystem: github-actions
     directories:
       - "/"
+      - "/.github/actions/e2e-project"
       - "/.github/actions/godot-editor"
+      - "/.github/actions/toolchain-image"
       - "/actions/build-templates"
     schedule:
       interval: weekly
