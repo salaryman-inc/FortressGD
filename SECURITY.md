@@ -24,11 +24,12 @@ Anything that breaks a promise in [`THREAT_MODEL.md`](THREAT_MODEL.md), for exam
 
 - The project secret, the mangler key, or the pack-signing seed reaching anything that ships (a template, a pack, a source map) or a log, the template cache, `export_presets.cfg`, or a Docker image layer.
 - Mangled names that can be reversed without the project secret, or a source map written where an export or upload picks it up.
-- The derived PCK key reaching any of those unmasked. A template holds it only as masked shards (DESIGN.md §5.2).
+- The derived PCK key reaching any of those unencoded. A template holds it only inside its generated code, split and encoded (DESIGN.md §18.3).
+- An extractor written for one FortressGD build that reads the pack key, the pack layout or the opcode map from a build with another secret or `key_epoch` without running it (DESIGN.md §1.3, §18).
 - `fortressgd verify` passing an artifact that still contains an excluded file (`.gd` text, `.cs`, `.pdb`, DCC files, source maps) or a stock debug table it is meant to reject.
 - A stock tool (KeyDot, GDRE Tools / gdsdecomp, gdke, GodotPCKExplorer) recovering the key or the project from a FortressGD-protected build in one step.
 - A `-sig` template loading a pack whose index signature is missing, zeroed or invalid.
-- Supply-chain problems in the patches, the Docker build, or the GitHub Action, such as unpinned inputs or a way for a pull request to read the secret.
+- Supply-chain problems in the patches, the Docker build, the published build images, the release workflow or the GitHub Action, such as unpinned inputs, an image the CLI would run without its pinned digest, or a way for a pull request to read the secret.
 
 ## Out of scope
 

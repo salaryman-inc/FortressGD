@@ -464,10 +464,12 @@ def main(argv: list[str] | None = None) -> int:
                 label, n, nbytes, args.max_shared
             )
         )
+        # The shared run goes to the log either way, so a near miss can be read.
+        print("{0}: the longest run shared with A:".format(label))
+        for t in run:
+            print("    " + t)
         if n > args.max_shared:
-            print("error: {0} shares {1} key-code instructions with A:".format(label, n), file=sys.stderr)
-            for t in run:
-                print("    " + t, file=sys.stderr)
+            print("error: {0} shares {1} key-code instructions with A".format(label, n), file=sys.stderr)
             failed = True
     text = "\n".join(report)
     print(text)
