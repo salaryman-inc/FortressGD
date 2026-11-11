@@ -2,7 +2,7 @@
 
 A FortressGD release publishes three things, all from `.github/workflows/release.yml` on a `v*` tag (DESIGN.md §18.4):
 
-- **Build images** on GHCR: `ghcr.io/salaryman-inc/fortressgd-build`, one per supported Godot tag and platform. Each holds a Godot tree compiled against a placeholder, so `templates build` only recompiles the project's generated file and relinks. An image holds no secret and no key.
+- **Build images** on GHCR: `ghcr.io/salaryman-inc/fortressgd-build`, one per supported Godot tag and platform, tagged `<version>-godot<tag>-<platform>` (for example `0.2.0-godot4.7.2-linux`). Each holds a Godot tree compiled against a placeholder, so `templates build` only recompiles the project's generated file and relinks. An image holds no secret and no key.
 - **The CLI's wheel and sdist.** Both carry `fortressgd/images.lock.json`, which pins each build image by `@sha256:` digest. `templates build` pulls the pinned digest and nothing else, unless you pass `--image` yourself.
 - **`images.lock.json`**, also as a release asset. The `build-templates` GitHub Action fetches it when it runs at a release tag, because a git checkout of the tag cannot contain digests that only exist after the tag is built.
 
@@ -45,9 +45,9 @@ To use no prebuilt toolchain at all, build with `fortressgd templates build --fr
 3. The release workflow checks that the tag matches the version, then builds and pushes the four build images in parallel (about 45 minutes). Then it writes the lock, builds the wheel and sdist with the lock inside, and attests everything. Finally it creates a **draft** release with the wheel, the sdist and `images.lock.json` attached.
 4. Read the draft. Check that the job summary lists four image digests, then publish it. The `build-templates` Action can't fetch the lock from a draft, so until you publish, it builds images on the runner.
 
-On the first release, open the `fortressgd-build` package on GHCR and set its visibility to **public**. A package that `GITHUB_TOKEN` creates starts out private, and users can't pull a private image. The images carry `org.opencontainers.image.source`, so the package is linked to this repository, and later releases push to it with `GITHUB_TOKEN`.
+Before the first release, the organization must allow public packages: **Settings → Packages → Package creation → Public**. Without it GHCR refuses the first push with `denied` after the layers upload. On the first release, open the `fortressgd-build` package on GHCR and set its visibility to **public**. A package that `GITHUB_TOKEN` creates starts out private, and users can't pull a private image. The images carry `org.opencontainers.image.source`, so the package is linked to this repository, and later releases push to it with `GITHUB_TOKEN`.
 
-If a release run fails, fix the cause on `main` and release a new patch version. Do not move the tag: the ruleset blocks it, and anything already pushed or attested points at the old commit.
+If a release run fails, fix the cause on `main` and release a new patch version. Do not move the tag: the ruleset blocks it, and anything already pushed or attested points at the old commit. The one exception is a release nobody could have used: a draft that was never published, whose images were never public. An admin may then delete the draft, the tag and the package versions on GHCR, and tag again.
 
 ## The tag ruleset
 

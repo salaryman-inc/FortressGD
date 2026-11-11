@@ -28,7 +28,9 @@ from fortressgd.core.templates import (
     SUPPORTED_PLATFORMS,
     TEMPLATE_LTO,
     build_build_image,
+    installed_build_image_inputs,
     load_image_pins,
+    published_build_image_tag,
 )
 from fortressgd.core.version import SUPPORTED_GODOT, __version__
 
@@ -62,17 +64,25 @@ def _docker(args: list[str]) -> str:
     return run.stdout
 
 
+# Image label carrying the build image inputs id (fortressgd.core.templates).
+INPUTS_LABEL = "io.github.salaryman-inc.fortressgd.build-inputs"
+
+
 def build_and_push(godot: str, platform: str, repository: str, *, revision: str) -> dict[str, str]:
-    """Build one build image, push it under two tags, and return its lock entry."""
+    """Build one build image, push it under its release tag, and return its lock entry.
+
+    One tag per image, <repository>:<version>-godot<tag>-<platform>, says which image
+    it is. The lock pins the digest, and records the inputs id that `templates build`
+    compares with its own; the image also carries that id as a label.
+    """
     if not _REPOSITORY.match(repository):
         raise UserError("{0} is not a lowercase image repository".format(repository), "pass --repository ghcr.io/<owner>/fortressgd-build")
     if godot not in SUPPORTED_GODOT or platform not in SUPPORTED_PLATFORMS:
         raise UserError("unsupported godot {0} or platform {1}".format(godot, platform), "see SUPPORTED_GODOT")
     arch = DEFAULT_ARCH
-    release_tag = "{0}:v{1}-godot{2}-{3}-{4}".format(repository, __version__, godot, platform, arch)
-    # Two registry tags: the release tag for people browsing the registry, and the
-    # content tag (the local tag's name, which hashes the image's inputs).
-    local = build_build_image(
+    inputs_id = installed_build_image_inputs(godot, platform, arch=arch, lto=TEMPLATE_LTO)
+    release_tag = published_build_image_tag(repository, __version__, godot, platform, arch)
+    build_build_image(
         godot,
         platform,
         arch=arch,
@@ -85,22 +95,20 @@ def build_and_push(godot: str, platform: str, repository: str, *, revision: str)
             "org.opencontainers.image.description": "FortressGD build image: Godot {0} {1} {2}, precompiled".format(
                 godot, platform, arch
             ),
+            INPUTS_LABEL: inputs_id,
         },
     )
-    content_tag = "{0}:{1}".format(repository, local.split(":", 1)[1])
-    _docker(["tag", local, content_tag])
-    for name in (content_tag, release_tag):
-        push = subprocess.run(["docker", "push", name], stdout=2)
-        if push.returncode != 0:
-            raise ToolError("docker push {0} failed (log above)".format(name), "re-run the release workflow")
-    digests = json.loads(_docker(["image", "inspect", "--format", "{{json .RepoDigests}}", local]) or "[]")
+    push = subprocess.run(["docker", "push", release_tag], stdout=2)
+    if push.returncode != 0:
+        raise ToolError("docker push {0} failed (log above)".format(release_tag), "re-run the release workflow")
+    digests = json.loads(_docker(["image", "inspect", "--format", "{{json .RepoDigests}}", release_tag]) or "[]")
     refs = sorted({d for d in digests if d.startswith(repository + "@sha256:")})
     if len(refs) != 1:
         raise ToolError(
             "expected one {0} digest after the push, got {1}".format(repository, refs or "none"),
             "re-run the release workflow",
         )
-    return {"godot": godot, "platform": platform, "arch": arch, "tag": local, "ref": refs[0]}
+    return {"godot": godot, "platform": platform, "arch": arch, "inputs": inputs_id, "ref": refs[0]}
 
 
 def write_lock(entries: list[dict[str, str]], *, commit: str, path: Path | None = None) -> Path:

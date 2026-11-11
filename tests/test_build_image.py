@@ -292,7 +292,7 @@ class HostBuildImageTests(unittest.TestCase):
         builds = [c for c in first if c[0] == "build"]
         self.assertEqual(len(builds), 1)
         build = builds[0]
-        self.assertTrue(build[build.index("-t") + 1].startswith("fortressgd-build:godot4.6.2-linux-x86_64-fgd"))
+        self.assertRegex(build[build.index("-t") + 1], r"^fortressgd-build:godot4\.6\.2-linux-[0-9a-f]{12}$")
         self.assertIn("FGD_PATCHSET=" + patchset_for_tag("4.6.2"), build)
         self.assertIn("FGD_PLATFORM=linux", build)
         (run,) = self._runs(first)
@@ -327,12 +327,24 @@ class HostBuildImageTests(unittest.TestCase):
                 self.assertIn("FGD_MODE=source", run)
 
     def test_image_tag_changes_with_its_inputs(self) -> None:
-        from fortressgd.core.templates import build_image_tag
+        from fortressgd.core.templates import build_image_inputs_id, build_image_tag, published_build_image_tag
 
-        base = build_image_tag("4.6.2", "linux", "x86_64", "a" * 12)
-        self.assertNotEqual(base, build_image_tag("4.6.2", "linux", "x86_64", "b" * 12))
-        self.assertNotEqual(base, build_image_tag("4.6.2", "linux", "x86_64", "a" * 12, lto="none"))
-        self.assertNotEqual(base, build_image_tag("4.6.2", "windows", "x86_64", "a" * 12))
+        base = build_image_inputs_id("4.6.2", "linux", "x86_64", "a" * 12)
+        self.assertRegex(base, r"^[0-9a-f]{12}$")
+        for other in (
+            build_image_inputs_id("4.6.2", "linux", "x86_64", "b" * 12),
+            build_image_inputs_id("4.6.2", "linux", "x86_64", "a" * 12, lto="none"),
+            build_image_inputs_id("4.6.2", "windows", "x86_64", "a" * 12),
+            build_image_inputs_id("4.7.2", "linux", "x86_64", "a" * 12),
+            build_image_inputs_id("4.6.2", "linux", "arm64", "a" * 12),
+        ):
+            self.assertNotEqual(base, other)
+        self.assertEqual(build_image_tag("4.6.2", "linux", "x86_64", base), "fortressgd-build:godot4.6.2-linux-" + base)
+        self.assertEqual(build_image_tag("4.6.2", "linux", "arm64", base), "fortressgd-build:godot4.6.2-linux-arm64-" + base)
+        self.assertEqual(
+            published_build_image_tag("ghcr.io/o/fortressgd-build", "0.2.0", "4.7.2", "windows"),
+            "ghcr.io/o/fortressgd-build:0.2.0-godot4.7.2-windows",
+        )
 
 
 if __name__ == "__main__":
