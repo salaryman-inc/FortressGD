@@ -21,7 +21,7 @@ hero:
 
 import { Aside, Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
-Export a Godot game that stock GDRE/KeyDot cannot one-click recover, without maintaining a fork. Designers keep the official Godot editor. Custom export templates are built in Docker or CI from a pinned Godot tag plus a small patch quilt. Production exports refuse to ship source, and `fortressgd verify` fails CI if they did.
+Export a Godot game that stock GDRE/KeyDot cannot one-click recover, without maintaining a fork. Designers keep the official Godot editor. Custom export templates are relinked per project in a prebuilt build image, compiled once from a pinned Godot tag plus a small patch quilt. Production exports refuse to ship source, and `fortressgd verify` fails CI if they did.
 
 <Aside type="caution" title="What this is not">
 	FortressGD raises the cost of automated recovery. It does not make a local client unextractable: a debugger can still dump decrypted resources from a running game. See the [threat model](reference/threat-model/).
@@ -34,7 +34,7 @@ Export a Godot game that stock GDRE/KeyDot cannot one-click recover, without mai
 		Production presets skip GDScript text, C# source, `.pdb` symbols, DCC work files and source maps. `fortressgd verify` lists packed paths and fails CI if anything leaked.
 	</Card>
 	<Card title="Derived encryption key" icon="seti:lock">
-		The PCK AES-256 key is derived from the project secret (`FGD-KDF-1`) and stored only as masked shards. The secret itself never ships.
+		The PCK AES-256 key is derived from the project secret (`FGD-KDF-1`) and stored by code generated per build, so an extractor written for one build is not meant to work on another. The secret itself never ships.
 	</Card>
 	<Card title="Per-project pack dialect" icon="puzzle">
 		Pack magic and index field order come from the project secret, so stock GDPC parsers cannot list the pack.
@@ -51,6 +51,6 @@ Supported engine tags: **Godot 4.6.2** and **4.7.2** stable. Protected platforms
 <CardGrid>
 	<LinkCard title="Getting started" href="getting-started/" description="Leak checks with the official editor: no Docker, no custom templates." />
 	<LinkCard title="Project secret" href="guides/secrets/" description="Where to keep it, what doctor checks, and the rotation runbook." />
-	<LinkCard title="CI and templates" href="guides/ci/" description="The GitHub Action, Docker template builds and unpacker fixtures." />
+	<LinkCard title="CI and templates" href="guides/ci/" description="The GitHub Action, build images, build times and unpacker fixtures." />
 	<LinkCard title="Design spec" href="reference/design/" description="How every part of FortressGD is meant to work." />
 </CardGrid>

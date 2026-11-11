@@ -8,11 +8,13 @@ See `DESIGN.md` §1.3 for the normative text. This page is the short form for RE
 - One-click full project recovery (GDRE Tools / gdsdecomp on a stock PCK).
 - Shipping the repo by accident (`.gd` text, `.cs` source, DCC files, source maps).
 - Anyone recovering the project secret or the pack-signing seed from what ships. Neither is ever in a template or a pack.
+- A FortressGD-aware tool that reads one build's values without running it, then works on another build. Since 0.2 the code that stores and decodes the pack key, the pack layout, the opcode map and the public key is generated per project secret, Godot version and `key_epoch` (`DESIGN.md` §18). A tool that reads those values from a fixed location, a fixed array shape or a fixed instruction pattern, or an extractor written for one project or one release line, must fail on a build with another secret or epoch.
 
 ## We do not try to stop
 
 - A person with a debugger dumping the derived key or decrypted resources.
-- A tool written for FortressGD. The source is public, so a tool that knows the template layout can read one build's pack key and dialect parameters straight from the binary. That costs about as much as the debugger attack above.
+- Anything that executes or emulates the build: hooking the AES routine, emulating the key routine, or dumping decrypted resources from memory. A game has to decrypt its own packs, so a runtime tool that works on every FortressGD game can still be written. Per-build code moves the points such a tool must find, but promises nothing against it.
+- Analysis of one build, by a person or with AI help. The source is public, so someone who studies one build's generated code can read that build's pack key and dialect parameters. Per-build code means the work has to be redone for each project and each `key_epoch`.
 - A person who reverse-engineers this game’s pack dialect and writes a dedicated unpacker.
 - Texture/audio ripping from memory or disk after decrypt.
 - Gameplay cheats that need a server to prevent.
@@ -32,24 +34,10 @@ Protection that must survive a determined attacker comes from that last list, no
 
 FortressGD is a release toolchain. Treat “stock tools fail on this build” as success. Treat “nobody can ever extract assets” as out of scope. Do not add features that only address the second sentence.
 
-## Planned for 0.2: per-project code (not implemented)
+## What the tests show about per-build code
 
-Everything above describes 0.1, which is what ships today. This section is the goal for 0.2. Do not claim it for a build until `DESIGN.md` §18 is implemented and its acceptance tests pass.
+The e2e workflow builds the sample project with two secrets, and one of them at two key epochs. A reference extractor written from one build's generated source recovers that build's key, and fails on the other two. The key-handling machine code of two builds shares no run of more than 32 instructions once addresses are masked; what they do share is the loop for one kind of operation. Stock GDRE Tools and KeyDot still fail on the protected builds. Details are in `docs/ci.md`.
 
-In 0.1 every template for a Godot version and platform has the same code and the same layout. Only the bytes of the masked key, magic, index permutation, opcode map and public key differ. A FortressGD-aware tool written once can therefore read those values out of every FortressGD game. The source being public is enough to write it.
+That shows that builds differ. It does not show that a static extractor for FortressGD builds in general is impossible. The generator uses a fixed, public grammar of operations, so a tool that recognizes that grammar, rather than one build's bytes, is not ruled out. Treat per-build code as raising the cost of reusing an extractor, not as a guarantee.
 
-0.2 makes the code that holds and decodes those values different for every project, and for every `key_epoch` of a project. The goal:
-
-> No static tool recovers the pack key, the pack layout or the opcode map from FortressGD builds in general. A tool that reads one build's values without running it does not work on a build with a different secret or epoch. Each build needs its own analysis, by a person or with AI help, or a runtime attack.
-
-Moves into scope in 0.2:
-
-- A FortressGD-aware tool that reads values from a fixed location, a fixed array shape, or a fixed instruction pattern.
-- Reusing an extractor written for one project, or one release line, on another.
-
-Stays out of scope in 0.2:
-
-- Anything that executes or emulates the build: a debugger, hooking the AES routine, emulating the key routine, or dumping decrypted resources from memory. A game has to decrypt its own packs, so a runtime tool that works on every FortressGD game can still be written. 0.2 moves the points such a tool must find, but promises nothing against it.
-- Everything else under "We do not try to stop".
-
-What holds after a key is extracted does not change.
+Builds made before 0.2 (generator v1) have the same code and layout for every project. Their values can be read by a tool written once, and the values extracted from a v1 build also apply to v2 builds with the same secret, Godot version and `key_epoch`. Bump `key_epoch` when you move a released game to 0.2.

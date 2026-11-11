@@ -24,9 +24,10 @@ Start with leak checks on the official editor — no Docker, no custom templates
 
 **Derived encryption key**
 
-- PCK AES-256 key is derived from the project secret (`FGD-KDF-1`, HKDF-SHA256) when the template is built, and stored only as masked shards, never as a raw 32-byte blob next to a known error string
+- PCK AES-256 key is derived from the project secret (`FGD-KDF-1`, HKDF-SHA256) when the template is built. The template never holds it as a raw 32-byte blob next to a known error string
+- **Per-build code:** the code that stores and decodes the key and the dialect values is generated per `(secret, Godot version, key_epoch)`. The key is split into 3–8 pieces of random sizes, each stored under its own chain of operations and decoded by its own routine (DESIGN.md §18.3). A tool written to read the key out of one build without running it should not work on a build with another secret or epoch; the e2e workflow checks this with a reference extractor and a machine-code comparison. That shows builds differ. It does not show that no static extractor for FortressGD builds in general can be written
 - The project secret itself never ships: no template or pack contains it, so extracting a build's key does not reveal the secret or the signing seed. That key does open every build of the project for the same Godot version and key epoch, until you bump `key_epoch` or rotate the secret
-- Custom `template_release` binaries built in Docker from `fortressgd/patches/<godot-tag>/`
+- Custom `template_release` binaries, relinked per project in a prebuilt build image: `templates build` compiles one generated file and relinks instead of compiling Godot (see [Templates](#templates-and-build-images))
 - CLI injects the derived key for one export process only; it is never written to `export_presets.cfg`
 
 **Per-project pack dialect** (optional, on by default in the example config)
@@ -69,7 +70,7 @@ Start with leak checks on the official editor — no Docker, no custom templates
 **Does**
 
 - Keep the official editor for day-to-day work
-- Build `template_release` binaries in Docker from `fortressgd/patches/<godot-tag>/`
+- Relink `template_release` binaries per project in a prebuilt, digest-pinned build image (Godot compiled once from `fortressgd/patches/<godot-tag>/`)
 - Derive the PCK AES key (`FGD-KDF-1`) instead of embedding the raw blob
 - Optionally change pack magic and index layout per project secret
 - Strip source (`.gd` text, `.cs`, DCC files, source maps) from Release
@@ -103,13 +104,15 @@ Protected platforms in v1: **Windows** and **Linux** (x86_64). Other Godot expor
 
 ## Install
 
-Install a tagged release with pip. The editor plugin, the engine patches and the Docker build files ship inside the package, so you do not need a checkout:
+Install the wheel attached to a [release](https://github.com/salaryman-inc/FortressGD/releases). The editor plugin, the engine patches, the Docker build files and the digests of the release's build images ship inside it, so you do not need a checkout:
 
 ```bash
-pip install "fortressgd @ git+https://github.com/salaryman-inc/FortressGD@v0.1.0"
+pip install "fortressgd @ https://github.com/salaryman-inc/FortressGD/releases/download/v0.2.0/fortressgd-0.2.0-py3-none-any.whl"
 cd /path/to/your/godot/project
 fortressgd --version
 ```
+
+Install the wheel, not a git tag. A git install has no image digests, so `templates build` compiles each build image on your machine the first time (35–45 minutes per platform on a GitHub-hosted runner). [`docs/releasing.md`](docs/releasing.md) shows how to check the wheel and the images with `gh attestation verify`.
 
 Run every command from your **Godot project root** (the directory with `project.godot`).
 
@@ -122,7 +125,7 @@ python3 /path/to/FortressGD/bin/fortressgd --help
 FortressGD has no required dependencies. For large projects, install the optional `fast` extra: it adds the `cryptography` package so pack encryption and decryption (in `verify`, `export` signing, and the nameless-bytecode check) run through OpenSSL, roughly 700× faster than the built-in pure-Python AES. Both produce identical bytes.
 
 ```bash
-pip install "fortressgd[fast] @ git+https://github.com/salaryman-inc/FortressGD@v0.1.0"
+pip install "fortressgd[fast] @ https://github.com/salaryman-inc/FortressGD/releases/download/v0.2.0/fortressgd-0.2.0-py3-none-any.whl"
 ```
 
 ---
@@ -147,7 +150,8 @@ export FORTRESSGD_SECRET="$(cat .fortressgd.secret)"
 #    On the Release preset: GDScript Export Mode = Binary tokens (or compressed),
 #    and add the custom feature tag fortressgd_production.
 
-# 4. Build custom templates (Docker). Repeat per platform you ship.
+# 4. Build custom templates (Docker). Repeat per platform you ship. The first
+#    run pulls the release's build image; each build relinks in it.
 fortressgd templates build --godot 4.6.2 --platform linux
 fortressgd templates build --godot 4.6.2 --platform windows
 
@@ -293,6 +297,21 @@ fortressgd verify build/game.pck
 
 With `nameless_bytecode = true`, set the preset's GDScript Export Mode to **Binary tokens** unless CI runs Python 3.14+: `verify` decodes "Compressed binary tokens" (ZSTD) only with Python 3.14's `compression.zstd`, and otherwise fails with that reason rather than passing unchecked. Encrypted `.gdc` bodies are decrypted with the project secret before the check.
 
+### Templates and build images
+
+A dialect template (`dialect = true`) is relinked, not compiled. Each release publishes one build image per Godot version and platform to `ghcr.io/salaryman-inc/fortressgd-build`. It holds Godot compiled once from the release's patches, and no secret. `templates build`:
+
+1. generates `fortressgd_gen.cpp` from the secret, on the host (the secret never enters a container),
+2. pulls the build image by the `@sha256:` digest pinned in the installed wheel,
+3. compiles that one file in the image and relinks the template, then scans it for secret material and caches it.
+
+A warm build (image already pulled) takes about 9 minutes per Linux template on a GitHub-hosted runner: Godot links with full LTO, so the relink reoptimizes the whole program. A Windows template relinks in seconds. Times are in [`docs/ci.md`](docs/ci.md#template-build-times).
+
+- `fortressgd doctor` says whether each pinned image is pulled.
+- `templates build --from-source` compiles all of Godot in a fresh container instead (30–60 minutes per platform), for when you will not run a prebuilt toolchain.
+- `templates build --image REF` relinks in an image you name, one platform at a time.
+- Templates with `dialect = false` and the shared export editor (`--editor`, about 35 minutes, once per Godot tag and machine or CI cache) are still compiled from source; they do not have build images yet.
+
 ---
 
 ## Configuration
@@ -373,7 +392,7 @@ Every command accepts `--secret-file PATH`. `--platform` is repeatable (`--platf
 | `doctor` | Validate toml, supported Godot tag, plugin files vs CLI package, secret presence and hygiene. Fails on a weak or placeholder secret, or a secret file readable by group or others. A missing secret and plugin drift are warnings, not failures. |
 | `secret generate [--force]` | Write 32 CSPRNG bytes as 64 hex chars, mode `0600`. Refuses to replace an existing secret without `--force`; a new secret cannot load packs or use templates built with the old one. |
 | `secret status` | `present` / `missing`; never prints the secret. |
-| `templates build` | Docker-build `template_release` for `(godot, secret_hash, platform)`. |
+| `templates build` | Build `template_release` for `(godot, secret_hash, platform, key_epoch)`: relink in the release's pinned build image for a dialect template, or compile in Docker. `--from-source`, `--image REF`, `--editor`. |
 | `templates list` | Names of cached templates. |
 | `export` | Production export with derived AES key (and dialect/mangle/sign when enabled), then `verify` when `verify_on_export` is true. |
 | `mangle-report` | List the script names mangling leaves readable, grouped by the rule that keeps each one (scene/resource reference, `@export`, `obj.name` access, string literal, addon, `class_name`, `fortressgd:keep`) with the file responsible. Needs no secret. `--json` for the full report, `--all` for every name. |
@@ -426,15 +445,15 @@ It never compiles the engine and never writes the raw secret into `export_preset
 
 ## CI
 
-Build templates once per `(godot version, patchset, secret hash, platform)` and cache them. Pin the action and the CLI to the same release tag:
+Build templates once per `(godot version, patchset, secret hash, platform)` and cache them. Pin the action and the CLI to the same release:
 
 ```yaml
 - uses: actions/setup-python@v5
   with:
     python-version: "3.12"
-- run: pip install "fortressgd @ git+https://github.com/salaryman-inc/FortressGD@v0.1.0"
+- run: pip install "fortressgd @ https://github.com/salaryman-inc/FortressGD/releases/download/v0.2.0/fortressgd-0.2.0-py3-none-any.whl"
 
-- uses: salaryman-inc/FortressGD/actions/build-templates@v0.1.0
+- uses: salaryman-inc/FortressGD/actions/build-templates@v0.2.0
   with:
     godot_version: "4.6.2"
     platforms: "linux,windows"
@@ -448,9 +467,9 @@ Build templates once per `(godot version, patchset, secret hash, platform)` and 
     FORTRESSGD_SECRET: ${{ secrets.FORTRESSGD_SECRET }}
 ```
 
-Cache key: `fgd-templates-{godot}-{patchset}-{secret_hash}-{platforms}-e{key_epoch}[-sig]`. Pass `key_epoch` to the Action when the project sets `[production].key_epoch`. The secret never enters the build container: `templates build` writes `dialect.gen.h` (the masked pack key and public values) on the host and passes only that file and the public `secret_hash` to Docker.
+Cache key: `fgd-templates-{godot}-{patchset}-{secret_hash}-g{generator}-{platforms}-e{key_epoch}[-sig]`. Pass `key_epoch` to the Action when the project sets `[production].key_epoch`. At a release tag, the Action downloads the release's `images.lock.json`, checks its provenance with `gh attestation verify` and relinks in the pinned build images. The secret never enters the build container: `templates build` writes `fortressgd_gen.cpp` (the encoded pack key and public values) on the host and passes only that file and the public `secret_hash` to Docker.
 
-The weekly end-to-end workflow (`.github/workflows/e2e.yml`) builds real templates, exports the sample project, and runs a pinned KeyDot version against the protected Windows build; KeyDot failing to recover the key or project is a pass. Locally the same test is opt-in (`FORTRESSGD_UNPACKER_TESTS=1`). The same workflow runs the latest GDRE Tools release with `--recover` on the protected Linux build and fails if any script contents come back, and checks that a `sign_packs` template refuses unsigned and tampered packs. gdke and GodotPCKExplorer are not tested yet, so the claim that they fail rests on design reasoning, not on a test run. See [`docs/ci.md`](docs/ci.md).
+The weekly end-to-end workflow (`.github/workflows/e2e.yml`) builds real templates, exports the sample project, and runs a pinned KeyDot version against the protected Windows build; KeyDot failing to recover the key or project is a pass. Locally the same test is opt-in (`FORTRESSGD_UNPACKER_TESTS=1`). The same workflow runs the latest GDRE Tools release with `--recover` on the protected Linux builds, with and without the dialect, and fails if any script contents come back, and checks that a `sign_packs` template refuses unsigned and tampered packs. Its cross-build check builds the sample project with two secrets and at two key epochs, and checks that an extractor written for one build fails on the others (DESIGN.md §18.7). gdke and GodotPCKExplorer are not tested yet, so the claim that they fail rests on design reasoning, not on a test run. See [`docs/ci.md`](docs/ci.md).
 
 ---
 
@@ -463,10 +482,10 @@ bin/fortressgd                    run the CLI from a checkout
 fortressgd/                       the Python package (everything below ships in the wheel)
   cli/                            fortressgd CLI
   core/                           shared library
-  generator/                      writes dialect.gen.h (build artifact, not committed)
+  generator/                      writes fortressgd_gen.cpp, the per-build code (build artifact, not committed)
   plugin/addons/fortressgd/       editor plugin, copied by `fortressgd init`
   patches/<godot-tag>/            quilt applied to a pinned upstream tag
-  docker/                         template build image
+  docker/                         toolchain and build image Dockerfiles
   fortressgd.example.toml         config written by `fortressgd init`
 actions/build-templates/          CI template factory
 .github/workflows/                CI for this repo
@@ -489,7 +508,7 @@ Tests: `python3 tests/run.py`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 | Editor | Official + custom templates | Patched editor | Official (4.5+) | Official | Official |
 | Source leaks | Your problem | Your problem | Your problem (strips comments only) | Not advertised | `verify` fails the build |
 | Script names | Intact | Intact (token IDs optionally scrambled) | Identifiers mangled; file paths intact | Not advertised | Optional mangler |
-| You compile Godot how? | By hand | By hand (in-place patch script) | No | No (post-build tool) | Docker / Action |
+| You compile Godot how? | By hand | By hand (in-place patch script) | No | No (post-build tool) | Dialect templates: no, a prebuilt build image relinks them. The export editor (once per Godot tag) and dialect-off templates: in Docker / Action |
 | License | MIT engine | MIT | MIT | Commercial, closed source (free tier) | MIT |
 
 Third-party columns summarize each project's own documentation as of November 2026; claims marked "claims" are the project's own and were not tested by FortressGD. Corrections are welcome.
@@ -506,7 +525,8 @@ Third-party columns summarize each project's own documentation as of November 20
 All of these are also published as a website: **https://salaryman-inc.github.io/FortressGD/**
 
 - [`docs/getting-started.md`](docs/getting-started.md) — leak checks with the official editor
-- [`docs/ci.md`](docs/ci.md) — template factory, Docker, unpacker fixtures
+- [`docs/ci.md`](docs/ci.md) — template factory, build images, build times, unpacker fixtures
+- [`docs/releasing.md`](docs/releasing.md) — what a release publishes, verifying it, cutting one
 - [`docs/secrets.md`](docs/secrets.md) — where to keep the secret, what `doctor` checks, rotation runbook
 - [`docs/agent-rules.md`](docs/agent-rules.md) — Callables vs string `call`/`rpc`, no secrets under `res://`
 - [`DESIGN.md`](DESIGN.md) — normative spec

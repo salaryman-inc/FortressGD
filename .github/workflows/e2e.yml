@@ -24,6 +24,7 @@ on:
       - "fortressgd/core/pack_dialect.py"
       - "fortressgd/core/templates.py"
       - "testdata/**"
+      - "tests/cross_build.py"
       - ".github/workflows/e2e.yml"
 
 permissions:
@@ -213,6 +214,39 @@ jobs:
           echo "Godot ${{ matrix.godot }} Linux: warm relink for a second project took ${secs}s (goal: under 600s)" | tee -a "$GITHUB_STEP_SUMMARY"
           docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}' | grep '^fortressgd-build:' | tee -a "$GITHUB_STEP_SUMMARY"
 
+      # DESIGN.md §18.7: build A (this project), B (the second secret) and A at
+      # epoch 1. A reference extractor written from A's generated source must
+      # recover A's key from A and fail on the other two, and A's key code must
+      # share no run of more than 32 instructions with theirs (addresses masked;
+      # docs/ci.md says how the limit was chosen).
+      - name: Warm relink of the same project at epoch 1
+        if: matrix.measure_relink
+        working-directory: ${{ env.PROJ }}
+        run: |
+          set -euo pipefail
+          start=$(date +%s)
+          fortressgd templates build --godot "${{ matrix.godot }}" --platform linux --key-epoch 1
+          secs=$(( $(date +%s) - start ))
+          echo "Godot ${{ matrix.godot }} Linux: warm relink at key_epoch 1 took ${secs}s (goal: under 600s)" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Cross-build check
+        if: matrix.measure_relink
+        env:
+          GODOT: ${{ matrix.godot }}
+        run: |
+          set -euo pipefail
+          template() {
+            # The cached Linux template for a secret file and epoch suffix ("" or "-e1").
+            sh="$(python3 -c 'import sys; from fortressgd.core.kdf import secret_hash; from fortressgd.core.secret import read_secret_file, secret_bytes_from_hex; from pathlib import Path; print(secret_hash(secret_bytes_from_hex(read_secret_file(Path(sys.argv[1])))))' "$1")"
+            find "$HOME/.cache/fortressgd/templates" -maxdepth 1 -name "godot-$GODOT-template_release-linux-x86_64-*-$sh-g2$2" ! -name '*.manifest.json' | grep . | head -n 1
+          }
+          a="$(template "$PROJ/.fortressgd.secret" "")"
+          b="$(template "$RUNNER_TEMP/second.secret" "")"
+          a1="$(template "$PROJ/.fortressgd.secret" "-e1")"
+          python -m tests.cross_build --godot "$GODOT" --max-shared 32 --summary "$GITHUB_STEP_SUMMARY" \
+            --a "template=$a,secret=$PROJ/.fortressgd.secret" \
+            --other "template=$b,secret=$RUNNER_TEMP/second.secret" \
+            --other "template=$a1,secret=$PROJ/.fortressgd.secret,epoch=1"
+
   export:
     name: Templates, export, verify (Godot ${{ matrix.godot }})
     needs: stock-templates
@@ -264,60 +298,12 @@ jobs:
           printf '%s\n' "$out"
           printf '%s\n' "$out" | grep -q "FortressGD sample project"
 
-      # GDRE Tools (gdsdecomp) is the stock one-click recovery tool. Run its latest
-      # release so a new version that breaks FortressGD shows up here. The control
-      # run on a plain pack proves the tool works on this runner, so its failure on
-      # the protected build means something.
+      # GDRE Tools (latest) against the derived-key build (.github/actions/gdre-check).
       - name: GDRE Tools (latest) cannot recover the protected build
-        working-directory: ${{ env.PROJ }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          gdre="$RUNNER_TEMP/gdre"
-          mkdir -p "$gdre"
-          curl -sSLf --retry 6 --retry-all-errors -H "Authorization: Bearer $GH_TOKEN" \
-            -o "$gdre/release.json" https://api.github.com/repos/GDRETools/gdsdecomp/releases/latest
-          read -r tag url digest < <(python3 - "$gdre/release.json" <<'PY'
-          import json, sys
-          rel = json.load(open(sys.argv[1]))
-          tag = rel["tag_name"]
-          asset = next(a for a in rel["assets"] if a["name"] == "GDRE_tools-{0}-linux.zip".format(tag))
-          print(tag, asset["browser_download_url"], asset.get("digest") or "none")
-          PY
-          )
-          echo "GDRE Tools $tag"
-          curl -sSLf --retry 6 --retry-all-errors -o "$gdre/gdre.zip" "$url"
-          if [ "$digest" != "none" ]; then
-            echo "${digest#sha256:}  $gdre/gdre.zip" | sha256sum -c -
-          fi
-          unzip -q "$gdre/gdre.zip" -d "$gdre/bin"
-          tool="$gdre/bin/gdre_tools.x86_64"
-          chmod +x "$tool"
-
-          # Control: a plain pack GDRE must list.
-          python3 - "$gdre/control.pck" <<'PY'
-          import sys
-          sys.path.insert(0, "${{ github.workspace }}")
-          from tests.gdpc_fixture import make_gdpc
-          open(sys.argv[1], "wb").write(make_gdpc(["control_marker.txt"], contents={"control_marker.txt": b"control"}))
-          PY
-          control="$(timeout 300 "$tool" --headless --list-files="$gdre/control.pck" 2>&1 || true)"
-          printf '%s\n' "$control" | tail -20
-          printf '%s\n' "$control" | grep -q "control_marker.txt" || { echo "error: GDRE could not read a plain pack; the check below would prove nothing" >&2; exit 1; }
-
-          # The protected build: no key, so nothing may come back.
-          set +e
-          timeout 900 "$tool" --headless --recover="$PWD/build/linux/game.pck" --output="$gdre/recovered" > "$gdre/recover.log" 2>&1
-          code=$?
-          set -e
-          tail -40 "$gdre/recover.log"
-          echo "GDRE exit code: $code"
-          if grep -rqs "FortressGD sample project" "$gdre/recovered"; then
-            echo "error: GDRE $tag recovered script contents from the protected build" >&2
-            exit 1
-          fi
-          echo "### GDRE Tools $tag: no script contents recovered (exit $code)" >> "$GITHUB_STEP_SUMMARY"
+        uses: ./.github/actions/gdre-check
+        with:
+          pack: ${{ env.PROJ }}/build/linux/game.pck
+          label: the derived-key Linux build (Godot ${{ matrix.godot }})
 
       # sign_packs: the -sig template must run a signed pack and refuse an unsigned
       # pack or one whose signature does not verify.
@@ -430,6 +416,13 @@ jobs:
           if find_gdpc_offset(data) is not None:
               sys.exit("error: the dialect export wrote a stock GDPC pack")
           PY
+
+      # Stock unpackers must fail on the dialect build too (DESIGN.md §18.7).
+      - name: GDRE Tools (latest) cannot recover the dialect build
+        uses: ./.github/actions/gdre-check
+        with:
+          pack: ${{ env.PROJ }}/build/linux/game.pck
+          label: the dialect Linux build (Godot ${{ matrix.godot }})
 
       - name: The dialect template runs the dialect pack
         working-directory: ${{ env.PROJ }}

@@ -47,12 +47,13 @@ In scope:
 - Full project recovery via GDRE Tools / gdsdecomp on stock PCK + stock bytecode.
 - Casual unzip / PCK Explorer listing of original paths and plaintext scripts.
 - Accidental shipping of `.cs`, `.gd` text, `.blend`, `.psd`, FortressGD source maps.
-- Recovering the project secret or the pack-signing seed from anything that ships. Neither is ever compiled into a template or written to a pack: a template holds only its own pack key, as masked shards (§5.2), and public values.
+- Recovering the project secret or the pack-signing seed from anything that ships. Neither is ever compiled into a template or written to a pack: a template holds only its own pack key, encoded by its generated code (§18.3), and public values.
+- A FortressGD-aware tool that reads values without executing the build, reused on another build: one that reads the pack key, the pack layout or the opcode map from a fixed location, a fixed array shape or a fixed instruction pattern, or an extractor written for one project or one release line. The generated code differs per `(secret, tag, key_epoch)` (§18). §18.7's tests show that builds differ; they do not show that a static extractor for builds in general is impossible.
 
 Out of scope (document, do not “fix”):
 
 - Attaching a debugger and dumping the derived key or decrypted resources from memory.
-- A FortressGD-aware tool. The source is public, so a tool that knows the template layout can read one build's pack key and dialect parameters from the binary without running it, at about the cost of the debugger attack above. That exposes the packs of every build sharing that key (same secret, Godot version and `key_epoch`) until the epoch is bumped or the secret rotated. It does not expose the project secret, the signing seed, other projects' keys, or anything mangling and the release filters removed. Dialect, opcode map and nameless bytecode do not hold against such a tool: nameless bytecode keeps runtime names in its `FGDN` block. **Planned for 0.2 (§18):** a FortressGD-aware tool that reads values without executing the build moves into scope; one that executes or emulates the build stays out of scope.
+- Anything that executes or emulates the build (hooking the AES routine, emulating the key routine), and analysis of one build by a person or with AI help. Either yields one build's pack key and dialect parameters. That exposes the packs of every build sharing that key (same secret, Godot version and `key_epoch`) until the epoch is bumped or the secret rotated. It does not expose the project secret, the signing seed, other projects' keys, or anything mangling and the release filters removed. Dialect, opcode map and nameless bytecode do not hold against it: nameless bytecode keeps runtime names in its `FGDN` block.
 - Rewriting a packer after reverse-engineering *this* game’s dialect.
 - Asset ripping from GPU/memory.
 - Server-authoritative cheat prevention.
@@ -598,9 +599,9 @@ If that path needs more than the commands above plus installing Docker and the p
 
 ---
 
-## 18. Planned: per-project code (0.2, not implemented)
+## 18. Per-project code (0.2)
 
-Status: accepted design. Step 1 of §18.8 (the shared export editor, §18.5) is implemented; the rest is not. Nothing else in §1–§17 changes until the work below lands; each part updates the sections it touches in the same change (§15 rule 7). `THREAT_MODEL.md` carries the matching goal under "Planned for 0.2".
+Status: implemented (§18.8). §1.3 and `THREAT_MODEL.md` describe what it covers. §8.2 and the `dialect.gen.h` references in §2, §5, §7 and §8.4 describe generator v1, which 0.2 templates no longer use; the shared export editor still gets a fixed `dialect.gen.h` (§18.5).
 
 ### 18.1 Why
 
@@ -748,6 +749,13 @@ In addition to §13 and §17:
 
 These tests show that builds differ. They cannot show that a static extractor for builds in general is impossible. The README and `THREAT_MODEL.md` must say exactly that much and no more.
 
+**Implementation (step 5).** `tests/cross_build.py`, run by the 4.7.2 dialect job of `.github/workflows/e2e.yml` on Linux templates for A, B and A at epoch 1 (`docs/ci.md`):
+
+- The reference extractor parses A's `fortressgd_gen.cpp`: each key piece's encoded array, its chain arrays and its operations. On A's template it finds each piece's longest array, which must occur exactly once, and records where the piece's other arrays sit relative to it. On a target it finds that anchor, reads every array at the recorded offset and runs A's chain. It must return A's key on A, and must fail (anchor not found, or bytes that are not the key) on B and on A at epoch 1.
+- The machine-code check finds, in each template, the instructions that address that build's key arrays (located from the build's own source), and takes each run from the first such instruction to the last, merging hits less than 512 bytes apart. It disassembles with GNU `objdump` and normalizes each instruction, replacing RIP-relative displacements and branch and call targets. The threshold is 32 instructions. A compared with itself must exceed it, as a control. In e2e run 42951715331 (Linux 4.7.2, full LTO) A's key code was 494 instructions; B shared at most 4 with it and A at epoch 1 at most 12. Over 1,157 pairs from 580 random secrets at two epochs, compiled alone, the maximum was 26 and the 99th percentile 10–17. What builds share is one operation's loop: each kind of operation compiles to a fixed loop, so a key piece of the same length with the same leading operations gives the same instructions. That is the limit of per-build code a grammar-aware tool can use; varying the code emitted per operation would shrink it.
+- Stock fixtures: GDRE Tools (latest) runs on both the derived-key and the dialect Linux builds (`.github/actions/gdre-check`), and the pinned KeyDot on the derived-key Windows build.
+- Equivalence is step 2's `tests/test_generate_compiled.py` and `tests/test_opchain.py`. Speed: the warm relink times are in `docs/ci.md`.
+
 ### 18.8 Order of work
 
 Each step is a separate PR with its own tests:
@@ -755,5 +763,5 @@ Each step is a separate PR with its own tests:
 1. Shared headless editor reading values from the environment (§18.5). Done.
 2. Generator v2, its interpreter, and patches switched to the generated header (§18.3), still built from source. Done.
 3. Build images with a precompiled tree, plus the relink path and the LTO measurement (§18.4). Done.
-4. Release workflow: tag ruleset, image publishing, provenance, and digest pinning in the CLI. Done, except applying the ruleset (`docs/releasing.md`).
-5. Cross-build e2e and docs: README, `THREAT_MODEL.md` (removing "planned"), `docs/ci.md`.
+4. Release workflow: tag ruleset, image publishing, provenance, and digest pinning in the CLI. Done; the ruleset is applied.
+5. Cross-build e2e and docs: README, `THREAT_MODEL.md` (removing "planned"), `docs/ci.md`. Done.
