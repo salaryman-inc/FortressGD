@@ -1,6 +1,6 @@
 """Product version. Keep in sync with fortressgd/plugin/addons/fortressgd/plugin.cfg and pyproject.toml."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 # Godot tags this CLI supports: exactly the tags with a patches/<tag>/ folder
 # (DESIGN.md §4). "4.7" and "4.7.x" are aliases for 4.7.2.
