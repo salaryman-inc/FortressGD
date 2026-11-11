@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import bisect
+import itertools
 import re
 import struct
 import subprocess
@@ -149,48 +150,106 @@ def _find_all(data: bytes, needle: bytes) -> list[int]:
 class PieceProfile:
     fn: DecodeFn
     offset: int  # in the key
-    anchor: bytes  # A's longest array of this piece
-    rel: dict[str, int]  # array name -> file offset relative to the anchor
+    rel: dict[str, int]  # array name -> file offset relative to the profile's anchor
+    certain: frozenset[str] = frozenset()  # arrays that occur once near the anchor
 
 
 @dataclass
 class Profile:
+    anchor: bytes  # A's longest key array that occurs once in A's binary
     pieces: list[PieceProfile]
 
 
-def train(binary_a: bytes, source_a: GenSource) -> Profile:
-    """Learn build A's layout from A's binary and A's generated source."""
+# How far from the anchor A's key arrays may sit, and how many placements of one
+# piece's short arrays training may try before it gives up.
+_WINDOW = 1 << 20
+_MARGIN = 8192
+_NEAREST = 48
+_MAX_COMBOS = 2_000_000
+
+
+def train(binary_a: bytes, source_a: GenSource, key_a: bytes | None = None) -> Profile:
+    """Learn build A's layout from A's binary and A's generated source.
+
+    The anchor is the longest of A's key arrays that occurs exactly once in A,
+    usually a 256-byte substitution table. Every other array is placed relative to
+    it. A short array (a piece can be one byte long) also occurs by chance near the
+    anchor; with ``key_a``, the author of the extractor checks it against build A,
+    so training keeps the placement of each piece that decodes to A's key.
+    """
+    arrays = [
+        (len(data), name, arr_name, data)
+        for name, _ in source_a.key_pieces
+        for arr_name, data in source_a.functions[name].arrays.items()
+    ]
+    anchor = None
+    for _, name, arr_name, data in sorted(arrays, reverse=True):
+        hits = _find_all(binary_a, data)
+        if len(hits) == 1:
+            anchor, base = data, hits[0]
+            break
+    if anchor is None:
+        raise ValueError("no key array of build A occurs exactly once in build A")
+
+    # Arrays that occur once near the anchor are placed for certain. The compiler
+    # keeps one translation unit's constants together, so the short arrays are
+    # looked for only in the area those span, nearest their own piece first.
+    near: dict[tuple[str, str], list[int]] = {}
+    for name, _ in source_a.key_pieces:
+        for arr_name, data in source_a.functions[name].arrays.items():
+            hits = [h - base for h in _find_all(binary_a, data) if abs(h - base) <= _WINDOW]
+            if not hits:
+                raise ValueError("{0}.{1} not found near the anchor in build A".format(name, arr_name))
+            near[(name, arr_name)] = hits
+    fixed = {k: v[0] for k, v in near.items() if len(v) == 1}
+    lo = min(fixed.values())
+    hi = max(r + len(source_a.functions[k[0]].arrays[k[1]]) for k, r in fixed.items())
+    lo, hi = lo - _MARGIN, hi + _MARGIN
+
     profiles = []
     for name, ofs in source_a.key_pieces:
         fn = source_a.functions[name]
-        anchor_name = max(fn.arrays, key=lambda n: len(fn.arrays[n]))
-        anchor = fn.arrays[anchor_name]
-        hits = _find_all(binary_a, anchor)
-        if len(hits) != 1:
-            raise ValueError("{0}.{1} found {2} times in build A".format(name, anchor_name, len(hits)))
-        base = hits[0]
-        rel = {}
-        for arr_name, data in fn.arrays.items():
-            # Each array must sit near the anchor, where the compiler put this
-            # function's constants.
-            near = [h for h in _find_all(binary_a, data) if abs(h - base) < 65536]
-            if not near:
-                raise ValueError("{0}.{1} not found near its anchor in build A".format(name, arr_name))
-            rel[arr_name] = min(near, key=lambda h: abs(h - base)) - base
-        profiles.append(PieceProfile(fn, ofs, anchor, rel))
-    return Profile(profiles)
+        own = [fixed[(name, n)] for n in fn.arrays if (name, n) in fixed]
+        centre = sum(own) / len(own) if own else (lo + hi) / 2
+        cands: dict[str, list[int]] = {}
+        for arr_name in fn.arrays:
+            if (name, arr_name) in fixed:
+                cands[arr_name] = [fixed[(name, arr_name)]]
+                continue
+            inside = [r for r in near[(name, arr_name)] if lo <= r <= hi]
+            if not inside:
+                raise ValueError("{0}.{1} not found among build A's key arrays".format(name, arr_name))
+            cands[arr_name] = sorted(inside, key=lambda r: abs(r - centre))[:_NEAREST]
+        names = list(cands)
+        if all(len(cands[n]) == 1 for n in names):
+            rel = {n: cands[n][0] for n in names}
+        elif key_a is None:
+            raise ValueError("{0}: short arrays are ambiguous in build A; pass A's key".format(name))
+        else:
+            want = key_a[ofs : ofs + fn.length]
+            rel = None
+            for tries, combo in enumerate(itertools.product(*(cands[n] for n in names))):
+                if tries >= _MAX_COMBOS:
+                    break
+                got = {n: binary_a[base + r : base + r + len(fn.arrays[n])] for n, r in zip(names, combo)}
+                if fn.decode(got) == want:
+                    rel = dict(zip(names, combo))
+                    break
+            if rel is None:
+                raise ValueError("{0}: no placement of its arrays decodes to A's key".format(name))
+        certain = frozenset(n for n in fn.arrays if (name, n) in fixed)
+        profiles.append(PieceProfile(fn, ofs, rel, certain))
+    return Profile(anchor, profiles)
 
 
 def extract(binary: bytes, profile: Profile) -> bytes:
     """Recover a 32-byte key from ``binary`` the way build A stores it."""
+    hits = _find_all(binary, profile.anchor)
+    if len(hits) != 1:
+        raise ExtractionFailed("build A's anchor array found {0} times".format(len(hits)))
+    base = hits[0]
     key = bytearray(32)
     for p in profile.pieces:
-        hits = _find_all(binary, p.anchor)
-        if len(hits) != 1:
-            raise ExtractionFailed(
-                "{0}: build A's anchor array found {1} times".format(p.fn.name, len(hits))
-            )
-        base = hits[0]
         arrays = {}
         for arr_name, r in p.rel.items():
             start = base + r
@@ -316,21 +375,24 @@ def disassemble(path: Path, objdump: str, start: int | None = None, stop: int | 
         raise RuntimeError("{0} failed on {1}".format(objdump, path))
 
 
-def key_arrays_va(binary: bytes, source: GenSource) -> list[tuple[int, int]]:
+def key_arrays_va(binary: bytes, source: GenSource, key: bytes) -> list[tuple[int, int]]:
     """[start, end) addresses of this build's key-piece arrays, from its own source."""
     secs = sections(binary)
     ranges = []
-    # train() places each array next to its function's anchor, so a short array
-    # never matches stray bytes elsewhere in the file.
-    for p in train(binary, source).pieces:
-        base = _find_all(binary, p.anchor)[0]
+    # Only arrays whose place is certain: a short array placed by its decoded value
+    # may sit on a stray byte that unrelated code addresses.
+    profile = train(binary, source, key)
+    base = _find_all(binary, profile.anchor)[0]
+    for p in profile.pieces:
         for arr_name, r in p.rel.items():
+            if arr_name not in p.certain:
+                continue
             va = file_to_va(secs, base + r)
             ranges.append((va, va + len(p.fn.arrays[arr_name])))
     return sorted(ranges)
 
 
-def key_code(path: Path, binary: bytes, source: GenSource, objdump: str, *, gap: int = 512) -> list[list[Insn]]:
+def key_code(path: Path, binary: bytes, source: GenSource, key: bytes, objdump: str, *, gap: int = 512) -> list[list[Insn]]:
     """The machine code that handles this build's key, as runs of instructions.
 
     One pass over the whole disassembly finds every instruction that addresses one
@@ -338,7 +400,7 @@ def key_code(path: Path, binary: bytes, source: GenSource, objdump: str, *, gap:
     runs from its first array access to its last; a second, narrow objdump call
     returns its instructions. Nothing else of the binary is kept in memory.
     """
-    ranges = key_arrays_va(binary, source)
+    ranges = key_arrays_va(binary, source, key)
     if not ranges:
         raise ValueError("no key arrays found in the binary")
     starts = [r[0] for r in ranges]
@@ -427,14 +489,15 @@ def main(argv: list[str] | None = None) -> int:
     a_path, a_secret, a_epoch = _load(args.a)
     a_bin = a_path.read_bytes()
     a_src = parse_gen_cpp(_source(args.godot, a_secret, a_epoch))
-    profile = train(a_bin, a_src)
+    a_key = _expected_key(args.godot, a_secret, a_epoch)
+    profile = train(a_bin, a_src, a_key)
     got = extract(a_bin, profile)
-    if got != _expected_key(args.godot, a_secret, a_epoch):
+    if got != a_key:
         print("error: the reference extractor did not recover build A's key from build A", file=sys.stderr)
         return 1
     report.append("- Reference extractor for build A recovers A's key from A ({0} pieces).".format(len(profile.pieces)))
 
-    a_code = key_code(a_path, a_bin, a_src, args.objdump)
+    a_code = key_code(a_path, a_bin, a_src, a_key, args.objdump)
     # Control: A against itself shares all of its key code, so the measure is not
     # passing because it finds nothing to compare.
     n_self, bytes_self, _ = longest_shared_run(a_code, a_code)
@@ -447,17 +510,18 @@ def main(argv: list[str] | None = None) -> int:
         path, secret, epoch = _load(spec)
         label = "{0} (epoch {1})".format(path.name, epoch)
         data = path.read_bytes()
+        other_key = _expected_key(args.godot, secret, epoch)
         try:
             key = extract(data, profile)
         except ExtractionFailed as exc:
             report.append("- {0}: the extractor fails ({1}).".format(label, exc))
         else:
-            if key == _expected_key(args.godot, secret, epoch):
+            if key == other_key:
                 print("error: build A's extractor recovered the key of {0}".format(label), file=sys.stderr)
                 failed = True
             report.append("- {0}: the extractor returns bytes that are not the key.".format(label))
         src = parse_gen_cpp(_source(args.godot, secret, epoch))
-        code = key_code(path, data, src, args.objdump)
+        code = key_code(path, data, src, other_key, args.objdump)
         n, nbytes, run = longest_shared_run(a_code, code)
         report.append(
             "- {0}: longest key-code instruction run shared with A: {1} instructions ({2} bytes); limit {3}.".format(

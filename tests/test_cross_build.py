@@ -8,6 +8,7 @@ comparison.
 
 from __future__ import annotations
 
+import random
 import shutil
 import struct
 import subprocess
@@ -88,13 +89,33 @@ class ExtractorTests(unittest.TestCase):
 
     def test_synthetic_layout(self) -> None:
         bin_a = _synthetic_binary(self.a, b"\xcc" * 300, 0)
-        profile = train(bin_a, self.a)
+        profile = train(bin_a, self.a, self.key_a)
         self.assertEqual(extract(bin_a, profile), self.key_a)
         # The same build at another place in the file still extracts.
         self.assertEqual(extract(b"\x90" * 1000 + bin_a, profile), self.key_a)
         for other in (self.b, self.a1):
             with self.assertRaises(ExtractionFailed):
                 extract(_synthetic_binary(other, b"\xcc" * 300, 0), profile)
+
+    def test_short_piece_among_random_bytes(self) -> None:
+        # e2e run 42988550466: a key piece whose arrays were all 1-2 bytes long
+        # matched 113 places in the template. Training must still place it.
+        rng = random.Random(5)
+        for n in range(200):
+            secret = _secret(100 + n)
+            src = parse_gen_cpp(render_gen_cpp(secret, "4.7.2"))
+            if any(max(len(a) for a in src.functions[name].arrays.values()) <= 2 for name, _ in src.key_pieces):
+                break
+        else:  # pragma: no cover - the seeds above contain one
+            self.fail("no secret with a short key piece")
+        key = plaintext_values(secret, "4.7.2")["key"]
+        noise = bytes(rng.randrange(256) for _ in range(4096))
+        binary = _synthetic_binary(src, noise, 1)
+        with self.assertRaises(ValueError):
+            train(binary, src)  # ambiguous without the key
+        profile = train(binary, src, key)
+        self.assertEqual(extract(binary, profile), key)
+        self.assertEqual(extract(noise + binary, profile), key)
 
     @unittest.skipUnless(_CXX, "no C++ compiler on PATH")
     def test_compiled_objects(self) -> None:
@@ -109,7 +130,7 @@ class ExtractorTests(unittest.TestCase):
                     check=True,
                 )
                 objs[label] = obj.read_bytes()
-            profile = train(objs["a"], self.a)
+            profile = train(objs["a"], self.a, self.key_a)
             self.assertEqual(extract(objs["a"], profile), self.key_a)
             for label in ("b", "a1"):
                 with self.assertRaises(ExtractionFailed, msg=label):
