@@ -4,9 +4,12 @@ export const REPO = 'salaryman-inc/FortressGD';
 export const REPO_URL = `https://github.com/${REPO}`;
 export const BRANCH = 'main';
 
-// GitHub Pages serves a project site at https://<owner>.github.io/<repo>/.
-export const SITE = 'https://salaryman-inc.github.io';
-export const BASE = '/FortressGD';
+// Served from the custom domain set in Settings → Pages, at the domain root.
+// GitHub redirects https://salaryman-inc.github.io/FortressGD/ here.
+// Astro writes root-relative URLs (/_astro/..., /guides/ci/), so BASE must match
+// the path the site is served from: '/' on a custom domain, '/<repo>' without one.
+export const SITE = 'https://fortressgd.salaryman.com';
+export const BASE = '/';
 
 // Every page except the landing page is built from Markdown that already lives
 // in the repository, so the site and the files on GitHub never drift apart.
