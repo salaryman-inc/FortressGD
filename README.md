@@ -522,7 +522,7 @@ Third-party columns summarize each project's own documentation as of November 20
 
 ## Docs
 
-All of these are also published as a website: **https://salaryman-inc.github.io/FortressGD/**
+All of these are also published as a website: **https://fortressgd.salaryman.com/**
 
 - [`docs/getting-started.md`](docs/getting-started.md) — leak checks with the official editor
 - [`docs/ci.md`](docs/ci.md) — template factory, build images, build times, unpacker fixtures

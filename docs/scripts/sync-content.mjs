@@ -18,7 +18,7 @@ const KEEP = new Set(['index.mdx']);
 const pageBySource = new Map(PAGES.map((page) => [page.source, page]));
 
 function pageUrl(page, anchor) {
-	return `${BASE}/${page.slug}/${anchor}`;
+	return `${BASE.replace(/\/$/, '')}/${page.slug}/${anchor}`;
 }
 
 function githubUrl(repoPath, anchor) {
