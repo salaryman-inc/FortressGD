@@ -21,6 +21,7 @@ from pathlib import Path
 from fortressgd.core.kdf import secret_hash
 from fortressgd.core.secret import SECRET_BYTES
 from fortressgd.core.templates import template_filename
+from fortressgd.generator.codeseed import CODEGEN_VERSION
 from fortressgd.generator.generate import render_gen_cpp
 from tests.support import PKG, seed_mini_godot_tree
 
@@ -127,7 +128,7 @@ class BuildImageModeTests(unittest.TestCase):
         self.assertTrue((self.out / name).is_file(), sorted(p.name for p in self.out.iterdir()))
         manifest = json.loads((self.out / (name + ".manifest.json")).read_text())
         self.assertIs(manifest["require_signature"], True)
-        self.assertEqual(manifest["generator_version"], "2")
+        self.assertEqual(manifest["generator_version"], str(CODEGEN_VERSION))
 
     def test_relink_refuses_the_placeholder(self) -> None:
         self._prebuild()

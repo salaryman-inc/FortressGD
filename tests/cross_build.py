@@ -36,12 +36,27 @@ from pathlib import Path
 
 _FN = re.compile(r"^static void (fgd__\w+)\(uint8_t out\[(\d+)\]\) \{$")
 _ARRAY = re.compile(r"^\tstatic const volatile uint8_t (\w+)\[(\d+)\] = \{ ([0-9a-fx, ]*) \};$")
-_XOR = re.compile(r"^\tfor \(int i = 0; i < \d+; i\+\+\) b\[i\] = \(uint8_t\)\(b\[i\] \^ (\w+)\[i\]\);$")
-_ADD = re.compile(r"^\tfor \(int i = 0; i < \d+; i\+\+\) b\[i\] = \(uint8_t\)\(b\[i\] \+ (\w+)\[i\]\);$")
-_ROT = re.compile(r"^\tfor \(int i = 0; i < \d+; i\+\+\) b\[i\] = \(uint8_t\)\(\(b\[i\] << (\d)\) \| \(b\[i\] >> \d\)\);$")
-_PERM = re.compile(r"^\t\tfor \(int i = 0; i < \d+; i\+\+\) t\[i\] = b\[(\w+)\[i\]\];$")
-_SBOX = re.compile(r"^\tfor \(int i = 0; i < \d+; i\+\+\) b\[i\] = (\w+)\[b\[i\]\];$")
 _PIECE_CALL = re.compile(r"^\t(fgd__k\d+)\(r_key \+ (\d+)\);$")
+
+# Generator v3 emits each operation in one of several equal forms (emit.py): the
+# loop may run forwards, backwards or two-at-a-time, and an op may use an equal
+# arithmetic expression. The loop header does not change what the op is, so these
+# patterns match an operation by the per-element body it contains (``.search``,
+# anchored on ``b[i]``), which is the same whichever way the loop runs. A
+# grammar-aware tool would recognise exactly this fixed set of shapes. Each kind
+# has one pattern per arithmetic form; the (xor|add) pairs are the two equal
+# expressions emit.py chooses between, and the two rotate patterns are its two
+# operand orders.
+_OP_PATTERNS = (
+    ("xor", re.compile(r"b\[i\] = \(uint8_t\)\(b\[i\] \^ (\w+)\[i\]\);")),
+    ("xor", re.compile(r"b\[i\] = \(uint8_t\)\(\(b\[i\] \| (\w+)\[i\]\) - \(b\[i\] & \w+\[i\]\)\);")),
+    ("add", re.compile(r"b\[i\] = \(uint8_t\)\(b\[i\] \+ (\w+)\[i\]\);")),
+    ("add", re.compile(r"b\[i\] = \(uint8_t\)\(b\[i\] - \(uint8_t\)\(-(\w+)\[i\]\)\);")),
+    ("rot", re.compile(r"b\[i\] = \(uint8_t\)\(\(b\[i\] << (\d)\) \| \(b\[i\] >> \d\)\);")),
+    ("rot", re.compile(r"b\[i\] = \(uint8_t\)\(\(b\[i\] >> \d\) \| \(b\[i\] << (\d)\)\);")),
+    ("perm", re.compile(r"t\[i\] = b\[(\w+)\[i\]\];")),
+    ("sbox", re.compile(r"b\[i\] = (\w+)\[b\[i\]\];")),
+)
 
 
 class ExtractionFailed(Exception):
@@ -93,12 +108,14 @@ def parse_gen_cpp(text: str) -> GenSource:
     functions: dict[str, DecodeFn] = {}
     pieces: list[tuple[str, int]] = []
     cur: DecodeFn | None = None
+    seen: set[str] = set()  # arrays already turned into an op, within cur
     in_derive = False
     for line in text.splitlines():
         m = _FN.match(line)
         if m:
             cur = DecodeFn(m.group(1), int(m.group(2)))
             functions[cur.name] = cur
+            seen = set()
             continue
         if line.startswith("void fgd_derive_key("):
             in_derive = True
@@ -121,11 +138,20 @@ def parse_gen_cpp(text: str) -> GenSource:
                 raise ValueError("array {0} in {1}: wrong length".format(m.group(1), cur.name))
             cur.arrays[m.group(1)] = data
             continue
-        for kind, pat in (("xor", _XOR), ("add", _ADD), ("rot", _ROT), ("perm", _PERM), ("sbox", _SBOX)):
-            m = pat.match(line)
-            if m:
-                cur.ops.append((kind, m.group(1)))
-                break
+        for kind, pat in _OP_PATTERNS:
+            m = pat.search(line)
+            if not m:
+                continue
+            arg = m.group(1)
+            if kind == "rot":
+                # No array; each rotate is one line, so record every one.
+                cur.ops.append((kind, arg))
+            elif arg not in seen:
+                # One op per array: an unrolled loop repeats the body on several
+                # lines, all reading the same array, so record only the first.
+                cur.ops.append((kind, arg))
+                seen.add(arg)
+            break
     if not pieces:
         raise ValueError("no key pieces in fgd_derive_key")
     for name, _ in pieces:

@@ -8,6 +8,7 @@ import unittest
 from fortressgd.generator.codeseed import CodeStream, derive_code_seed
 from fortressgd.generator.opchain import (
     AddKey,
+    OP_FORM_COUNTS,
     OP_KINDS,
     PermPos,
     Rotate,
@@ -82,6 +83,56 @@ class ChainRoundTripTests(unittest.TestCase):
     def test_build_chain_rejects_bad_length(self) -> None:
         with self.assertRaises(ValueError):
             build_chain(CodeStream(self.seed), 0)
+
+
+class FormTests(unittest.TestCase):
+    """Each op carries a code form (DESIGN.md §18.3); it never changes the value."""
+
+    def setUp(self) -> None:
+        self.seed = derive_code_seed(bytes(range(SECRET_BYTES)), "4.7.2", 0)
+        self.names = {XorKey: "xor", AddKey: "add", Rotate: "rot", PermPos: "perm", Sbox: "sbox"}
+
+    def test_forms_stay_in_range(self) -> None:
+        for trial in range(200):
+            length = (trial % 20) + 1
+            chain = build_chain(CodeStream(self.seed, b"range|%d" % trial), length)
+            for op in chain:
+                self.assertIn(op.form, range(OP_FORM_COUNTS[self.names[type(op)]]))
+
+    def test_build_chain_covers_every_form(self) -> None:
+        # Enough draws that every (kind, form) the grammar allows appears, and
+        # each op the generator emits round-trips whatever its form.
+        seen: set[tuple[str, int]] = set()
+        for trial in range(4000):
+            length = (trial % 20) + 1
+            chain = build_chain(CodeStream(self.seed, b"cover|%d" % trial), length)
+            plain = bytes((i * 29 + trial) & 0xFF for i in range(length))
+            self.assertEqual(decode_value(encode_value(plain, chain), chain), plain)
+            for op in chain:
+                seen.add((self.names[type(op)], op.form))
+        want = {(kind, form) for kind, n in OP_FORM_COUNTS.items() for form in range(n)}
+        self.assertEqual(seen, want)
+
+    def test_form_does_not_change_the_value(self) -> None:
+        # The same op in two different forms decodes identically.
+        buf = list(range(16))
+        sbox = bytes((i * 181 + 17) & 0xFF for i in range(256))
+        for a, b in (
+            (XorKey(bytes(range(16)), 0), XorKey(bytes(range(16)), 5)),
+            (AddKey(bytes(range(16)), 0), AddKey(bytes(range(16)), 5)),
+            (Rotate(3, 0), Rotate(3, 3)),
+            (PermPos(tuple(reversed(range(16))), 0), PermPos(tuple(reversed(range(16))), 1)),
+            (Sbox(sbox, 0), Sbox(sbox, 2)),
+        ):
+            with self.subTest(op=type(a).__name__):
+                self.assertEqual(a.decode(list(buf)), b.decode(list(buf)))
+
+    def test_form_counts_match_the_emitter(self) -> None:
+        from fortressgd.generator.emit import _FORMS
+
+        self.assertEqual(set(_FORMS), set(OP_FORM_COUNTS))
+        for kind, n in OP_FORM_COUNTS.items():
+            self.assertEqual(len(_FORMS[kind]), n, kind)
 
 
 if __name__ == "__main__":

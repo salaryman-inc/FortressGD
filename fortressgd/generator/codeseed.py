@@ -23,7 +23,9 @@ from fortressgd.core.secret import SECRET_BYTES
 # Bump when the stream construction or the seed inputs change; it appears in the
 # info string, so a bump changes every generated routine. Distinct from
 # dialect.GENERATOR_VERSION, which versions the v1 data header's layout.
-CODEGEN_VERSION = 2
+# v3: each operation is emitted in a seed-chosen form (DESIGN.md §18.3), so the
+# stream draws more per op and every routine changes; v2 caches must not be reused.
+CODEGEN_VERSION = 3
 
 _CODEGEN_PREFIX = "fortressgd.codegen.v{0}".format(CODEGEN_VERSION).encode("ascii")
 _SEED_LEN = 32
