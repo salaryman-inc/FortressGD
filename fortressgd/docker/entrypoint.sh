@@ -45,7 +45,7 @@ FGD_REQUIRE_SIGNATURE="${FGD_REQUIRE_SIGNATURE:-0}"
 FGD_KEY_EPOCH="${FGD_KEY_EPOCH:-0}"
 # Generator version (fortressgd/generator/codeseed.py CODEGEN_VERSION); template
 # names carry it as -g<N> so generators never share a cached template.
-FGD_GENERATOR="${FGD_GENERATOR:-2}"
+FGD_GENERATOR="${FGD_GENERATOR:-3}"
 FGD_TARGET="${FGD_TARGET:-template_release}"
 FGD_MODE="${FGD_MODE:-source}"
 # SCons lto= for templates. Empty keeps Godot's production default (full LTO with

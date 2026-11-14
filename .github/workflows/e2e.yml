@@ -217,7 +217,7 @@ jobs:
       # DESIGN.md §18.7: build A (this project), B (the second secret) and A at
       # epoch 1. A reference extractor written from A's generated source must
       # recover A's key from A and fail on the other two, and A's key code must
-      # share no run of more than 32 instructions with theirs (addresses masked;
+      # share no run of more than 20 instructions with theirs (addresses masked;
       # docs/ci.md says how the limit was chosen).
       - name: Warm relink of the same project at epoch 1
         if: matrix.measure_relink
@@ -237,12 +237,12 @@ jobs:
           template() {
             # The cached Linux template for a secret file and epoch suffix ("" or "-e1").
             sh="$(python3 -c 'import sys; from fortressgd.core.kdf import secret_hash; from fortressgd.core.secret import read_secret_file, secret_bytes_from_hex; from pathlib import Path; print(secret_hash(secret_bytes_from_hex(read_secret_file(Path(sys.argv[1])))))' "$1")"
-            find "$HOME/.cache/fortressgd/templates" -maxdepth 1 -name "godot-$GODOT-template_release-linux-x86_64-*-$sh-g2$2" ! -name '*.manifest.json' | grep . | head -n 1
+            find "$HOME/.cache/fortressgd/templates" -maxdepth 1 -name "godot-$GODOT-template_release-linux-x86_64-*-$sh-g3$2" ! -name '*.manifest.json' | grep . | head -n 1
           }
           a="$(template "$PROJ/.fortressgd.secret" "")"
           b="$(template "$RUNNER_TEMP/second.secret" "")"
           a1="$(template "$PROJ/.fortressgd.secret" "-e1")"
-          python -m tests.cross_build --godot "$GODOT" --max-shared 32 --summary "$GITHUB_STEP_SUMMARY" \
+          python -m tests.cross_build --godot "$GODOT" --max-shared 20 --summary "$GITHUB_STEP_SUMMARY" \
             --a "template=$a,secret=$PROJ/.fortressgd.secret" \
             --other "template=$b,secret=$RUNNER_TEMP/second.secret" \
             --other "template=$a1,secret=$PROJ/.fortressgd.secret,epoch=1"

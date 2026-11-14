@@ -76,6 +76,35 @@ class RenderTests(unittest.TestCase):
         key_c = ", ".join("0x{0:02x}".format(b) for b in key).encode("ascii")
         self.assertNotIn(key_c, src)
 
+    def test_the_generator_emits_every_code_form(self) -> None:
+        # Across a sample of builds, each equal C++ form from emit.py (DESIGN.md
+        # §18.3) is actually emitted: the forward, backward and unrolled loops, the
+        # two xor and two add expressions, and both rotate operand orders. If a
+        # form stopped being reachable, the diversity it buys would be lost.
+        markers = {
+            "forward loop": "i = 0; i <",
+            "backward loop": ">= 0; i--",
+            "unrolled loop": "i += 2",
+            "xor direct": "^ k",
+            "xor or/and/sub": ") - (b[i] & ",
+            "add direct": "] = (uint8_t)(b[i] + k",
+            "add sub of negation": "(uint8_t)(-k",
+            "rotate shift-left first": "] << ",
+            "rotate shift-right first": "] >> ",
+            "sbox gather": "[b[i]];",
+            "permute gather": "t[i] = b[",
+        }
+        seen: set[str] = set()
+        for n in range(64):
+            secret = bytes((n * 37 + i * 11) & 0xFF for i in range(SECRET_BYTES))
+            src = render_gen_cpp(secret, "4.7.2", None, n % 3)
+            for label, needle in markers.items():
+                if needle in src:
+                    seen.add(label)
+            if seen == set(markers):
+                break
+        self.assertEqual(seen, set(markers), "forms never emitted: {0}".format(set(markers) - seen))
+
 
 class CompiledEndToEndTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -107,11 +136,14 @@ class CompiledEndToEndTests(unittest.TestCase):
         self.assertEqual(len(v["opcode_map"]), FGD_OPCODE_COUNT)
 
     def test_values_match_v1_across_compilers(self) -> None:
-        secret = os.urandom(SECRET_BYTES)
+        # Several secrets, so the full pipeline compiles a variety of the per-op
+        # forms end to end, on every compiler.
+        secrets = [os.urandom(SECRET_BYTES) for _ in range(3)]
         for cxx in _COMPILERS:
             for opt in ("-O2", "-O3"):
-                with self.subTest(compiler=cxx, opt=opt):
-                    self._run(cxx, opt, secret, "4.6.2", 0)
+                for i, secret in enumerate(secrets):
+                    with self.subTest(compiler=cxx, opt=opt, secret=i):
+                        self._run(cxx, opt, secret, "4.6.2", 0)
 
     def test_key_epoch_changes_only_the_key(self) -> None:
         secret = os.urandom(SECRET_BYTES)

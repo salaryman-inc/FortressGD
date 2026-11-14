@@ -65,8 +65,10 @@ def plaintext_values(
 
 
 def _decoder(stream: CodeStream, name: str, plain: bytes, info: bytes) -> str:
-    chain = build_chain(CodeStream(stream.read(32), info), len(plain))
-    return emit_decode_fn(name, plain, chain)
+    inner = CodeStream(stream.read(32), info)
+    chain = build_chain(inner, len(plain))
+    load_form = inner.randbelow(3)  # shape of the copy that loads the encoded bytes
+    return emit_decode_fn(name, plain, chain, load_form)
 
 
 def render_gen_cpp(

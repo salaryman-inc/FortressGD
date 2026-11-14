@@ -18,10 +18,34 @@ from pathlib import Path
 
 from fortressgd.generator.codeseed import CodeStream, derive_code_seed
 from fortressgd.generator.emit import emit_decode_fn
-from fortressgd.generator.opchain import build_chain, decode_value, encode_value
+from fortressgd.generator.opchain import (
+    AddKey,
+    OP_FORM_COUNTS,
+    PermPos,
+    Rotate,
+    Sbox,
+    XorKey,
+    build_chain,
+    decode_value,
+    encode_value,
+)
 from fortressgd.core.secret import SECRET_BYTES
 
 _COMPILERS = [c for c in ("g++", "clang++") if shutil.which(c)]
+
+_SBOX = bytes((i * 181 + 17) & 0xFF for i in range(256))
+
+
+def _op_for(kind: str, form: int, length: int):
+    if kind == "xor":
+        return XorKey(bytes((i * 7 + 1) & 0xFF for i in range(length)), form)
+    if kind == "add":
+        return AddKey(bytes((i * 5 + 2) & 0xFF for i in range(length)), form)
+    if kind == "rot":
+        return Rotate(3, form)
+    if kind == "perm":
+        return PermPos(tuple(reversed(range(length))), form)
+    return Sbox(_SBOX, form)
 
 
 def _harness(fn_src: str, length: int) -> str:
@@ -69,6 +93,47 @@ class EmitCompiledTests(unittest.TestCase):
                             [str(exe)], capture_output=True, text=True, check=True, timeout=30
                         ).stdout
                         self.assertEqual(out, plain.hex())
+
+    def test_every_form_compiles_and_matches(self) -> None:
+        # Every (kind, form), at a few lengths, in one translation unit per
+        # compiler. The forms are the equal C++ shapes emit.py chooses between
+        # (DESIGN.md §18.3); each must still decode to its plaintext on every
+        # compiler, at -O2 and -O3. Lengths 1 and 2 are the shortest key pieces;
+        # 7 and 16 exercise the unrolled form's odd tail and a longer loop.
+        cases = []  # (fn name, plain)
+        fns = []
+        n = 0
+        for length in (1, 2, 7, 16):
+            for kind, count in OP_FORM_COUNTS.items():
+                for form in range(count):
+                    op = _op_for(kind, form, length)
+                    plain = bytes((i * 29 + n) & 0xFF for i in range(length))
+                    name = "fgd_f{0}".format(n)
+                    fns.append(emit_decode_fn(name, plain, [op], load_form=n % 3))
+                    self.assertEqual(decode_value(encode_value(plain, [op]), [op]), plain)
+                    cases.append((name, plain))
+                    n += 1
+        body = ["#include <cstdio>", "#include <cstdint>", *fns, "int main() {"]
+        for name, plain in cases:
+            body.append("\t{{ uint8_t o[{0}]; {1}(o); for (int i = 0; i < {0}; i++) printf(\"%02x\", o[i]); printf(\"\\n\"); }}".format(len(plain), name))
+        body.append("\treturn 0;\n}")
+        src = "\n".join(body)
+        expected = "".join(p.hex() for _, p in cases)
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            (work / "forms.cpp").write_text(src, encoding="utf-8")
+            for cxx in _COMPILERS:
+                for opt in ("-O2", "-O3"):
+                    with self.subTest(compiler=cxx, opt=opt):
+                        exe = work / "forms"
+                        subprocess.run(
+                            [cxx, opt, "forms.cpp", "-o", str(exe)],
+                            cwd=work, check=True, capture_output=True, timeout=180,
+                        )
+                        out = subprocess.run(
+                            [str(exe)], capture_output=True, text=True, check=True, timeout=30
+                        ).stdout
+                        self.assertEqual(out.replace("\n", ""), expected)
 
     def test_plaintext_not_folded_into_object(self) -> None:
         # A recognizable plaintext; its 8-byte windows must not survive in the object.
